@@ -10,6 +10,18 @@ import self.lexer
 import self.lang_almide
 import self.parser
 
+// Local copies of the tree helpers that take the token list: a list handed to
+// a function in another module is cloned at the call, and these run once per
+// node.
+fn leaf_text(n: tree.Node, toks: List[tree.Token]) -> String = match list.get(toks, n.start) { some(t) => t.text, none => "" }
+fn start_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks, n.start) { some(t) => t.line, none => 0 }
+fn end_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks, n.end - 1) { some(t) => t.line, none => 0 }
+fn text_of(n: tree.Node, toks: List[tree.Token], src: String) -> String =
+  match (list.get(toks, n.start), list.get(toks, n.end - 1)) {
+    (some(f), some(l)) => string.slice(src, f.start, l.end),
+    _ => "",
+  }
+
 type Tag = { role: String, kind: String, name: String, line: Int, end_line: Int }
 
 fn render(t: Tag) -> String =
@@ -37,43 +49,60 @@ fn decl_kind(k: String) -> String = match k {
   _ => k,
 }
 
-fn name_of(n: tree.Node, toks: List[tree.Token], src: String) -> String = match tree.child(n, "name") {
-  some(m) => if list.is_empty(m.kids) then tree.leaf_text(m, toks) else tree.text_of(m, toks, src),
+fn child(n: tree.Node, field: String) -> Option[tree.Node] = list.find(n.kids, (k) => k.field == field)
+
+fn name_of(n: tree.Node, toks: List[tree.Token], src: String) -> String = match child(n, "name") {
+  some(m) => if list.is_empty(m.kids) then leaf_text(m, toks) else text_of(m, toks, src),
   none => "",
 }
 
 // Walk the tree. Calls are recognised on the flat postfix chain the grammar
 // produces: `identifier arguments` or `identifier field_access arguments`.
+// The chain is read with one step of memory (what the previous two kids
+// were) rather than by looking ahead, because reading a kid with list.get
+// copies its whole subtree — a look-ahead would copy every subtree twice.
 fn walk(n: tree.Node, toks: List[tree.Token], src: String) -> List[Tag] = {
   var out: List[Tag] = []
   let name = if list.contains(DECLS, n.kind) then name_of(n, toks, src) else ""
   if name != "" then
-    list.push(out, Tag { role: "def", kind: decl_kind(n.kind), name: name, line: tree.start_line(n, toks), end_line: tree.end_line(n, toks) })
+    list.push(out, Tag { role: "def", kind: decl_kind(n.kind), name: name, line: start_line(n, toks), end_line: end_line(n, toks) })
   else if n.kind == "type_name" and not list.is_empty(n.kids) then {
-    match list.first(n.kids) {
+    match list.get(n.kids, 0) {
       some(leaf) => if (leaf.kind == "type_name" or leaf.kind == "identifier") and list.is_empty(leaf.kids) then
-        list.push(out, Tag { role: "ref", kind: "type", name: tree.leaf_text(leaf, toks), line: tree.start_line(leaf, toks), end_line: 0 })
+        list.push(out, Tag { role: "ref", kind: "type", name: leaf_text(leaf, toks), line: start_line(leaf, toks), end_line: 0 })
       else (),
       none => (),
     }
   }
   else ()
-  let kids = n.kids
+  var prev_kind = ""          // the kid before this one
+  var prev_name = ""          // its leaf text (identifier) or field name (field_access)
+  var prev_line = 0
+  var before_kind = ""        // the kid before that
+  var before_name = ""
   var i = 0
-  while i < list.len(kids) {
-    let k = list.get(kids, i) ?? n
-    let next = list.get(kids, i + 1)
-    let is_call = match next { some(m) => m.kind == "arguments", none => false }
-    if is_call and k.kind == "identifier" then
-      list.push(out, Tag { role: "ref", kind: "call", name: tree.leaf_text(k, toks), line: tree.start_line(k, toks), end_line: 0 })
-    else if is_call and k.kind == "field_access" then {
-      let prev = if i > 0 then list.get(kids, i - 1) else none
-      let owner = match prev { some(p) => if p.kind == "identifier" then tree.leaf_text(p, toks) + "." else "", none => "" }
-      let f = match tree.child(k, "field") { some(m) => tree.leaf_text(m, toks), none => "" }
-      list.push(out, Tag { role: "ref", kind: "call", name: owner + f, line: tree.start_line(k, toks), end_line: 0 })
+  let count = list.len(n.kids)
+  while i < count {
+    match list.get(n.kids, i) {
+      none => (),
+      some(k) => {
+        if k.kind == "arguments" and prev_kind == "identifier" then
+          list.push(out, Tag { role: "ref", kind: "call", name: prev_name, line: prev_line, end_line: 0 })
+        else if k.kind == "arguments" and prev_kind == "field_access" then {
+          let owner = if before_kind == "identifier" then before_name + "." else ""
+          list.push(out, Tag { role: "ref", kind: "call", name: owner + prev_name, line: prev_line, end_line: 0 })
+        }
+        else ()
+        before_kind = prev_kind
+        before_name = prev_name
+        prev_kind = k.kind
+        prev_line = start_line(k, toks)
+        prev_name = if k.kind == "identifier" then leaf_text(k, toks)
+          else if k.kind == "field_access" then (match child(k, "field") { some(m) => leaf_text(m, toks), none => "" })
+          else ""
+        for t in walk(k, toks, src) { list.push(out, t) }
+      },
     }
-    else ()
-    out = out + walk(k, toks, src)
     i = i + 1
   }
   out
@@ -94,8 +123,19 @@ fn outline(root: tree.Node, toks: List[tree.Token], src: String) -> List[String]
 
 fn outline_walk(n: tree.Node, toks: List[tree.Token], src: String, indent: String) -> List[String] = {
   let name = if list.contains(DECLS, n.kind) then name_of(n, toks, src) else ""
-  let here = if name == "" then [] else
-    [indent + "L" + int.to_string(tree.start_line(n, toks)) + "-" + int.to_string(tree.end_line(n, toks)) + " " + decl_kind(n.kind) + " " + name]
+  var out: List[String] = []
+  if name != "" then
+    list.push(out, indent + "L" + int.to_string(start_line(n, toks)) + "-" + int.to_string(end_line(n, toks)) + " " + decl_kind(n.kind) + " " + name)
+  else ()
   let deeper = if name == "" then indent else indent + "  "
-  here + list.flat_map(n.kids, (k) => outline_walk(k, toks, src, deeper))
+  var i = 0
+  let count = list.len(n.kids)
+  while i < count {
+    match list.get(n.kids, i) {
+      some(k) => for l in outline_walk(k, toks, src, deeper) { list.push(out, l) },
+      none => (),
+    }
+    i = i + 1
+  }
+  out
 }

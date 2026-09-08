@@ -5,84 +5,78 @@
 //   gramide tokens <file>     the token stream, one per line
 //   gramide outline <file>    declarations with their lines
 //   gramide tags <file>       definitions and references, for a repo map
+//   gramide map <dir> [--budget N] [--task TEXT]
+//                             a ranked map of a repository within N tokens (default 1024),
+//                             personalised toward what TEXT mentions
 //
 // Languages: Almide (.almd) and Go (.go). Each is a lexer (src/lex_*.almd /
 // src/lexer.almd) plus a grammar value (src/lang_*.almd); the engine in
-// src/parser.almd is shared.
+// src/parser.almd and the walkers in src/tags.almd are shared. src/lang.almd
+// picks the pair by extension.
 
 import self.tree
-import self.lexer
-import self.lex_go
-import self.parser
-import self.lang_almide
-import self.lang_go
+import self.lang
 import self.tags
+import self.map
 import fs
 import env
 import process
 
-fn usage() -> String = "usage: gramide (check | parse | tokens | outline | tags) <file>"
+fn usage() -> String = "usage: gramide (check | parse | tokens | outline | tags) <file>\n       gramide map <dir> [--budget N] [--task TEXT]"
 
 effect fn read(path: String) -> Result[String, String] = fs.read_text(path) |> result.map_err((e) => path + ": " + e)
-
-fn lex_error(path: String, e: lexer.LexError) -> String =
-  path + ":" + int.to_string(e.line) + ":" + int.to_string(e.col) + ": " + e.message
-
-// The language is chosen by extension: a lexer and a grammar per language.
-fn tokens_for(path: String, src: String) -> Result[List[tree.Token], String] = {
-  let r = if string.ends_with(path, ".go") then lex_go.tokenize(src) else lexer.tokenize(src)
-  r |> result.map_err((e) => lex_error(path, e))
-}
-
-fn grammar_for(path: String) -> Result[parser.Grammar, String] =
-  if string.ends_with(path, ".go") then ok(lang_go.go())
-  else if string.ends_with(path, ".almd") then ok(lang_almide.almide())
-  else err(path + ": no grammar for this extension (known: .almd, .go)")
-
-fn parse_source(path: String, src: String) -> Result[parser.Parsed, String] = {
-  let g = grammar_for(path)!
-  let toks = tokens_for(path, src)!
-  parser.parse(g, toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
-}
-
-// One line per declaration: `L<start>-<end> <kind> <name>`; nested
-// declarations (methods in a protocol, tests' where clauses) indent.
-fn outline(p: parser.Parsed, src: String) -> List[String] =
-  list.flat_map(p.root.kids, (d) => outline_decl(d, p.toks, src, ""))
-
-fn outline_decl(d: tree.Node, toks: List[tree.Token], src: String, indent: String) -> List[String] = {
-  let name = match tree.child(d, "name") {
-    some(n) => if list.is_empty(n.kids) then tree.leaf_text(n, toks) else tree.text_of(n, toks, src),
-    none => match tree.child(d, "path") { some(n) => tree.text_of(n, toks, src), none => "" },
-  }
-  let line = indent + "L" + int.to_string(tree.start_line(d, toks)) + "-" + int.to_string(tree.end_line(d, toks)) + " " + d.kind + " " + name
-  let inner = list.flat_map(tree.children_of_kind(d, "method_signature"), (m) => outline_decl(m, toks, src, indent + "  "))
-  [line] + inner
-}
 
 effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
   let src = read(path)!
   match cmd {
     "tokens" => {
-      let toks = tokens_for(path, src)!
+      let toks = lang.tokens_for(path, src)!
       for t in toks { println(int.to_string(t.line) + ":" + int.to_string(t.col) + " " + t.kind + " " + t.text) }
       ok(())
     },
-    "parse" => { let p = parse_source(path, src)!; println(tree.sexp(p.root)); ok(()) },
-    "check" => { let _ = parse_source(path, src)!; println(path + ": ok"); ok(()) },
-    "outline" => { let p = parse_source(path, src)!; for l in tags.outline(p.root, p.toks, src) { println(l) }; ok(()) },
-    "tags" => { let p = parse_source(path, src)!; for l in tags.tags(p.root, p.toks, src) { println(l) }; ok(()) },
+    "parse" => { let p = lang.parse_source(path, src)!; println(tree.sexp(p.root)); ok(()) },
+    "check" => { let _ = lang.parse_source(path, src)!; println(path + ": ok"); ok(()) },
+    "outline" => { let p = lang.parse_source(path, src)!; for l in tags.outline(p.root, p.toks, src) { println(l) }; ok(()) },
+    "tags" => { let p = lang.parse_source(path, src)!; for l in tags.tags(p.root, p.toks, src) { println(l) }; ok(()) },
     _ => err(usage()),
   }
 }
 
+// `--budget N` and `--task TEXT` after the directory; anything else is the task too.
+fn option_after(argv: List[String], flag: String) -> Option[String] = {
+  var found: Option[String] = none
+  var i = 0
+  while i < list.len(argv) {
+    if (list.get(argv, i) ?? "") == flag then found = list.get(argv, i + 1) else ()
+    i = i + 1
+  }
+  found
+}
+
+effect fn run_map(argv: List[String]) -> Result[Unit, String] = {
+  let dir = list.get(argv, 1) ?? "."
+  let budget = int.parse(option_after(argv, "--budget") ?? "1024") ?? 1024
+  let task = option_after(argv, "--task") ?? ""
+  let scan = map.scan(dir)!
+  let m = map.build(scan, task, budget)
+  if m.text != "" then println(string.trim_end(m.text)) else ()
+  eprintln("# " + int.to_string(m.files_scanned) + " files, " + int.to_string(m.symbols_shown) + " of " + int.to_string(m.symbols_total)
+    + " symbols shown, ~" + int.to_string(m.approx_tokens) + " tokens")
+  for e in m.errors { eprintln("# skipped " + e) }
+  ok(())
+}
+
+effect fn finish(r: Result[Unit, String]) -> Unit = match r {
+  ok(_) => (),
+  err(e) => { eprintln(e); process.exit(1) },
+}
+
 effect fn main() -> Unit = {
   let argv = env.args()
-  match (list.get(argv, 0), list.get(argv, 1)) {
-    (some(cmd), some(path)) => match run(cmd, path) {
-      ok(_) => (),
-      err(e) => { eprintln(e); process.exit(1) },
-    },
-    _ => { eprintln(usage()); process.exit(2) },
+  let cmd = list.get(argv, 0) ?? ""
+  if cmd == "map" then finish(run_map(argv))
+  else match list.get(argv, 1) {
+    some(path) => finish(run(cmd, path)),
+    none => finish(err(usage())),
   }
 }

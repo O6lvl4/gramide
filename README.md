@@ -14,6 +14,10 @@ gramide outline src/main.almd     one line per declaration: L12-40 function_decl
 gramide parse   src/main.almd     the whole tree as an s-expression
 gramide tags    src/main.almd     `def function parse L40-58`, `ref call list.map L44`, `ref type Node L12` — a repo map's input
 gramide tokens  src/main.almd     the token stream, one per line
+gramide map . --budget 1024 --task "fix parse_rule"
+                                  a ranked map of the repository within the token budget:
+                                  the definitions other files use most, personalised toward
+                                  what the task mentions — what an agent reads before opening files
 ```
 
 ## Why
@@ -76,6 +80,10 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
   only ever sees a separator where Go sees one.
 - **`src/tree.almd`** — `Node { kind, field, start, end, kids }` spanning token
   indices, with `child(n, "name")`, `text_of`, `sexp`, and `collect`.
+- **`src/tags.almd`**, **`src/map.almd`** — definitions and references per file, and the
+  repository map: files referencing a name another file defines are edges, PageRank
+  personalised toward the task ranks the definitions, and the best are rendered file by
+  file until the budget is spent.
 
 A note on the engine: the grammar value is compiled once into a flat arena of
 three-integer nodes and `parse_rule` is one self-recursive function with the loops
@@ -88,7 +96,7 @@ to 7.6 s).
 
 ```
 almide build            # → ./gramide
-almide test             # 20 tests across the seven modules
+almide test             # 22 tests across the nine modules
 ```
 
 Requires Almide 0.61 or later.

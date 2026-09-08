@@ -13,6 +13,9 @@ gramide outline src/main.almd     宣言ごとに一行: L12-40 function_declara
 gramide parse   src/main.almd     木全体を S 式で
 gramide tags    src/main.almd     `def function parse L40-58`、`ref call list.map L44`、`ref type Node L12` — リポジトリマップの入力
 gramide tokens  src/main.almd     トークン列を一行ずつ
+gramide map . --budget 1024 --task "fix parse_rule"
+                                  トークン予算内に収めたリポジトリの地図: 他ファイルから最も使われる定義を、
+                                  タスクが言及するものへ寄せて順位付け — エージェントがファイルを開く前に読むもの
 ```
 
 ## なぜ
@@ -64,6 +67,9 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
 - **`src/lex_go.almd`** — Go の字句解析。セミコロン挿入はここで行い、文法は Go が区切りと見る場所にしか区切りを見ません。
 - **`src/tree.almd`** — トークン添字で範囲を持つ `Node { kind, field, start, end, kids }` と、
   `child(n, "name")`, `text_of`, `sexp`, `collect`。
+- **`src/tags.almd`**, **`src/map.almd`** — ファイルごとの定義と参照、そしてリポジトリの地図。
+  他ファイルが定義する名前への参照を辺にし、タスクへ個人化した PageRank で定義を順位付けし、
+  予算が尽きるまでファイル単位で描画する。
 
 エンジンについて一つ。文法の値は起動時に 3 整数ノードの平坦な配列へコンパイルされ、`parse_rule` は
 一つの自己再帰関数で、列・選択・繰り返しのループはその中にあります。どちらの形も Almide のネイティブ
@@ -74,7 +80,7 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
 
 ```
 almide build            # → ./gramide
-almide test             # 7 モジュール 20 テスト
+almide test             # 9 モジュール 22 テスト
 ```
 
 Almide 0.61 以降が必要です。

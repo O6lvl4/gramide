@@ -10,7 +10,9 @@ An agent editing code asks a parser two questions, thousands of times a session:
 gramide answers those and nothing else. It is not a compiler front end: no name
 resolution, no types, no evaluation of string interpolations. Its output is a tree
 of `Node { kind, field, start, end, kids }` over token indices, and three commands on
-top of it (`check`, `outline`, `parse`).
+top of it (`check`, `outline`, `tags`), plus `map`, which turns every file's tags into a
+ranked, budgeted map of a repository (src/map.almd, a port of the ranking famulus5 used:
+reference edges between files, PageRank personalised toward the task's mentions).
 
 ## Shape
 
