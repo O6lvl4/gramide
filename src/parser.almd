@@ -1,0 +1,331 @@
+// parser — a grammar is a value; parsing is interpreting it over tokens.
+//
+// Rules are ordinary Almide data, built with the constructors at the
+// bottom of this file and looked up by name in a Grammar. The engine is a
+// backtracking parser with ordered choice (a PEG): `alt` tries its
+// alternatives in order and commits to the first that matches, `rep` is
+// greedy, and a rule either matches at a position or does not. No
+// separate generator step, no tables — a grammar is edited and run.
+//
+// Left recursion is not supported and not needed: expressions are written
+// as precedence levels (`sum = product (("+" | "-") product)*`) and the
+// binary nodes are folded left after the match, which is what every
+// hand-written parser does.
+//
+// Errors: the parser remembers the FARTHEST token any rule failed at and
+// what was expected there. That position is where a human would say the
+// syntax breaks, and it is what `check` reports.
+
+import self.tree
+
+type Rule =
+  | Tok(String)                 // a token of this kind → leaf node (identifier, integer, …)
+  | Lit(String)                 // a token with exactly this text, dropped from the tree
+  | Keep(String)                // a token with this text, kept as a leaf (operators in binary nodes)
+  | Ref(String)                 // another rule, by name
+  | Seq(List[Rule])
+  | Alt(List[Rule])
+  | Rep(Rule)                   // zero or more
+  | Rep1(Rule)                  // one or more
+  | Opt(Rule)
+  | Wrap(String, Rule)          // wrap what the rule produced in a node of this kind
+  | Field(String, Rule)         // name the node(s) the rule produced
+  | Not(Rule)                   // negative lookahead, consumes nothing
+  | Ahead(Rule)                 // positive lookahead, consumes nothing
+  | Left(String, Rule, Rule)    // operand (op operand)* folded left into nodes of this kind
+  | Eps
+
+type Grammar = { start: String, rules: Map[String, Rule] }
+
+// Parser state, threaded through every rule and returned with each result
+// (a plain value; nothing is mutated in place). `far` is the farthest token
+// index at which something failed to match; `expected` what was wanted
+// there. Both only ever move forward.
+type State = { far: Int, expected: List[String] }
+
+type Hit = { kids: List[tree.Node], pos: Int }
+type Out = { hit: Option[Hit], st: State }
+
+type Failure = { line: Int, col: Int, found: String, expected: List[String] }
+
+fn describe(r: Rule) -> String = match r {
+  Tok(k) => k,
+  Lit(t) => "`" + t + "`",
+  Keep(t) => "`" + t + "`",
+  Ref(n) => n,
+  Seq(xs) => match list.first(xs) { some(x) => describe(x), none => "nothing" },
+  Alt(xs) => list.join(list.map(xs, (x) => describe(x)), " or "),
+  Rep(x) => describe(x),
+  Rep1(x) => describe(x),
+  Opt(x) => describe(x),
+  Wrap(_, x) => describe(x),
+  Field(_, x) => describe(x),
+  Not(_) => "not this",
+  Ahead(x) => describe(x),
+  Left(_, x, _) => describe(x),
+  Eps => "nothing",
+}
+
+fn noted(st: State, pos: Int, what: String) -> State =
+  if pos > st.far then State { far: pos, expected: [what] }
+  else if pos == st.far and not list.contains(st.expected, what) then State { far: st.far, expected: st.expected + [what] }
+  else st
+
+fn miss(st: State, pos: Int, what: String) -> Out = Out { hit: none, st: noted(st, pos, what) }
+fn hit(st: State, kids: List[tree.Node], pos: Int) -> Out = Out { hit: some(Hit { kids: kids, pos: pos }), st: st }
+
+// Match `r` at token `pos`.
+//
+// One self-recursive function on purpose: sequence, choice, repetition and
+// the left fold are loops inside it rather than helper functions. The
+// native backend passes a list by reference only when the function is not
+// part of a mutually recursive group; helpers would make every call copy
+// the grammar and the token list, and parsing would go quadratic.
+fn parse_rule(g: Grammar, toks: List[tree.Token], st0: State, r: Rule, pos: Int) -> Out = match r {
+  Eps => hit(st0, [], pos),
+  Tok(kind) => match list.get(toks, pos) {
+    some(t) => if t.kind != kind then miss(st0, pos, kind)
+      else if kind == "newline" or kind == "eof" then hit(st0, [], pos + 1)
+      else hit(st0, [tree.leaf(kind, pos)], pos + 1),
+    none => miss(st0, pos, kind),
+  },
+  Lit(text) => match list.get(toks, pos) {
+    some(t) => if t.text == text and t.kind != "string" and t.kind != "neg" then hit(st0, [], pos + 1) else miss(st0, pos, "`" + text + "`"),
+    none => miss(st0, pos, "`" + text + "`"),
+  },
+  Keep(text) => match list.get(toks, pos) {
+    some(t) => if t.text == text and t.kind != "string" and t.kind != "neg" then hit(st0, [tree.leaf("op", pos)], pos + 1) else miss(st0, pos, "`" + text + "`"),
+    none => miss(st0, pos, "`" + text + "`"),
+  },
+  Ref(name) => match map.get(g.rules, name) {
+    some(rule) => parse_rule(g, toks, st0, rule, pos),
+    none => miss(st0, pos, "<missing rule " + name + ">"),
+  },
+  Seq(xs) => {
+    var st = st0
+    var p = pos
+    var kids: List[tree.Node] = []
+    var failed = false
+    for x in xs {
+      if not failed then {
+        let o = parse_rule(g, toks, st, x, p)
+        st = o.st
+        match o.hit {
+          some(h) => { p = h.pos; kids = kids + h.kids },
+          none => { failed = true },
+        }
+      } else ()
+    }
+    if failed then Out { hit: none, st: st } else hit(st, kids, p)
+  },
+  Alt(xs) => {
+    var st = st0
+    var found: Option[Hit] = none
+    for x in xs {
+      if option.is_none(found) then {
+        let o = parse_rule(g, toks, st, x, pos)
+        st = o.st
+        found = o.hit
+      } else ()
+    }
+    Out { hit: found, st: st }
+  },
+  Rep(x) => {
+    var st = st0
+    var p = pos
+    var kids: List[tree.Node] = []
+    var go = true
+    while go {
+      let o = parse_rule(g, toks, st, x, p)
+      st = o.st
+      match o.hit {
+        some(h) => if h.pos == p then { go = false } else { p = h.pos; kids = kids + h.kids },
+        none => { go = false },
+      }
+    }
+    hit(st, kids, p)
+  },
+  Rep1(x) => {
+    var st = st0
+    var p = pos
+    var kids: List[tree.Node] = []
+    var count = 0
+    var go = true
+    while go {
+      let o = parse_rule(g, toks, st, x, p)
+      st = o.st
+      match o.hit {
+        some(h) => if h.pos == p then { go = false } else { p = h.pos; kids = kids + h.kids; count = count + 1 },
+        none => { go = false },
+      }
+    }
+    if count == 0 then Out { hit: none, st: st } else hit(st, kids, p)
+  },
+  Opt(x) => {
+    let o = parse_rule(g, toks, st0, x, pos)
+    match o.hit {
+      some(_) => o,
+      none => hit(o.st, [], pos),
+    }
+  },
+  Wrap(kind, x) => {
+    let o = parse_rule(g, toks, st0, x, pos)
+    match o.hit {
+      some(h) => hit(o.st, [tree.node(kind, h.kids, pos, h.pos)], h.pos),
+      none => o,
+    }
+  },
+  Field(name, x) => {
+    let o = parse_rule(g, toks, st0, x, pos)
+    match o.hit {
+      some(h) => hit(o.st, list.map(h.kids, (k) => tree.with_field(k, name)), h.pos),
+      none => o,
+    }
+  },
+  Not(x) => match parse_rule(g, toks, st0, x, pos).hit {
+    some(_) => Out { hit: none, st: st0 },
+    none => hit(st0, [], pos),
+  },
+  Ahead(x) => match parse_rule(g, toks, st0, x, pos).hit {
+    some(_) => hit(st0, [], pos),
+    none => Out { hit: none, st: st0 },
+  },
+  Left(kind, operand, op) => {
+    let o = parse_rule(g, toks, st0, operand, pos)
+    match o.hit {
+      none => o,
+      some(h) => {
+        var st = o.st
+        var p = h.pos
+        var left = h.kids
+        var go = true
+        while go {
+          let oo = parse_rule(g, toks, st, op, p)
+          st = oo.st
+          match oo.hit {
+            none => { go = false },
+            some(oh) => {
+              let rr = parse_rule(g, toks, st, operand, oh.pos)
+              st = rr.st
+              match rr.hit {
+                none => { go = false },
+                some(rh) => {
+                  let lhs = list.map(left, (n) => tree.with_field(n, "left"))
+                  let opk = list.map(oh.kids, (n) => tree.with_field(n, "operator"))
+                  let rhs = list.map(rh.kids, (n) => tree.with_field(n, "right"))
+                  left = [tree.node(kind, lhs + opk + rhs, pos, rh.pos)]
+                  p = rh.pos
+                },
+              }
+            },
+          }
+        }
+        hit(st, left, p)
+      },
+    }
+  },
+}
+
+type Parsed = { root: tree.Node, toks: List[tree.Token] }
+
+fn failure_at(toks: List[tree.Token], st: State) -> Failure = {
+  let t = list.get(toks, st.far)
+  Failure {
+    line: option.map(t, (x) => x.line) ?? 0,
+    col: option.map(t, (x) => x.col) ?? 0,
+    found: match t { some(x) => if x.kind == "eof" then "end of file" else if x.kind == "newline" then "end of line" else "`" + x.text + "`", none => "end of file" },
+    expected: st.expected,
+  }
+}
+
+fn format_failure(f: Failure) -> String = {
+  let exp = if list.is_empty(f.expected) then "" else " (expected " + list.join(list.take(list.unique(f.expected), 6), ", ") + ")"
+  int.to_string(f.line) + ":" + int.to_string(f.col) + ": unexpected " + f.found + exp
+}
+
+// Parse the whole token stream with the grammar's start rule. The start
+// rule must consume everything up to `eof`; anything left over is the
+// error, reported at the farthest point the grammar reached.
+fn parse(g: Grammar, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
+  let st = State { far: 0, expected: [] }
+  let o = parse_rule(g, toks, st, Seq([Ref(g.start), Tok("eof")]), 0)
+  match o.hit {
+    some(h) => match list.first(list.filter(h.kids, (k) => k.kind != "eof")) {
+      some(root) => ok(Parsed { root: root, toks: toks }),
+      none => ok(Parsed { root: tree.node(g.start, [], 0, list.len(toks)), toks: toks }),
+    },
+    none => err(failure_at(toks, o.st)),
+  }
+}
+
+// ── constructors, so a grammar reads like a grammar ──────────────────────
+fn tok(k: String) -> Rule = Tok(k)
+fn lit(t: String) -> Rule = Lit(t)
+fn keep(t: String) -> Rule = Keep(t)
+fn r(name: String) -> Rule = Ref(name)
+fn seq(xs: List[Rule]) -> Rule = Seq(xs)
+fn alt(xs: List[Rule]) -> Rule = Alt(xs)
+fn rep(x: Rule) -> Rule = Rep(x)
+fn rep1(x: Rule) -> Rule = Rep1(x)
+fn opt(x: Rule) -> Rule = Opt(x)
+fn wrap(kind: String, x: Rule) -> Rule = Wrap(kind, x)
+fn field(name: String, x: Rule) -> Rule = Field(name, x)
+fn nott(x: Rule) -> Rule = Not(x)
+fn ahead(x: Rule) -> Rule = Ahead(x)
+fn leftf(kind: String, operand: Rule, op: Rule) -> Rule = Left(kind, operand, op)
+fn lits(ts: List[String]) -> Rule = Alt(list.map(ts, (t) => Lit(t)))
+fn keeps(ts: List[String]) -> Rule = Alt(list.map(ts, (t) => Keep(t)))
+// `a, b, c` with an optional trailing comma
+fn comma_list(x: Rule) -> Rule = opt(seq([x, rep(seq([lit(","), x])), opt(lit(","))]))
+
+fn grammar(start: String, rules: List[(String, Rule)]) -> Grammar = {
+  var m: Map[String, Rule] = [:]
+  for (name, rule) in rules { map.insert(m, name, rule) }
+  Grammar { start: start, rules: m }
+}
+
+// ── a grammar small enough to test the engine with ───────────────────────
+fn arith() -> Grammar = grammar("expr", [
+  ("expr", leftf("binary", r("term"), keeps(["+", "-"]))),
+  ("term", leftf("binary", r("atom"), keeps(["*", "/"]))),
+  ("atom", alt([tok("integer"), seq([lit("("), r("expr"), lit(")")])])),
+])
+
+fn toks_of(texts: List[String]) -> List[tree.Token] = {
+  var out: List[tree.Token] = []
+  var i = 0
+  for t in texts {
+    let kind = if t == "" then "eof" else if string.is_digit(t) then "integer" else "punct"
+    list.push(out, tree.Token { kind: kind, text: t, start: i, end: i + 1, line: 1, col: i + 1 })
+    i = i + 1
+  }
+  out
+}
+
+test "left fold builds ((1 + 2) - 3) and precedence nests * under +" {
+  let p = parse(arith(), toks_of(["1", "+", "2", "-", "3", ""]))!
+  assert_eq(tree.sexp(p.root), "(binary left:(binary left:(integer) operator:(op) right:(integer)) operator:(op) right:(integer))")
+  let q = parse(arith(), toks_of(["1", "+", "2", "*", "3", ""]))!
+  assert_eq(tree.sexp(q.root), "(binary left:(integer) operator:(op) right:(binary left:(integer) operator:(op) right:(integer)))")
+}
+
+test "parentheses and a lone atom" {
+  let p = parse(arith(), toks_of(["(", "1", "+", "2", ")", "*", "3", ""]))!
+  assert_eq(tree.sexp(p.root), "(binary left:(binary left:(integer) operator:(op) right:(integer)) operator:(op) right:(integer))")
+  assert_eq(tree.sexp(parse(arith(), toks_of(["7", ""]))!.root), "(integer)")
+}
+
+test "the error names the farthest point and what was expected there" {
+  match parse(arith(), toks_of(["1", "+", "", ""])) {
+    ok(_) => assert(false),
+    err(f) => {
+      assert_eq(f.col, 3)
+      assert(list.contains(f.expected, "integer"))
+      assert(list.contains(f.expected, "`(`"))
+    },
+  }
+  match parse(arith(), toks_of(["1", "2", ""])) {
+    ok(_) => assert(false),
+    err(f) => assert_eq(f.col, 2),
+  }
+}

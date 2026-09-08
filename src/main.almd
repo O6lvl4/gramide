@@ -1,0 +1,70 @@
+// gramide — syntax trees for agents.
+//
+//   gramide check <file>      exit 0 if the file parses, else the error and exit 1
+//   gramide parse <file>      the tree as an s-expression
+//   gramide tokens <file>     the token stream, one per line
+//   gramide outline <file>    declarations with their lines
+//
+// Only Almide is understood at this stage; the grammar lives in
+// src/lang_almide.almd and the engine in src/parser.almd.
+
+import self.tree
+import self.lexer
+import self.parser
+import self.lang_almide
+import fs
+import env
+import process
+
+fn usage() -> String = "usage: gramide (check | parse | tokens | outline) <file>"
+
+effect fn read(path: String) -> Result[String, String] = fs.read_text(path) |> result.map_err((e) => path + ": " + e)
+
+fn lex_error(path: String, e: lexer.LexError) -> String =
+  path + ":" + int.to_string(e.line) + ":" + int.to_string(e.col) + ": " + e.message
+
+fn parse_source(path: String, src: String) -> Result[parser.Parsed, String] = {
+  let toks = lexer.tokenize(src) |> result.map_err((e) => lex_error(path, e))!
+  parser.parse(lang_almide.almide(), toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
+}
+
+// One line per declaration: `L<start>-<end> <kind> <name>`; nested
+// declarations (methods in a protocol, tests' where clauses) indent.
+fn outline(p: parser.Parsed, src: String) -> List[String] =
+  list.flat_map(p.root.kids, (d) => outline_decl(d, p.toks, src, ""))
+
+fn outline_decl(d: tree.Node, toks: List[tree.Token], src: String, indent: String) -> List[String] = {
+  let name = match tree.child(d, "name") {
+    some(n) => if list.is_empty(n.kids) then tree.leaf_text(n, toks) else tree.text_of(n, toks, src),
+    none => match tree.child(d, "path") { some(n) => tree.text_of(n, toks, src), none => "" },
+  }
+  let line = indent + "L" + int.to_string(tree.start_line(d, toks)) + "-" + int.to_string(tree.end_line(d, toks)) + " " + d.kind + " " + name
+  let inner = list.flat_map(tree.children_of_kind(d, "method_signature"), (m) => outline_decl(m, toks, src, indent + "  "))
+  [line] + inner
+}
+
+effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
+  let src = read(path)!
+  match cmd {
+    "tokens" => {
+      let toks = lexer.tokenize(src) |> result.map_err((e) => lex_error(path, e))!
+      for t in toks { println(int.to_string(t.line) + ":" + int.to_string(t.col) + " " + t.kind + " " + t.text) }
+      ok(())
+    },
+    "parse" => { let p = parse_source(path, src)!; println(tree.sexp(p.root)); ok(()) },
+    "check" => { let _ = parse_source(path, src)!; println(path + ": ok"); ok(()) },
+    "outline" => { let p = parse_source(path, src)!; for l in outline(p, src) { println(l) }; ok(()) },
+    _ => err(usage()),
+  }
+}
+
+effect fn main() -> Unit = {
+  let argv = env.args()
+  match (list.get(argv, 0), list.get(argv, 1)) {
+    (some(cmd), some(path)) => match run(cmd, path) {
+      ok(_) => (),
+      err(e) => { eprintln(e); process.exit(1) },
+    },
+    _ => { eprintln(usage()); process.exit(2) },
+  }
+}

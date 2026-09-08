@@ -1,0 +1,86 @@
+// tree — the syntax tree gramide produces, and the ways to look at it.
+//
+// A Node spans a range of TOKENS (start inclusive, end exclusive); byte and
+// line positions come from the tokens, so a node never carries a position
+// that could drift from the text it names. `field` is the name the parent's
+// grammar gave this child ("name", "body", …) or "" when the child is
+// positional. Leaves are tokens the grammar asked to keep (identifiers,
+// literals); punctuation and keywords are matched and dropped unless a rule
+// keeps them on purpose.
+
+type Node = { kind: String, field: String, start: Int, end: Int, kids: List[Node] }
+
+type Token = { kind: String, text: String, start: Int, end: Int, line: Int, col: Int }
+
+fn leaf(kind: String, at: Int) -> Node = {
+  let none_kids: List[Node] = []
+  Node { kind: kind, field: "", start: at, end: at + 1, kids: none_kids }
+}
+
+fn node(kind: String, kids: List[Node], start: Int, end: Int) -> Node =
+  Node { kind: kind, field: "", start: start, end: end, kids: kids }
+
+fn with_field(n: Node, field: String) -> Node =
+  Node { kind: n.kind, field: field, start: n.start, end: n.end, kids: n.kids }
+
+// The child a grammar named `field`, if the node has one.
+fn child(n: Node, field: String) -> Option[Node] = list.find(n.kids, (k) => k.field == field)
+
+fn children_of_kind(n: Node, kind: String) -> List[Node] = list.filter(n.kids, (k) => k.kind == kind)
+
+// The text a node spans, joined from its tokens with the original gaps.
+fn text_of(n: Node, toks: List[Token], source: String) -> String = {
+  let first = list.get(toks, n.start)
+  let last = list.get(toks, n.end - 1)
+  match (first, last) {
+    (some(f), some(l)) => string.slice(source, f.start, l.end),
+    _ => "",
+  }
+}
+
+// The text of a leaf's single token.
+fn leaf_text(n: Node, toks: List[Token]) -> String = match list.get(toks, n.start) {
+  some(t) => t.text,
+  none => "",
+}
+
+fn start_line(n: Node, toks: List[Token]) -> Int = match list.get(toks, n.start) {
+  some(t) => t.line,
+  none => 0,
+}
+
+fn end_line(n: Node, toks: List[Token]) -> Int = match list.get(toks, n.end - 1) {
+  some(t) => t.line,
+  none => 0,
+}
+
+// S-expression rendering, the form every parser test compares against.
+// `(kind field:(child) (child))` — leaves print their kind only, so a tree
+// stays stable across whitespace and renames of the text it covers.
+fn sexp(n: Node) -> String = {
+  let head = if n.field == "" then "(" + n.kind else n.field + ":(" + n.kind
+  if list.is_empty(n.kids) then head + ")"
+  else head + " " + list.join(list.map(n.kids, (k) => sexp(k)), " ") + ")"
+}
+
+fn count_nodes(n: Node) -> Int = 1 + list.sum(list.map(n.kids, (k) => count_nodes(k)))
+
+// Depth-first walk collecting every node for which `keep` says yes.
+fn collect(n: Node, keep: (Node) -> Bool) -> List[Node] = {
+  let here = if keep(n) then [n] else []
+  here + list.flat_map(n.kids, (k) => collect(k, keep))
+}
+
+test "sexp renders fields and leaves" {
+  let name = with_field(leaf("identifier", 1), "name")
+  let f = node("function_declaration", [name, node("block", [], 2, 4)], 0, 4)
+  assert_eq(sexp(f), "(function_declaration name:(identifier) (block))")
+  assert_eq(count_nodes(f), 3)
+}
+
+test "child by field" {
+  let name = with_field(leaf("identifier", 1), "name")
+  let f = node("function_declaration", [name], 0, 2)
+  assert_eq(option.map(child(f, "name"), (n) => n.kind), some("identifier"))
+  assert_eq(child(f, "body"), none)
+}
