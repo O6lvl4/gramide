@@ -4,6 +4,7 @@
 //   gramide parse <file>      the tree as an s-expression
 //   gramide tokens <file>     the token stream, one per line
 //   gramide outline <file>    declarations with their lines
+//   gramide tags <file>       definitions and references, for a repo map
 //
 // Only Almide is understood at this stage; the grammar lives in
 // src/lang_almide.almd and the engine in src/parser.almd.
@@ -12,11 +13,12 @@ import self.tree
 import self.lexer
 import self.parser
 import self.lang_almide
+import self.tags
 import fs
 import env
 import process
 
-fn usage() -> String = "usage: gramide (check | parse | tokens | outline) <file>"
+fn usage() -> String = "usage: gramide (check | parse | tokens | outline | tags) <file>"
 
 effect fn read(path: String) -> Result[String, String] = fs.read_text(path) |> result.map_err((e) => path + ": " + e)
 
@@ -54,6 +56,7 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
     "parse" => { let p = parse_source(path, src)!; println(tree.sexp(p.root)); ok(()) },
     "check" => { let _ = parse_source(path, src)!; println(path + ": ok"); ok(()) },
     "outline" => { let p = parse_source(path, src)!; for l in outline(p, src) { println(l) }; ok(()) },
+    "tags" => { let p = parse_source(path, src)!; for l in tags.tags(p.root, p.toks, src) { println(l) }; ok(()) },
     _ => err(usage()),
   }
 }

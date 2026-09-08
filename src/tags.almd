@@ -1,0 +1,81 @@
+// tags — what a file defines and what it mentions.
+//
+// `def <kind> <name> L<start>-<end>` for every declaration, `ref call <name> L<n>`
+// for every call (qualified as `module.name` when written that way) and
+// `ref type <Name> L<n>` for every type mention. This is the input a repo
+// map needs: definitions to rank, references to rank them by.
+
+import self.tree
+import self.lexer
+import self.lang_almide
+import self.parser
+
+type Tag = { role: String, kind: String, name: String, line: Int, end_line: Int }
+
+fn render(t: Tag) -> String =
+  if t.role == "def" then "def " + t.kind + " " + t.name + " L" + int.to_string(t.line) + "-" + int.to_string(t.end_line)
+  else "ref " + t.kind + " " + t.name + " L" + int.to_string(t.line)
+
+let DECLS = ["function_declaration", "type_declaration", "let_declaration", "test_declaration",
+  "protocol_declaration", "method_signature", "variant"]
+
+fn decl_kind(k: String) -> String = match k {
+  "function_declaration" => "function",
+  "type_declaration" => "type",
+  "let_declaration" => "let",
+  "test_declaration" => "test",
+  "protocol_declaration" => "protocol",
+  "method_signature" => "method",
+  "variant" => "variant",
+  _ => k,
+}
+
+fn name_of(n: tree.Node, toks: List[tree.Token], src: String) -> String = match tree.child(n, "name") {
+  some(m) => if list.is_empty(m.kids) then tree.leaf_text(m, toks) else tree.text_of(m, toks, src),
+  none => "",
+}
+
+// Walk the tree. Calls are recognised on the flat postfix chain the grammar
+// produces: `identifier arguments` or `identifier field_access arguments`.
+fn walk(n: tree.Node, toks: List[tree.Token], src: String) -> List[Tag] = {
+  var out: List[Tag] = []
+  if list.contains(DECLS, n.kind) then
+    list.push(out, Tag { role: "def", kind: decl_kind(n.kind), name: name_of(n, toks, src), line: tree.start_line(n, toks), end_line: tree.end_line(n, toks) })
+  else if n.kind == "type_name" and not list.is_empty(n.kids) then {
+    match list.first(n.kids) {
+      some(leaf) => if leaf.kind == "type_name" and list.is_empty(leaf.kids) then
+        list.push(out, Tag { role: "ref", kind: "type", name: tree.leaf_text(leaf, toks), line: tree.start_line(leaf, toks), end_line: 0 })
+      else (),
+      none => (),
+    }
+  }
+  else ()
+  let kids = n.kids
+  var i = 0
+  while i < list.len(kids) {
+    let k = list.get(kids, i) ?? n
+    let next = list.get(kids, i + 1)
+    let is_call = match next { some(m) => m.kind == "arguments", none => false }
+    if is_call and k.kind == "identifier" then
+      list.push(out, Tag { role: "ref", kind: "call", name: tree.leaf_text(k, toks), line: tree.start_line(k, toks), end_line: 0 })
+    else if is_call and k.kind == "field_access" then {
+      let prev = if i > 0 then list.get(kids, i - 1) else none
+      let owner = match prev { some(p) => if p.kind == "identifier" then tree.leaf_text(p, toks) + "." else "", none => "" }
+      let f = match tree.child(k, "field") { some(m) => tree.leaf_text(m, toks), none => "" }
+      list.push(out, Tag { role: "ref", kind: "call", name: owner + f, line: tree.start_line(k, toks), end_line: 0 })
+    }
+    else ()
+    out = out + walk(k, toks, src)
+    i = i + 1
+  }
+  out
+}
+
+fn tags(root: tree.Node, toks: List[tree.Token], src: String) -> List[String] = list.map(walk(root, toks, src), (t) => render(t))
+
+test "definitions, calls and type mentions" {
+  let src = "type P = { x: Int }\nfn area(p: P) -> Int = int.abs(p.x) * sq(2)\n"
+  let toks = lexer.tokenize(src)!
+  let p = parser.parse(lang_almide.almide(), toks) |> result.map_err((f) => parser.format_failure(f))!
+  assert_eq(tags(p.root, toks, src), ["def type P L1-1", "ref type Int L1", "def function area L2-2", "ref type P L2", "ref type Int L2", "ref call int.abs L2", "ref call sq L2"])
+}

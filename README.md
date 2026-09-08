@@ -12,6 +12,7 @@ there is no generator step and no native library between the agent and the tree.
 gramide check   src/main.almd     exit 0 if it parses, else `file:line:col: unexpected X (expected …)`
 gramide outline src/main.almd     one line per declaration: L12-40 function_declaration parse
 gramide parse   src/main.almd     the whole tree as an s-expression
+gramide tags    src/main.almd     `def function parse L40-58`, `ref call list.map L44`, `ref type Node L12` — a repo map's input
 gramide tokens  src/main.almd     the token stream, one per line
 ```
 
@@ -74,7 +75,7 @@ group; with helper functions every call copied the grammar and the token list an
 
 ```
 almide build            # → ./gramide
-almide test             # 15 tests across the four modules
+almide test             # 16 tests across the five modules
 ```
 
 Requires Almide 0.61 or later.

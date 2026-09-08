@@ -11,6 +11,7 @@
 gramide check   src/main.almd     パースできれば exit 0、失敗なら `file:line:col: unexpected X (expected …)`
 gramide outline src/main.almd     宣言ごとに一行: L12-40 function_declaration parse
 gramide parse   src/main.almd     木全体を S 式で
+gramide tags    src/main.almd     `def function parse L40-58`、`ref call list.map L44`、`ref type Node L12` — リポジトリマップの入力
 gramide tokens  src/main.almd     トークン列を一行ずつ
 ```
 
@@ -64,7 +65,7 @@ Almide のネイティブバックエンドがリスト引数を参照渡しに�
 
 ```
 almide build            # → ./gramide
-almide test             # 4 モジュール 15 テスト
+almide test             # 5 モジュール 16 テスト
 ```
 
 Almide 0.61 以降が必要です。
