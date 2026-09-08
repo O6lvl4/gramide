@@ -16,11 +16,18 @@ fn render(t: Tag) -> String =
   if t.role == "def" then "def " + t.kind + " " + t.name + " L" + int.to_string(t.line) + "-" + int.to_string(t.end_line)
   else "ref " + t.kind + " " + t.name + " L" + int.to_string(t.line)
 
-let DECLS = ["function_declaration", "type_declaration", "let_declaration", "test_declaration",
-  "protocol_declaration", "method_signature", "variant"]
+// Node kinds that define a name, across languages. A grouped Go `type ( … )`
+// is a type_declaration without a name whose type_specs carry the names.
+let DECLS = ["function_declaration", "method_declaration", "type_declaration", "let_declaration", "test_declaration",
+  "protocol_declaration", "method_signature", "variant", "type_spec", "var_spec", "const_spec", "field"]
 
 fn decl_kind(k: String) -> String = match k {
   "function_declaration" => "function",
+  "method_declaration" => "method",
+  "type_spec" => "type",
+  "var_spec" => "var",
+  "const_spec" => "const",
+  "field" => "field",
   "type_declaration" => "type",
   "let_declaration" => "let",
   "test_declaration" => "test",
@@ -39,11 +46,12 @@ fn name_of(n: tree.Node, toks: List[tree.Token], src: String) -> String = match 
 // produces: `identifier arguments` or `identifier field_access arguments`.
 fn walk(n: tree.Node, toks: List[tree.Token], src: String) -> List[Tag] = {
   var out: List[Tag] = []
-  if list.contains(DECLS, n.kind) then
-    list.push(out, Tag { role: "def", kind: decl_kind(n.kind), name: name_of(n, toks, src), line: tree.start_line(n, toks), end_line: tree.end_line(n, toks) })
+  let name = if list.contains(DECLS, n.kind) then name_of(n, toks, src) else ""
+  if name != "" then
+    list.push(out, Tag { role: "def", kind: decl_kind(n.kind), name: name, line: tree.start_line(n, toks), end_line: tree.end_line(n, toks) })
   else if n.kind == "type_name" and not list.is_empty(n.kids) then {
     match list.first(n.kids) {
-      some(leaf) => if leaf.kind == "type_name" and list.is_empty(leaf.kids) then
+      some(leaf) => if (leaf.kind == "type_name" or leaf.kind == "identifier") and list.is_empty(leaf.kids) then
         list.push(out, Tag { role: "ref", kind: "type", name: tree.leaf_text(leaf, toks), line: tree.start_line(leaf, toks), end_line: 0 })
       else (),
       none => (),
@@ -77,5 +85,17 @@ test "definitions, calls and type mentions" {
   let src = "type P = { x: Int }\nfn area(p: P) -> Int = int.abs(p.x) * sq(2)\n"
   let toks = lexer.tokenize(src)!
   let p = parser.parse(lang_almide.almide(), toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert_eq(tags(p.root, toks, src), ["def type P L1-1", "ref type Int L1", "def function area L2-2", "ref type P L2", "ref type Int L2", "ref call int.abs L2", "ref call sq L2"])
+  assert_eq(tags(p.root, toks, src), ["def type P L1-1", "def field x L1-1", "ref type Int L1", "def function area L2-2", "ref type P L2", "ref type Int L2", "ref call int.abs L2", "ref call sq L2"])
+}
+
+// `outline`: the definitions only, one per line, nested ones indented by
+// how many definitions enclose them.
+fn outline(root: tree.Node, toks: List[tree.Token], src: String) -> List[String] = outline_walk(root, toks, src, "")
+
+fn outline_walk(n: tree.Node, toks: List[tree.Token], src: String, indent: String) -> List[String] = {
+  let name = if list.contains(DECLS, n.kind) then name_of(n, toks, src) else ""
+  let here = if name == "" then [] else
+    [indent + "L" + int.to_string(tree.start_line(n, toks)) + "-" + int.to_string(tree.end_line(n, toks)) + " " + decl_kind(n.kind) + " " + name]
+  let deeper = if name == "" then indent else indent + "  "
+  here + list.flat_map(n.kids, (k) => outline_walk(k, toks, src, deeper))
 }

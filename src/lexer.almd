@@ -26,6 +26,20 @@ fn is_space(b: Int) -> Bool = b == 32 or b == 9 or b == 13
 
 fn at(bytes: List[Int], i: Int) -> Int = list.get(bytes, i) ?? -1
 
+// The text of bytes[s, e). Built with list.get rather than list.slice: the
+// native backend borrows a list parameter only while every use of it is a
+// borrowing one, and list.slice consumes its argument, which would make
+// every token clone the whole source.
+fn text(bytes: List[Int], s: Int, e: Int) -> String = {
+  var out: List[Int] = []
+  var k = s
+  while k < e { list.push(out, at(bytes, k)); k = k + 1 }
+  string.from_bytes(out)
+}
+
+fn mk(bytes: List[Int], kind: String, s: Int, e: Int, line: Int, line_start: Int) -> tree.Token =
+  tree.Token { kind: kind, text: text(bytes, s, e), start: s, end: e, line: line, col: s - line_start + 1 }
+
 // The keywords of Almide. `word` tokens that are not here are identifiers.
 let KEYWORDS = ["module", "import", "type", "protocol", "for", "in", "fn", "let", "var", "mut", "if", "then", "else",
   "match", "true", "false", "not", "and", "or", "pub", "effect", "test", "guard", "break", "continue", "while",
@@ -131,16 +145,23 @@ fn scan_string(bytes: List[Int], start: Int) -> Option[Int] = {
   if good then some(i) else none
 }
 
-fn scan_operator(bytes: List[Int], start: Int) -> Option[String] =
-  list.find(OPERATORS, (op) => {
+// A plain loop, not `list.find` with a lambda: a lambda that reads the
+// captured `bytes` clones the whole source per call.
+fn scan_operator(bytes: List[Int], start: Int) -> Option[String] = {
+  var found: Option[String] = none
+  var idx = 0
+  while option.is_none(found) and idx < list.len(OPERATORS) {
+    let op = list.get(OPERATORS, idx) ?? ""
     let ob = string.to_bytes(op)
     var k = 0
     var same = true
     while same and k < list.len(ob) {
       if at(bytes, start + k) != (list.get(ob, k) ?? -2) then same = false else k = k + 1
     }
-    same
-  })
+    if same then found = some(op) else idx = idx + 1
+  }
+  found
+}
 
 // ── the driver ────────────────────────────────────────────────────────────
 
@@ -152,15 +173,13 @@ fn tokenize(source: String) -> Result[List[tree.Token], LexError] = {
   var line = 1
   var line_start = 0
   var failure: Option[LexError] = none
-  let push = (kind: String, s: Int, e: Int) => {
-    list.push(toks, tree.Token { kind: kind, text: string.from_bytes(list.slice(bytes, s, e)), start: s, end: e, line: line, col: s - line_start + 1 })
-  }
+  // (no closure here on purpose: one that read `bytes` would clone it per call)
   while i < n and option.is_none(failure) {
     let b = at(bytes, i)
     if is_space(b) then i = i + 1
     else if b == 10 then {
       // one newline token per run of blank lines
-      match list.last(toks) { some(t) => if t.kind != "newline" then push("newline", i, i) else (), none => () }
+      match list.last(toks) { some(t) => if t.kind != "newline" then list.push(toks, mk(bytes, "newline", i, i, line, line_start)) else (), none => () }
       i = i + 1
       line = line + 1
       line_start = i
@@ -181,7 +200,7 @@ fn tokenize(source: String) -> Result[List[tree.Token], LexError] = {
     else if b == 34 or b == 39 or (b == 114 and at(bytes, i + 1) == 34) then {
       match scan_string(bytes, i) {
         some(e) => {
-          push("string", i, e)
+          list.push(toks, mk(bytes, "string", i, e, line, line_start))
           // a heredoc spans lines; keep the line counter honest
           var k = i
           while k < e { if at(bytes, k) == 10 then { line = line + 1; line_start = k + 1 } else (); k = k + 1 }
@@ -192,23 +211,23 @@ fn tokenize(source: String) -> Result[List[tree.Token], LexError] = {
     }
     else if is_digit(b) then {
       let (e, kind) = scan_number(bytes, i)
-      push(kind, i, e)
+      list.push(toks, mk(bytes, kind, i, e, line, line_start))
       i = e
     }
     else if is_alpha(b) or b >= 128 then {
       let e = scan_word(bytes, i)
-      let word = string.from_bytes(list.slice(bytes, i, e))
+      let word = text(bytes, i, e)
       let kind = if list.contains(KEYWORDS, word) then "keyword"
         else if is_upper(b) then "type_name"
         else "identifier"
-      push(kind, i, e)
+      list.push(toks, mk(bytes, kind, i, e, line, line_start))
       i = e
     }
     else if b == 96 then {
       let e = scan_backtick(bytes, i)
       if e == i then { failure = some(LexError { line: line, col: i - line_start + 1, message: "empty backtick name" }) }
       else {
-        push(if is_upper(at(bytes, i + 1)) then "type_name" else "identifier", i, e)
+        list.push(toks, mk(bytes, if is_upper(at(bytes, i + 1)) then "type_name" else "identifier", i, e, line, line_start))
         i = e
       }
     }
@@ -218,7 +237,7 @@ fn tokenize(source: String) -> Result[List[tree.Token], LexError] = {
         // it never continues the line above as a binary minus
         let at_line_start = match list.last(toks) { some(t) => t.kind == "newline", none => true }
         let glued = op == "-" and at_line_start and not is_space(at(bytes, i + 1)) and at(bytes, i + 1) != 10
-        push(if glued then "neg" else "punct", i, i + string.len(op))
+        list.push(toks, mk(bytes, if glued then "neg" else "punct", i, i + string.len(op), line, line_start))
         i = i + string.len(op)
       },
       none => { failure = some(LexError { line: line, col: i - line_start + 1, message: "unexpected character " + string.from_bytes([b]) }) },
@@ -227,8 +246,8 @@ fn tokenize(source: String) -> Result[List[tree.Token], LexError] = {
   match failure {
     some(e) => err(e),
     none => {
-      match list.last(toks) { some(t) => if t.kind != "newline" then push("newline", n, n) else (), none => () }
-      push("eof", n, n)
+      match list.last(toks) { some(t) => if t.kind != "newline" then list.push(toks, mk(bytes, "newline", n, n, line, line_start)) else (), none => () }
+      list.push(toks, mk(bytes, "eof", n, n, line, line_start))
       ok(toks)
     },
   }

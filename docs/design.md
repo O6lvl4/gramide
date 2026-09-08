@@ -56,27 +56,46 @@ becomes the new `far` and the expectation list restarts; at the same index the
 expectation is appended. When the start rule fails, the error is "unexpected X at
 `far` (expected …)". That position is where a human would say the syntax breaks.
 
-## Two rules that cost a day each
+## What the native backend taught the engine
+
+Every one of these showed up as a corpus run that did not finish. Each is a
+rule about how Almide's native backend copies values, verified by reading the
+generated Rust, and each is now a comment at the place in the code it shaped.
 
 **No re-parsing in the grammar.** Ordered choice is only linear if alternatives fail
-early. Two places in the first draft of the Almide grammar did not: `stmt = assign |
-expr` re-parsed the whole expression after failing on `=`, and `[a, …]` tried the
-map form (`[k: v]`) first, parsing the first element fully before failing on `:`.
-Each doubled the work per nesting level, which is exponential in nesting depth. Both
-were rewritten so the shared prefix is parsed once and the token after it decides
-(`expr ("=" expr)?`, `"[" expr (":" … | "," …)`).
+early. `stmt = assign | expr` re-parsed the whole expression after failing on `=`, and
+`[a, …]` tried the map form first, parsing the first element fully before failing on
+`:`. Each doubled the work per nesting level. Both now parse the shared prefix once and
+let the next token decide.
 
-**One self-recursive engine function.** The Almide native backend passes a list or
-record parameter by reference (`&[T]`, `&G`) only when the function is not part of a
-mutually recursive group. With `parse_rule` calling `parse_seq`, `parse_alt`,
-`parse_many` and `fold_left`, every call cloned the whole grammar and the whole token
-list: a 280-line file took 21 s. Sequence, choice, repetition and the left fold are
-now loops inside `parse_rule`; the same file takes 0.15 s and the 3,382-file Almide
-corpus 7 s on 8 cores.
+**One self-recursive engine function.** A list or record parameter is passed by
+reference only when the function is not part of a mutually recursive group
+(almide/almide#2040). With `parse_rule` calling four helpers, every call cloned the
+grammar and the token list: 21 s for a 280-line file. Sequence, choice, repetition and
+the left fold are loops inside `parse_rule`; 0.15 s.
+
+**No closure reads a captured list.** A lambda that reads a captured `var` clones it
+per call. Both lexers had a `push` closure reading `bytes` and a `list.find` lambda in
+the operator scanner: quadratic lexing, 55 s for 32k lines. Plain loops and top-level
+helpers; 0.3 s.
+
+**Helpers that take the big list live in the same module, and never hand it to a
+consumer.** A call into another module, or to a consuming stdlib function such as
+`list.slice`, marks the parameter owned and the whole list is cloned at every call.
+The byte helpers are duplicated per lexer module and build token text with `list.get`.
+Likewise `x ?? fallback` on anything holding the parameter marks it escaping; a
+`match` does not.
+
+**The grammar runs compiled.** A `Rule` value is what an author writes; the engine
+runs on a flat arena of three-integer nodes with texts in a parallel list and every
+`Ref` resolved to an index. A node visit copies twelve bytes. Running on the `Rule`
+tree cloned a sub-grammar at every reference, and the parser state's `expected` list
+held strings that were copied on every call; it now holds node ids and renders them
+only for an error. Together: a 116k-line Go file from 188 s to 7.6 s.
 
 ## What is measured
 
-Every `.almd` file in the Almide repository, excluding `research/grammar-lab` (syntax
+**Almide.** Every `.almd` file in the Almide repository, excluding `research/grammar-lab` (syntax
 experiments in deliberately non-Almide forms) and `docs/roadmap` (pseudo-code with
 `...` placeholders):
 
@@ -86,8 +105,14 @@ experiments in deliberately non-Almide forms) and `docs/roadmap` (pseudo-code wi
   `let … in`, `let rec`, `??` without a fallback).
 - 720 other `broken.almd` fixtures parse and fail later in the compiler, as intended.
 
-The guarantee this establishes runs one way: a file gramide rejects is broken for the
-compiler too. That is the direction a syntax gate needs.
+**Go.** Every `.go` file under `GOROOT/src` of Go 1.27 (8,077 files):
+
+- 8,042 files parse.
+- 35 files, all under `testdata`, are rejected; `gofmt -e` rejects every one of them.
+- 11 `testdata` files that `gofmt -e` rejects parse (permissiveness, listed below).
+
+The guarantee this establishes runs one way for both languages: a file gramide rejects
+is broken for the reference parser too. That is the direction a syntax gate needs.
 
 ## Known permissiveness
 
@@ -106,10 +131,13 @@ And by design: the inside of `${…}` interpolations is not parsed; two statemen
 one line without a separator are accepted (the compiler accepts `let m = n * 2 m + 1`
 as well).
 
+For Go, the 11 `testdata` files `gofmt` rejects and gramide accepts fail counting or
+character rules the grammar does not enforce: more than two expressions in a `range`
+clause, an empty type-parameter list `[]`, an empty type-argument list, a parameter
+list mixing named and unnamed parameters, `go` with a non-call or parenthesized
+expression, and a non-ASCII character (`☹`) that the lexer accepts as an identifier.
+
 ## Next
 
-1. `outline` fields for references (calls, type mentions) so an agent can rank files
-   by what they mention.
-2. A second language, to prove the lexer/parser split holds.
-3. Memoisation of `Ref` results per (rule, position) if a grammar ever needs it; none
+1. Memoisation of `Ref` results per (rule, position) if a grammar ever needs it; none
    does so far.

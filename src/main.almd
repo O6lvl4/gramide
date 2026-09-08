@@ -6,13 +6,16 @@
 //   gramide outline <file>    declarations with their lines
 //   gramide tags <file>       definitions and references, for a repo map
 //
-// Only Almide is understood at this stage; the grammar lives in
-// src/lang_almide.almd and the engine in src/parser.almd.
+// Languages: Almide (.almd) and Go (.go). Each is a lexer (src/lex_*.almd /
+// src/lexer.almd) plus a grammar value (src/lang_*.almd); the engine in
+// src/parser.almd is shared.
 
 import self.tree
 import self.lexer
+import self.lex_go
 import self.parser
 import self.lang_almide
+import self.lang_go
 import self.tags
 import fs
 import env
@@ -25,9 +28,21 @@ effect fn read(path: String) -> Result[String, String] = fs.read_text(path) |> r
 fn lex_error(path: String, e: lexer.LexError) -> String =
   path + ":" + int.to_string(e.line) + ":" + int.to_string(e.col) + ": " + e.message
 
+// The language is chosen by extension: a lexer and a grammar per language.
+fn tokens_for(path: String, src: String) -> Result[List[tree.Token], String] = {
+  let r = if string.ends_with(path, ".go") then lex_go.tokenize(src) else lexer.tokenize(src)
+  r |> result.map_err((e) => lex_error(path, e))
+}
+
+fn grammar_for(path: String) -> Result[parser.Grammar, String] =
+  if string.ends_with(path, ".go") then ok(lang_go.go())
+  else if string.ends_with(path, ".almd") then ok(lang_almide.almide())
+  else err(path + ": no grammar for this extension (known: .almd, .go)")
+
 fn parse_source(path: String, src: String) -> Result[parser.Parsed, String] = {
-  let toks = lexer.tokenize(src) |> result.map_err((e) => lex_error(path, e))!
-  parser.parse(lang_almide.almide(), toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
+  let g = grammar_for(path)!
+  let toks = tokens_for(path, src)!
+  parser.parse(g, toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
 }
 
 // One line per declaration: `L<start>-<end> <kind> <name>`; nested
@@ -49,13 +64,13 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
   let src = read(path)!
   match cmd {
     "tokens" => {
-      let toks = lexer.tokenize(src) |> result.map_err((e) => lex_error(path, e))!
+      let toks = tokens_for(path, src)!
       for t in toks { println(int.to_string(t.line) + ":" + int.to_string(t.col) + " " + t.kind + " " + t.text) }
       ok(())
     },
     "parse" => { let p = parse_source(path, src)!; println(tree.sexp(p.root)); ok(()) },
     "check" => { let _ = parse_source(path, src)!; println(path + ": ok"); ok(()) },
-    "outline" => { let p = parse_source(path, src)!; for l in outline(p, src) { println(l) }; ok(()) },
+    "outline" => { let p = parse_source(path, src)!; for l in tags.outline(p.root, p.toks, src) { println(l) }; ok(()) },
     "tags" => { let p = parse_source(path, src)!; for l in tags.tags(p.root, p.toks, src) { println(l) }; ok(()) },
     _ => err(usage()),
   }

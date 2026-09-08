@@ -27,9 +27,14 @@ written in, so a grammar can be read, patched and tested like any other module.
 
 ## Status
 
-Almide only, at this stage. Measured against every `.almd` file in the Almide
-repository (3,382 files after excluding two directories of deliberately
-non-Almide syntax experiments):
+Two languages: Almide (`.almd`) and Go (`.go`). Each is measured against a whole
+reference corpus, and the guarantee is the same for both and runs one way: **a file
+gramide rejects is broken for the reference parser too.** The reverse is not promised;
+the grammars are more permissive than the compilers in a few known places listed in
+[docs/design.md](docs/design.md).
+
+**Almide** — every `.almd` file in the Almide repository (3,382 files after excluding
+two directories of deliberately non-Almide syntax experiments):
 
 | files | result |
 |---|---|
@@ -37,13 +42,17 @@ non-Almide syntax experiments):
 | 65 `broken.almd` diagnostic fixtures | all rejected, each also rejected by the compiler |
 | 720 other `broken.almd` fixtures | parse, and fail in the compiler at type checking as intended |
 
-Whole-corpus `check` takes about 7 seconds on 8 cores, roughly 2 ms per file.
+**Go** — every `.go` file under `GOROOT/src` of Go 1.27 (8,077 files, standard
+library, compiler and toolchain, test data included):
 
-The guarantee runs one way: **a file gramide rejects is broken for the compiler
-too.** The reverse is not promised. The grammar is more permissive than the compiler
-in a few known places (chained comparisons, `|>` with an arbitrary right-hand side,
-angle-bracket generics, a `todo` without a string) and it does not parse the inside
-of `${…}` interpolations. See [docs/design.md](docs/design.md) for the list.
+| files | result |
+|---|---|
+| 8,042 files | all parse |
+| 35 files, all under `testdata` | rejected, each also rejected by `gofmt -e` |
+| 11 `testdata` files `gofmt` rejects | parse (gramide is more permissive than `gofmt` here) |
+
+Whole-corpus `check` on 8 cores: 2.5 s for the Almide corpus, 23 s for the Go corpus;
+the largest file, a 116k-line generated Go source, takes 7.6 s alone.
 
 ## How it works
 
@@ -60,22 +69,26 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
   operators are `Left(kind, operand, op)` and fold to the left after matching. The
   parser remembers the farthest token anything failed at and what was expected there,
   which is the error `check` prints.
-- **`src/lang_almide.almd`** — the Almide grammar as a value, following
-  `docs/GRAMMAR.md` in the Almide repository.
+- **`src/lang_almide.almd`**, **`src/lang_go.almd`** — the grammars as values. The Go one
+  builds its expression ladder twice from one function, with and without a trailing
+  composite literal, which is how `if x == T{…} {` is kept unambiguous.
+- **`src/lex_go.almd`** — the Go lexer; semicolon insertion lives here, so the grammar
+  only ever sees a separator where Go sees one.
 - **`src/tree.almd`** — `Node { kind, field, start, end, kids }` spanning token
   indices, with `child(n, "name")`, `text_of`, `sexp`, and `collect`.
 
-A note on the engine: `parse_rule` is one self-recursive function with the loops for
-sequence, choice and repetition inside it. The Almide native backend passes a list
-parameter by reference only when the function is not part of a mutually recursive
-group; with helper functions every call copied the grammar and the token list and a
-280-line file took 21 s. Inlined, the same file takes 0.15 s.
+A note on the engine: the grammar value is compiled once into a flat arena of
+three-integer nodes and `parse_rule` is one self-recursive function with the loops
+for sequence, choice and repetition inside it. Both shapes come from how the Almide
+native backend copies values, and [docs/design.md](docs/design.md) records each rule
+with the measurement that forced it (the last one took a 116k-line file from 188 s
+to 7.6 s).
 
 ## Build
 
 ```
 almide build            # → ./gramide
-almide test             # 16 tests across the five modules
+almide test             # 20 tests across the seven modules
 ```
 
 Requires Almide 0.61 or later.

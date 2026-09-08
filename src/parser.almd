@@ -37,161 +37,250 @@ type Rule =
 
 type Grammar = { start: String, rules: Map[String, Rule] }
 
+// ── the compiled grammar ─────────────────────────────────────────────────
+//
+// A Rule value is what a grammar author writes; the engine runs on a flat
+// arena instead. Each node is three integers: a kind, and `a`/`b` whose
+// meaning depends on the kind (a child index, a target rule, a range in
+// the shared child list). Texts live in a parallel list and are fetched
+// only by the nodes that need one. So a node visit copies twelve bytes —
+// in the native backend every value read is a copy, and running the engine
+// on the Rule tree itself cloned a whole sub-grammar at every reference.
+type Op = { kind: Int, a: Int, b: Int }
+type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int }
+
+let K_EPS = 0
+let K_TOK = 1
+let K_LIT = 2
+let K_KEEP = 3
+let K_REF = 4
+let K_SEQ = 5
+let K_ALT = 6
+let K_REP = 7
+let K_REP1 = 8
+let K_OPT = 9
+let K_WRAP = 10
+let K_FIELD = 11
+let K_NOT = 12
+let K_AHEAD = 13
+let K_LEFT = 14
+
+// A subtree's share of the arena: ops and texts numbered from `base`, child
+// index lists numbered from `kbase`. The subtree's own node is the last op.
+type Emitted = { ops: List[Op], texts: List[String], kids: List[Int] }
+
+fn emit(r: Rule, base: Int, kbase: Int) -> Emitted = {
+  let (kind, text, subs) = match r {
+    Eps => (K_EPS, "", []),
+    Tok(k) => (K_TOK, k, []),
+    Lit(t) => (K_LIT, t, []),
+    Keep(t) => (K_KEEP, t, []),
+    Ref(n) => (K_REF, n, []),
+    Seq(xs) => (K_SEQ, "", xs),
+    Alt(xs) => (K_ALT, "", xs),
+    Rep(x) => (K_REP, "", [x]),
+    Rep1(x) => (K_REP1, "", [x]),
+    Opt(x) => (K_OPT, "", [x]),
+    Wrap(k, x) => (K_WRAP, k, [x]),
+    Field(f, x) => (K_FIELD, f, [x]),
+    Not(x) => (K_NOT, "", [x]),
+    Ahead(x) => (K_AHEAD, "", [x]),
+    Left(k, x, y) => (K_LEFT, k, [x, y]),
+  }
+  var ops: List[Op] = []
+  var texts: List[String] = []
+  var kids: List[Int] = []
+  var ids: List[Int] = []
+  for s in subs {
+    let e = emit(s, base + list.len(ops), kbase + list.len(kids))
+    for o in e.ops { list.push(ops, o) }
+    for t in e.texts { list.push(texts, t) }
+    for k in e.kids { list.push(kids, k) }
+    list.push(ids, base + list.len(ops) - 1)
+  }
+  let op = if kind == K_SEQ or kind == K_ALT then {
+    let first = kbase + list.len(kids)
+    for id in ids { list.push(kids, id) }
+    Op { kind: kind, a: first, b: list.len(ids) }
+  } else if kind == K_LEFT then Op { kind: kind, a: list.get(ids, 0) ?? 0, b: list.get(ids, 1) ?? 0 }
+  else Op { kind: kind, a: list.get(ids, 0) ?? -1, b: 0 }
+  list.push(ops, op)
+  list.push(texts, text)
+  Emitted { ops: ops, texts: texts, kids: kids }
+}
+
+fn compile(g: Grammar) -> Compiled = {
+  var ops: List[Op] = []
+  var texts: List[String] = []
+  var kids: List[Int] = []
+  var names: Map[String, Int] = [:]
+  for (name, rule) in map.entries(g.rules) {
+    let e = emit(rule, list.len(ops), list.len(kids))
+    for o in e.ops { list.push(ops, o) }
+    for t in e.texts { list.push(texts, t) }
+    for k in e.kids { list.push(kids, k) }
+    map.insert(names, name, list.len(ops) - 1)
+  }
+  // the start rule plus eof, then resolve every reference to its target
+  let e = emit(Seq([Ref(g.start), Tok("eof")]), list.len(ops), list.len(kids))
+  for o in e.ops { list.push(ops, o) }
+  for t in e.texts { list.push(texts, t) }
+  for k in e.kids { list.push(kids, k) }
+  let start = list.len(ops) - 1
+  var resolved: List[Op] = []
+  var i = 0
+  while i < list.len(ops) {
+    let op = list.get(ops, i) ?? Op { kind: K_EPS, a: 0, b: 0 }
+    if op.kind == K_REF then {
+      let target = map.get(names, list.get(texts, i) ?? "") ?? -1
+      list.push(resolved, Op { kind: K_REF, a: target, b: 0 })
+    } else list.push(resolved, op)
+    i = i + 1
+  }
+  Compiled { ops: resolved, texts: texts, kids: kids, start: start }
+}
+
 // Parser state, threaded through every rule and returned with each result
 // (a plain value; nothing is mutated in place). `far` is the farthest token
 // index at which something failed to match; `expected` what was wanted
 // there. Both only ever move forward.
-type State = { far: Int, expected: List[String] }
+// `expected` holds arena node ids, not strings: the state is copied on
+// every call, and a list of ints copies for free where strings would not.
+type State = { far: Int, expected: List[Int] }
 
 type Hit = { kids: List[tree.Node], pos: Int }
 type Out = { hit: Option[Hit], st: State }
 
 type Failure = { line: Int, col: Int, found: String, expected: List[String] }
 
-fn describe(r: Rule) -> String = match r {
-  Tok(k) => k,
-  Lit(t) => "`" + t + "`",
-  Keep(t) => "`" + t + "`",
-  Ref(n) => n,
-  Seq(xs) => match list.first(xs) { some(x) => describe(x), none => "nothing" },
-  Alt(xs) => list.join(list.map(xs, (x) => describe(x)), " or "),
-  Rep(x) => describe(x),
-  Rep1(x) => describe(x),
-  Opt(x) => describe(x),
-  Wrap(_, x) => describe(x),
-  Field(_, x) => describe(x),
-  Not(_) => "not this",
-  Ahead(x) => describe(x),
-  Left(_, x, _) => describe(x),
-  Eps => "nothing",
-}
-
-fn noted(st: State, pos: Int, what: String) -> State =
+fn noted(st: State, pos: Int, what: Int) -> State =
   if pos > st.far then State { far: pos, expected: [what] }
   else if pos == st.far and not list.contains(st.expected, what) then State { far: st.far, expected: st.expected + [what] }
   else st
 
-fn miss(st: State, pos: Int, what: String) -> Out = Out { hit: none, st: noted(st, pos, what) }
+fn miss(st: State, pos: Int, what: Int) -> Out = Out { hit: none, st: noted(st, pos, what) }
 fn hit(st: State, kids: List[tree.Node], pos: Int) -> Out = Out { hit: some(Hit { kids: kids, pos: pos }), st: st }
 
-// Match `r` at token `pos`.
+fn text_at(c: Compiled, id: Int) -> String = match list.get(c.texts, id) { some(t) => t, none => "" }
+fn kid_at(c: Compiled, i: Int) -> Int = match list.get(c.kids, i) { some(k) => k, none => 0 }
+
+// Match arena node `id` at token `pos`.
 //
 // One self-recursive function on purpose: sequence, choice, repetition and
 // the left fold are loops inside it rather than helper functions. The
 // native backend passes a list by reference only when the function is not
 // part of a mutually recursive group; helpers would make every call copy
-// the grammar and the token list, and parsing would go quadratic.
-fn parse_rule(g: Grammar, toks: List[tree.Token], st0: State, r: Rule, pos: Int) -> Out = match r {
-  Eps => hit(st0, [], pos),
-  Tok(kind) => match list.get(toks, pos) {
-    some(t) => if t.kind != kind then miss(st0, pos, kind)
-      else if kind == "newline" or kind == "eof" then hit(st0, [], pos + 1)
-      else hit(st0, [tree.leaf(kind, pos)], pos + 1),
-    none => miss(st0, pos, kind),
-  },
-  Lit(text) => match list.get(toks, pos) {
-    some(t) => if t.text == text and t.kind != "string" and t.kind != "neg" then hit(st0, [], pos + 1) else miss(st0, pos, "`" + text + "`"),
-    none => miss(st0, pos, "`" + text + "`"),
-  },
-  Keep(text) => match list.get(toks, pos) {
-    some(t) => if t.text == text and t.kind != "string" and t.kind != "neg" then hit(st0, [tree.leaf("op", pos)], pos + 1) else miss(st0, pos, "`" + text + "`"),
-    none => miss(st0, pos, "`" + text + "`"),
-  },
-  Ref(name) => match map.get(g.rules, name) {
-    some(rule) => parse_rule(g, toks, st0, rule, pos),
-    none => miss(st0, pos, "<missing rule " + name + ">"),
-  },
-  Seq(xs) => {
+// the grammar and the token list, and parsing would go quadratic. For the
+// same reason there is no `??` on anything holding `c`: that form makes
+// the analysis treat the parameter as escaping.
+fn parse_rule(c: Compiled, toks: List[tree.Token], st0: State, id: Int, pos: Int) -> Out = {
+  let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+  if op.kind == K_EPS then hit(st0, [], pos)
+  else if op.kind == K_TOK then {
+    let want = text_at(c, id)
+    match list.get(toks, pos) {
+      some(t) => if t.kind != want then miss(st0, pos, id)
+        else if want == "newline" or want == "eof" then hit(st0, [], pos + 1)
+        else hit(st0, [tree.leaf(want, pos)], pos + 1),
+      none => miss(st0, pos, id),
+    }
+  }
+  else if op.kind == K_LIT or op.kind == K_KEEP then {
+    let want = text_at(c, id)
+    match list.get(toks, pos) {
+      some(t) => if t.text == want and t.kind != "string" and t.kind != "neg" then
+          (if op.kind == K_LIT then hit(st0, [], pos + 1) else hit(st0, [tree.leaf("op", pos)], pos + 1))
+        else miss(st0, pos, id),
+      none => miss(st0, pos, id),
+    }
+  }
+  else if op.kind == K_REF then {
+    if op.a < 0 then miss(st0, pos, id)
+    else parse_rule(c, toks, st0, op.a, pos)
+  }
+  else if op.kind == K_SEQ then {
     var st = st0
     var p = pos
     var kids: List[tree.Node] = []
     var failed = false
-    for x in xs {
-      if not failed then {
-        let o = parse_rule(g, toks, st, x, p)
-        st = o.st
-        match o.hit {
-          some(h) => { p = h.pos; kids = kids + h.kids },
-          none => { failed = true },
-        }
-      } else ()
-    }
-    if failed then Out { hit: none, st: st } else hit(st, kids, p)
-  },
-  Alt(xs) => {
-    var st = st0
-    var found: Option[Hit] = none
-    for x in xs {
-      if option.is_none(found) then {
-        let o = parse_rule(g, toks, st, x, pos)
-        st = o.st
-        found = o.hit
-      } else ()
-    }
-    Out { hit: found, st: st }
-  },
-  Rep(x) => {
-    var st = st0
-    var p = pos
-    var kids: List[tree.Node] = []
-    var go = true
-    while go {
-      let o = parse_rule(g, toks, st, x, p)
+    var i = 0
+    while not failed and i < op.b {
+      let o = parse_rule(c, toks, st, kid_at(c, op.a + i), p)
       st = o.st
       match o.hit {
-        some(h) => if h.pos == p then { go = false } else { p = h.pos; kids = kids + h.kids },
-        none => { go = false },
+        some(h) => { p = h.pos; for k in h.kids { list.push(kids, k) } },
+        none => { failed = true },
       }
+      i = i + 1
     }
-    hit(st, kids, p)
-  },
-  Rep1(x) => {
+    if failed then Out { hit: none, st: st } else hit(st, kids, p)
+  }
+  else if op.kind == K_ALT then {
+    var st = st0
+    var found: Option[Hit] = none
+    var done = false
+    var i = 0
+    while not done and i < op.b {
+      let o = parse_rule(c, toks, st, kid_at(c, op.a + i), pos)
+      st = o.st
+      match o.hit {
+        some(h) => { found = some(h); done = true },
+        none => (),
+      }
+      i = i + 1
+    }
+    Out { hit: found, st: st }
+  }
+  else if op.kind == K_REP or op.kind == K_REP1 then {
     var st = st0
     var p = pos
     var kids: List[tree.Node] = []
     var count = 0
     var go = true
     while go {
-      let o = parse_rule(g, toks, st, x, p)
+      let o = parse_rule(c, toks, st, op.a, p)
       st = o.st
       match o.hit {
-        some(h) => if h.pos == p then { go = false } else { p = h.pos; kids = kids + h.kids; count = count + 1 },
+        some(h) => if h.pos == p then { go = false } else { p = h.pos; for k in h.kids { list.push(kids, k) }; count = count + 1 },
         none => { go = false },
       }
     }
-    if count == 0 then Out { hit: none, st: st } else hit(st, kids, p)
-  },
-  Opt(x) => {
-    let o = parse_rule(g, toks, st0, x, pos)
+    if op.kind == K_REP1 and count == 0 then Out { hit: none, st: st } else hit(st, kids, p)
+  }
+  else if op.kind == K_OPT then {
+    let o = parse_rule(c, toks, st0, op.a, pos)
     match o.hit {
       some(_) => o,
       none => hit(o.st, [], pos),
     }
-  },
-  Wrap(kind, x) => {
-    let o = parse_rule(g, toks, st0, x, pos)
+  }
+  else if op.kind == K_WRAP then {
+    let o = parse_rule(c, toks, st0, op.a, pos)
     match o.hit {
-      some(h) => hit(o.st, [tree.node(kind, h.kids, pos, h.pos)], h.pos),
+      some(h) => hit(o.st, [tree.node(text_at(c, id), h.kids, pos, h.pos)], h.pos),
       none => o,
     }
-  },
-  Field(name, x) => {
-    let o = parse_rule(g, toks, st0, x, pos)
+  }
+  else if op.kind == K_FIELD then {
+    let o = parse_rule(c, toks, st0, op.a, pos)
     match o.hit {
-      some(h) => hit(o.st, list.map(h.kids, (k) => tree.with_field(k, name)), h.pos),
+      some(h) => {
+        let name = text_at(c, id)
+        hit(o.st, list.map(h.kids, (k) => tree.with_field(k, name)), h.pos)
+      },
       none => o,
     }
-  },
-  Not(x) => match parse_rule(g, toks, st0, x, pos).hit {
+  }
+  else if op.kind == K_NOT then match parse_rule(c, toks, st0, op.a, pos).hit {
     some(_) => Out { hit: none, st: st0 },
     none => hit(st0, [], pos),
-  },
-  Ahead(x) => match parse_rule(g, toks, st0, x, pos).hit {
+  }
+  else if op.kind == K_AHEAD then match parse_rule(c, toks, st0, op.a, pos).hit {
     some(_) => hit(st0, [], pos),
     none => Out { hit: none, st: st0 },
-  },
-  Left(kind, operand, op) => {
-    let o = parse_rule(g, toks, st0, operand, pos)
+  }
+  else {                                                                 // K_LEFT: a = operand, b = op
+    let o = parse_rule(c, toks, st0, op.a, pos)
     match o.hit {
       none => o,
       some(h) => {
@@ -200,12 +289,12 @@ fn parse_rule(g: Grammar, toks: List[tree.Token], st0: State, r: Rule, pos: Int)
         var left = h.kids
         var go = true
         while go {
-          let oo = parse_rule(g, toks, st, op, p)
+          let oo = parse_rule(c, toks, st, op.b, p)
           st = oo.st
           match oo.hit {
             none => { go = false },
             some(oh) => {
-              let rr = parse_rule(g, toks, st, operand, oh.pos)
+              let rr = parse_rule(c, toks, st, op.a, oh.pos)
               st = rr.st
               match rr.hit {
                 none => { go = false },
@@ -213,7 +302,7 @@ fn parse_rule(g: Grammar, toks: List[tree.Token], st0: State, r: Rule, pos: Int)
                   let lhs = list.map(left, (n) => tree.with_field(n, "left"))
                   let opk = list.map(oh.kids, (n) => tree.with_field(n, "operator"))
                   let rhs = list.map(rh.kids, (n) => tree.with_field(n, "right"))
-                  left = [tree.node(kind, lhs + opk + rhs, pos, rh.pos)]
+                  left = [tree.node(text_at(c, id), lhs + opk + rhs, pos, rh.pos)]
                   p = rh.pos
                 },
               }
@@ -223,18 +312,27 @@ fn parse_rule(g: Grammar, toks: List[tree.Token], st0: State, r: Rule, pos: Int)
         hit(st, left, p)
       },
     }
-  },
+  }
 }
 
 type Parsed = { root: tree.Node, toks: List[tree.Token] }
 
-fn failure_at(toks: List[tree.Token], st: State) -> Failure = {
+// What an arena node expected, for the error message.
+fn expectation(c: Compiled, id: Int) -> String = {
+  let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+  let text = text_at(c, id)
+  if op.kind == K_TOK then text
+  else if op.kind == K_REF then "<missing rule " + text + ">"
+  else "`" + text + "`"
+}
+
+fn failure_at(c: Compiled, toks: List[tree.Token], st: State) -> Failure = {
   let t = list.get(toks, st.far)
   Failure {
     line: option.map(t, (x) => x.line) ?? 0,
     col: option.map(t, (x) => x.col) ?? 0,
     found: match t { some(x) => if x.kind == "eof" then "end of file" else if x.kind == "newline" then "end of line" else "`" + x.text + "`", none => "end of file" },
-    expected: st.expected,
+    expected: list.map(st.expected, (id) => expectation(c, id)),
   }
 }
 
@@ -247,14 +345,15 @@ fn format_failure(f: Failure) -> String = {
 // rule must consume everything up to `eof`; anything left over is the
 // error, reported at the farthest point the grammar reached.
 fn parse(g: Grammar, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
+  let c = compile(g)
   let st = State { far: 0, expected: [] }
-  let o = parse_rule(g, toks, st, Seq([Ref(g.start), Tok("eof")]), 0)
+  let o = parse_rule(c, toks, st, c.start, 0)
   match o.hit {
     some(h) => match list.first(list.filter(h.kids, (k) => k.kind != "eof")) {
       some(root) => ok(Parsed { root: root, toks: toks }),
       none => ok(Parsed { root: tree.node(g.start, [], 0, list.len(toks)), toks: toks }),
     },
-    none => err(failure_at(toks, o.st)),
+    none => err(failure_at(c, toks, o.st)),
   }
 }
 
