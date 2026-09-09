@@ -185,23 +185,24 @@ fn text_ids(c: Compiled, toks: List[tree.Token]) -> List[Int] = {
   out
 }
 
-// Parser state, threaded through every rule and returned with each result
-// (a plain value; nothing is mutated in place). `far` is the farthest token
-// index at which something failed to match; `expected` what was wanted
-// there. Both only ever move forward.
+// Parser state, threaded through every rule and returned with each result.
+// `far` is the farthest token index at which something failed to match, and
+// it only ever moves forward.
 //
-// `expected` is filled only on the second pass. A parse that succeeds never
-// needs it, and keeping the set costs a list append and a linear scan at
-// every failed alternative, which is the busiest path in the engine. So the
-// first pass runs with `collect: false` and an empty list, and `parse` runs
-// the whole thing again with `collect: true` when, and only when, it has an
-// error to describe. Measured on 109 Go files: 1.50 s to 1.25 s.
+// What was expected at `far` is not in here. It is a list the caller owns
+// and the engine appends to, for two reasons. It only moves forward, so
+// backtracking never has to undo it. And a record holding a list is copied
+// on every one of the engine's calls, where a record of two scalars is not:
+// State exists to be cheap.
 //
-// `expected` holds arena node ids, not strings: the state is copied on
-// every call, and a list of ints copies for free where strings would not.
-type State = { far: Int, expected: List[Int], collect: Bool }
+// The set is filled only on the second pass. A parse that succeeds never
+// looks at it, and keeping it costs a linear scan and an append at every
+// failed alternative, which is the busiest path in the engine. So the first
+// pass runs with `collect: false` and `parse` runs the whole thing again
+// with `collect: true` when, and only when, it has an error to describe.
+type State = { far: Int, collect: Bool }
 
-fn fresh(collect: Bool) -> State = State { far: 0, expected: [], collect: collect }
+fn fresh(collect: Bool) -> State = State { far: 0, collect: collect }
 
 // A rule reports whether it matched and where it stopped. The nodes it built
 // are not carried in the result: they are pushed onto a single list that the
@@ -212,14 +213,32 @@ type Out = { ok: Bool, pos: Int, st: State }
 
 type Failure = { line: Int, col: Int, found: String, expected: List[String] }
 
-fn noted(st: State, pos: Int, what: Int) -> State =
-  if not st.collect then (if pos > st.far then State { far: pos, expected: [], collect: false } else st)
-  else if pos > st.far then State { far: pos, expected: [what], collect: true }
-  else if pos == st.far and not list.contains(st.expected, what) then State { far: st.far, expected: st.expected + [what], collect: true }
-  else st
+// `exp` holds arena node ids, not strings: a name is only needed once, when
+// the message is written.
+fn noted(mut exp: List[Int], st: State, pos: Int, what: Int) -> State = {
+  if pos > st.far then {
+    if st.collect then {
+      list.clear(exp)
+      list.push(exp, what)
+    } else ()
+    State { far: pos, collect: st.collect }
+  } else {
+    if st.collect and pos == st.far and not list.contains(exp, what) then list.push(exp, what) else ()
+    st
+  }
+}
 
-fn miss(st: State, pos: Int, what: Int) -> Out = Out { ok: false, pos: pos, st: noted(st, pos, what) }
+fn miss(mut exp: List[Int], st: State, pos: Int, what: Int) -> Out = Out { ok: false, pos: pos, st: noted(exp, st, pos, what) }
 fn good(st: State, pos: Int) -> Out = Out { ok: true, pos: pos, st: st }
+
+// A lookahead reports on the token stream without becoming part of it, and
+// restores the state it was given. What it expected has to go back too, or
+// a rule that was only ever consulted would name itself in the message.
+fn untrack(mut exp: List[Int], mark: Int) -> Unit = {
+  while list.len(exp) > mark {
+    match list.pop(exp) { some(_) => (), none => () }
+  }
+}
 
 // Drop everything appended since `mark`. `list.pop` moves the element out, so
 // this frees the nodes without copying them.
@@ -288,38 +307,38 @@ fn kid_at(c: Compiled, i: Int) -> Int = match list.get(c.kids, i) { some(k) => k
 // the grammar and the token list, and parsing would go quadratic. For the
 // same reason there is no `??` on anything holding `c`: that form makes
 // the analysis treat the parameter as escaping.
-fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node], st0: State, id: Int, pos: Int) -> Out = {
+fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node], mut exp: List[Int], st0: State, id: Int, pos: Int) -> Out = {
   let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
   if op.kind == K_EPS then good(st0, pos)
   else if op.kind == K_TOK then {
     match list.get(tk, pos) {
-      some(k) => if k != op.b then miss(st0, pos, id)
+      some(k) => if k != op.b then miss(exp, st0, pos, id)
         else if op.b == A_NEWLINE or op.b == A_EOF then good(st0, pos + 1)
         else {
           list.push(out, tree.leaf(text_at(c, id), pos))
           good(st0, pos + 1)
         },
-      none => miss(st0, pos, id),
+      none => miss(exp, st0, pos, id),
     }
   }
   else if op.kind == K_LIT or op.kind == K_KEEP then {
     match list.get(tt, pos) {
-      some(x) => if x != op.b then miss(st0, pos, id)
+      some(x) => if x != op.b then miss(exp, st0, pos, id)
         else match list.get(tk, pos) {
-          some(k) => if k == A_STRING or k == A_NEG then miss(st0, pos, id)
+          some(k) => if k == A_STRING or k == A_NEG then miss(exp, st0, pos, id)
             else if op.kind == K_LIT then good(st0, pos + 1)
             else {
               list.push(out, tree.leaf("op", pos))
               good(st0, pos + 1)
             },
-          none => miss(st0, pos, id),
+          none => miss(exp, st0, pos, id),
         },
-      none => miss(st0, pos, id),
+      none => miss(exp, st0, pos, id),
     }
   }
   else if op.kind == K_REF then {
-    if op.a < 0 then miss(st0, pos, id)
-    else parse_rule(c, tk, tt, out, st0, op.a, pos)
+    if op.a < 0 then miss(exp, st0, pos, id)
+    else parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
   }
   else if op.kind == K_SEQ then {
     let mark = list.len(out)
@@ -328,7 +347,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
     var failed = false
     var i = 0
     while not failed and i < op.b {
-      let o = parse_rule(c, tk, tt, out, st, kid_at(c, op.a + i), p)
+      let o = parse_rule(c, tk, tt, out, exp, st, kid_at(c, op.a + i), p)
       st = o.st
       if o.ok then { p = o.pos } else { failed = true }
       i = i + 1
@@ -345,7 +364,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
     var done = false
     var i = 0
     while not done and i < op.b {
-      let o = parse_rule(c, tk, tt, out, st, kid_at(c, op.a + i), pos)
+      let o = parse_rule(c, tk, tt, out, exp, st, kid_at(c, op.a + i), pos)
       st = o.st
       if o.ok then { done = true; p = o.pos } else rollback(out, mark)
       i = i + 1
@@ -359,7 +378,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
     var go = true
     while go {
       let mark = list.len(out)
-      let o = parse_rule(c, tk, tt, out, st, op.a, p)
+      let o = parse_rule(c, tk, tt, out, exp, st, op.a, p)
       st = o.st
       if o.ok and o.pos != p then { p = o.pos; count = count + 1 }
       else {
@@ -371,7 +390,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
   }
   else if op.kind == K_OPT then {
     let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
     if o.ok then o else {
       rollback(out, mark)
       good(o.st, pos)
@@ -379,7 +398,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
   }
   else if op.kind == K_WRAP then {
     let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
     if o.ok then {
       let kids = take_from(out, mark)
       list.push(out, tree.node(text_at(c, id), kids, pos, o.pos))
@@ -391,7 +410,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
   }
   else if op.kind == K_FIELD then {
     let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
     if o.ok then {
       label_from(out, mark, text_at(c, id))
       good(o.st, o.pos)
@@ -402,19 +421,23 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
   }
   else if op.kind == K_NOT then {
     let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, st0, op.a, pos)
+    let emark = list.len(exp)
+    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
     rollback(out, mark)
+    untrack(exp, emark)
     if o.ok then Out { ok: false, pos: pos, st: st0 } else good(st0, pos)
   }
   else if op.kind == K_AHEAD then {
     let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, st0, op.a, pos)
+    let emark = list.len(exp)
+    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
     rollback(out, mark)
+    untrack(exp, emark)
     if o.ok then good(st0, pos) else Out { ok: false, pos: pos, st: st0 }
   }
   else {                                                                 // K_LEFT: a = operand, b = op
     let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
     if not o.ok then {
       rollback(out, mark)
       Out { ok: false, pos: pos, st: o.st }
@@ -427,14 +450,14 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
         // `opmark` and the right operand at `rmark`, so one drain can name
         // all three and fold them into a single node
         let opmark = list.len(out)
-        let oo = parse_rule(c, tk, tt, out, st, op.b, p)
+        let oo = parse_rule(c, tk, tt, out, exp, st, op.b, p)
         st = oo.st
         if not oo.ok then {
           rollback(out, opmark)
           go = false
         } else {
           let rmark = list.len(out)
-          let rr = parse_rule(c, tk, tt, out, st, op.a, oo.pos)
+          let rr = parse_rule(c, tk, tt, out, exp, st, op.a, oo.pos)
           st = rr.st
           if not rr.ok then {
             rollback(out, opmark)
@@ -462,13 +485,13 @@ fn expectation(c: Compiled, id: Int) -> String = {
   else "`" + text + "`"
 }
 
-fn failure_at(c: Compiled, toks: List[tree.Token], st: State) -> Failure = {
-  let t = list.get(toks, st.far)
+fn failure_at(c: Compiled, toks: List[tree.Token], far: Int, exp: List[Int]) -> Failure = {
+  let t = list.get(toks, far)
   Failure {
     line: option.map(t, (x) => x.line) ?? 0,
     col: option.map(t, (x) => x.col) ?? 0,
     found: match t { some(x) => if x.kind == "eof" then "end of file" else if x.kind == "newline" then "end of line" else "`" + x.text + "`", none => "end of file" },
-    expected: list.map(st.expected, (id) => expectation(c, id)),
+    expected: list.map(exp, (id) => expectation(c, id)),
   }
 }
 
@@ -485,7 +508,8 @@ fn parse(g: Grammar, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
   let tk = kind_ids(c, toks)
   let tt = text_ids(c, toks)
   var out: List[tree.Node] = []
-  let o = parse_rule(c, tk, tt, out, fresh(false), c.start, 0)
+  var exp: List[Int] = []
+  let o = parse_rule(c, tk, tt, out, exp, fresh(false), c.start, 0)
   if o.ok then {
     // the start rule leaves one node; take it without copying it, which
     // means draining the list rather than reading its first element
@@ -498,7 +522,9 @@ fn parse(g: Grammar, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
     // the run above knows where it failed but not what it wanted there;
     // this second run collects that, and only a file that fails pays for it
     var again: List[tree.Node] = []
-    err(failure_at(c, toks, parse_rule(c, tk, tt, again, fresh(true), c.start, 0).st))
+    var wanted: List[Int] = []
+    let d = parse_rule(c, tk, tt, again, wanted, fresh(true), c.start, 0)
+    err(failure_at(c, toks, d.st.far, wanted))
   }
 }
 
