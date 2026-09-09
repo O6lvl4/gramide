@@ -46,8 +46,22 @@ type Grammar = { start: String, rules: Map[String, Rule] }
 // only by the nodes that need one. So a node visit copies twelve bytes —
 // in the native backend every value read is a copy, and running the engine
 // on the Rule tree itself cloned a whole sub-grammar at every reference.
+//
+// Terminals are interned. `compile` numbers every distinct text a terminal
+// asks for and stores that number in the node's `b`, which the other kinds
+// leave at zero; `kind_ids` and `text_ids` number the token stream the same
+// way once. A terminal match is then an integer compare rather than two
+// string compares, and reading a token is reading an Int rather than copying
+// a record that owns two strings. The first four numbers are fixed so the
+// engine can name the kinds it tests by name.
 type Op = { kind: Int, a: Int, b: Int }
-type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int }
+type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int, atoms: Map[String, Int] }
+
+let A_NEWLINE = 0
+let A_EOF = 1
+let A_STRING = 2
+let A_NEG = 3
+let SEEDS = ["newline", "eof", "string", "neg"]
 
 let K_EPS = 0
 let K_TOK = 1
@@ -127,26 +141,67 @@ fn compile(g: Grammar) -> Compiled = {
   for t in e.texts { list.push(texts, t) }
   for k in e.kids { list.push(kids, k) }
   let start = list.len(ops) - 1
+  // resolve every reference to its target, and number every terminal's text
+  var atoms: Map[String, Int] = [:]
+  var next = 0
+  for s in SEEDS {
+    map.insert(atoms, s, next)
+    next = next + 1
+  }
   var resolved: List[Op] = []
   var i = 0
   while i < list.len(ops) {
     let op = list.get(ops, i) ?? Op { kind: K_EPS, a: 0, b: 0 }
+    let text = list.get(texts, i) ?? ""
     if op.kind == K_REF then {
-      let target = map.get(names, list.get(texts, i) ?? "") ?? -1
+      let target = map.get(names, text) ?? -1
       list.push(resolved, Op { kind: K_REF, a: target, b: 0 })
+    } else if op.kind == K_TOK or op.kind == K_LIT or op.kind == K_KEEP then {
+      match map.get(atoms, text) {
+        some(_) => (),
+        none => {
+          map.insert(atoms, text, next)
+          next = next + 1
+        },
+      }
+      list.push(resolved, Op { kind: op.kind, a: op.a, b: map.get(atoms, text) ?? -1 })
     } else list.push(resolved, op)
     i = i + 1
   }
-  Compiled { ops: resolved, texts: texts, kids: kids, start: start }
+  Compiled { ops: resolved, texts: texts, kids: kids, start: start, atoms: atoms }
+}
+
+// The token stream, numbered against the grammar's terminals. A token whose
+// kind or text the grammar never names gets -1, which no terminal asks for.
+fn kind_ids(c: Compiled, toks: List[tree.Token]) -> List[Int] = {
+  var out: List[Int] = []
+  for t in toks { list.push(out, map.get(c.atoms, t.kind) ?? -1) }
+  out
+}
+
+fn text_ids(c: Compiled, toks: List[tree.Token]) -> List[Int] = {
+  var out: List[Int] = []
+  for t in toks { list.push(out, map.get(c.atoms, t.text) ?? -1) }
+  out
 }
 
 // Parser state, threaded through every rule and returned with each result
 // (a plain value; nothing is mutated in place). `far` is the farthest token
 // index at which something failed to match; `expected` what was wanted
 // there. Both only ever move forward.
+//
+// `expected` is filled only on the second pass. A parse that succeeds never
+// needs it, and keeping the set costs a list append and a linear scan at
+// every failed alternative, which is the busiest path in the engine. So the
+// first pass runs with `collect: false` and an empty list, and `parse` runs
+// the whole thing again with `collect: true` when, and only when, it has an
+// error to describe. Measured on 109 Go files: 1.50 s to 1.25 s.
+//
 // `expected` holds arena node ids, not strings: the state is copied on
 // every call, and a list of ints copies for free where strings would not.
-type State = { far: Int, expected: List[Int] }
+type State = { far: Int, expected: List[Int], collect: Bool }
+
+fn fresh(collect: Bool) -> State = State { far: 0, expected: [], collect: collect }
 
 type Hit = { kids: List[tree.Node], pos: Int }
 type Out = { hit: Option[Hit], st: State }
@@ -154,8 +209,9 @@ type Out = { hit: Option[Hit], st: State }
 type Failure = { line: Int, col: Int, found: String, expected: List[String] }
 
 fn noted(st: State, pos: Int, what: Int) -> State =
-  if pos > st.far then State { far: pos, expected: [what] }
-  else if pos == st.far and not list.contains(st.expected, what) then State { far: st.far, expected: st.expected + [what] }
+  if not st.collect then (if pos > st.far then State { far: pos, expected: [], collect: false } else st)
+  else if pos > st.far then State { far: pos, expected: [what], collect: true }
+  else if pos == st.far and not list.contains(st.expected, what) then State { far: st.far, expected: st.expected + [what], collect: true }
   else st
 
 fn miss(st: State, pos: Int, what: Int) -> Out = Out { hit: none, st: noted(st, pos, what) }
@@ -173,30 +229,32 @@ fn kid_at(c: Compiled, i: Int) -> Int = match list.get(c.kids, i) { some(k) => k
 // the grammar and the token list, and parsing would go quadratic. For the
 // same reason there is no `??` on anything holding `c`: that form makes
 // the analysis treat the parameter as escaping.
-fn parse_rule(c: Compiled, toks: List[tree.Token], st0: State, id: Int, pos: Int) -> Out = {
+fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], st0: State, id: Int, pos: Int) -> Out = {
   let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
   if op.kind == K_EPS then hit(st0, [], pos)
   else if op.kind == K_TOK then {
-    let want = text_at(c, id)
-    match list.get(toks, pos) {
-      some(t) => if t.kind != want then miss(st0, pos, id)
-        else if want == "newline" or want == "eof" then hit(st0, [], pos + 1)
-        else hit(st0, [tree.leaf(want, pos)], pos + 1),
+    match list.get(tk, pos) {
+      some(k) => if k != op.b then miss(st0, pos, id)
+        else if op.b == A_NEWLINE or op.b == A_EOF then hit(st0, [], pos + 1)
+        else hit(st0, [tree.leaf(text_at(c, id), pos)], pos + 1),
       none => miss(st0, pos, id),
     }
   }
   else if op.kind == K_LIT or op.kind == K_KEEP then {
-    let want = text_at(c, id)
-    match list.get(toks, pos) {
-      some(t) => if t.text == want and t.kind != "string" and t.kind != "neg" then
-          (if op.kind == K_LIT then hit(st0, [], pos + 1) else hit(st0, [tree.leaf("op", pos)], pos + 1))
-        else miss(st0, pos, id),
+    match list.get(tt, pos) {
+      some(x) => if x != op.b then miss(st0, pos, id)
+        else match list.get(tk, pos) {
+          some(k) => if k == A_STRING or k == A_NEG then miss(st0, pos, id)
+            else if op.kind == K_LIT then hit(st0, [], pos + 1)
+            else hit(st0, [tree.leaf("op", pos)], pos + 1),
+          none => miss(st0, pos, id),
+        },
       none => miss(st0, pos, id),
     }
   }
   else if op.kind == K_REF then {
     if op.a < 0 then miss(st0, pos, id)
-    else parse_rule(c, toks, st0, op.a, pos)
+    else parse_rule(c, tk, tt,st0, op.a, pos)
   }
   else if op.kind == K_SEQ then {
     var st = st0
@@ -205,7 +263,7 @@ fn parse_rule(c: Compiled, toks: List[tree.Token], st0: State, id: Int, pos: Int
     var failed = false
     var i = 0
     while not failed and i < op.b {
-      let o = parse_rule(c, toks, st, kid_at(c, op.a + i), p)
+      let o = parse_rule(c, tk, tt,st, kid_at(c, op.a + i), p)
       st = o.st
       match o.hit {
         some(h) => { p = h.pos; for k in h.kids { list.push(kids, k) } },
@@ -221,7 +279,7 @@ fn parse_rule(c: Compiled, toks: List[tree.Token], st0: State, id: Int, pos: Int
     var done = false
     var i = 0
     while not done and i < op.b {
-      let o = parse_rule(c, toks, st, kid_at(c, op.a + i), pos)
+      let o = parse_rule(c, tk, tt,st, kid_at(c, op.a + i), pos)
       st = o.st
       match o.hit {
         some(h) => { found = some(h); done = true },
@@ -238,7 +296,7 @@ fn parse_rule(c: Compiled, toks: List[tree.Token], st0: State, id: Int, pos: Int
     var count = 0
     var go = true
     while go {
-      let o = parse_rule(c, toks, st, op.a, p)
+      let o = parse_rule(c, tk, tt,st, op.a, p)
       st = o.st
       match o.hit {
         some(h) => if h.pos == p then { go = false } else { p = h.pos; for k in h.kids { list.push(kids, k) }; count = count + 1 },
@@ -248,21 +306,21 @@ fn parse_rule(c: Compiled, toks: List[tree.Token], st0: State, id: Int, pos: Int
     if op.kind == K_REP1 and count == 0 then Out { hit: none, st: st } else hit(st, kids, p)
   }
   else if op.kind == K_OPT then {
-    let o = parse_rule(c, toks, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt,st0, op.a, pos)
     match o.hit {
       some(_) => o,
       none => hit(o.st, [], pos),
     }
   }
   else if op.kind == K_WRAP then {
-    let o = parse_rule(c, toks, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt,st0, op.a, pos)
     match o.hit {
       some(h) => hit(o.st, [tree.node(text_at(c, id), h.kids, pos, h.pos)], h.pos),
       none => o,
     }
   }
   else if op.kind == K_FIELD then {
-    let o = parse_rule(c, toks, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt,st0, op.a, pos)
     match o.hit {
       some(h) => {
         let name = text_at(c, id)
@@ -271,16 +329,16 @@ fn parse_rule(c: Compiled, toks: List[tree.Token], st0: State, id: Int, pos: Int
       none => o,
     }
   }
-  else if op.kind == K_NOT then match parse_rule(c, toks, st0, op.a, pos).hit {
+  else if op.kind == K_NOT then match parse_rule(c, tk, tt,st0, op.a, pos).hit {
     some(_) => Out { hit: none, st: st0 },
     none => hit(st0, [], pos),
   }
-  else if op.kind == K_AHEAD then match parse_rule(c, toks, st0, op.a, pos).hit {
+  else if op.kind == K_AHEAD then match parse_rule(c, tk, tt,st0, op.a, pos).hit {
     some(_) => hit(st0, [], pos),
     none => Out { hit: none, st: st0 },
   }
   else {                                                                 // K_LEFT: a = operand, b = op
-    let o = parse_rule(c, toks, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt,st0, op.a, pos)
     match o.hit {
       none => o,
       some(h) => {
@@ -289,12 +347,12 @@ fn parse_rule(c: Compiled, toks: List[tree.Token], st0: State, id: Int, pos: Int
         var left = h.kids
         var go = true
         while go {
-          let oo = parse_rule(c, toks, st, op.b, p)
+          let oo = parse_rule(c, tk, tt,st, op.b, p)
           st = oo.st
           match oo.hit {
             none => { go = false },
             some(oh) => {
-              let rr = parse_rule(c, toks, st, op.a, oh.pos)
+              let rr = parse_rule(c, tk, tt,st, op.a, oh.pos)
               st = rr.st
               match rr.hit {
                 none => { go = false },
@@ -346,14 +404,17 @@ fn format_failure(f: Failure) -> String = {
 // error, reported at the farthest point the grammar reached.
 fn parse(g: Grammar, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
   let c = compile(g)
-  let st = State { far: 0, expected: [] }
-  let o = parse_rule(c, toks, st, c.start, 0)
+  let tk = kind_ids(c, toks)
+  let tt = text_ids(c, toks)
+  let o = parse_rule(c, tk, tt, fresh(false), c.start, 0)
   match o.hit {
     some(h) => match list.first(list.filter(h.kids, (k) => k.kind != "eof")) {
       some(root) => ok(Parsed { root: root, toks: toks }),
       none => ok(Parsed { root: tree.node(g.start, [], 0, list.len(toks)), toks: toks }),
     },
-    none => err(failure_at(c, toks, o.st)),
+    // the run above knows where it failed but not what it wanted there;
+    // this second run collects that, and only a file that fails pays for it
+    none => err(failure_at(c, toks, parse_rule(c, tk, tt, fresh(true), c.start, 0).st)),
   }
 }
 
