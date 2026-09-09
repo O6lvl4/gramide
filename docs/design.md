@@ -39,7 +39,8 @@ Rule = Tok(kind) | Lit(text) | Keep(text) | Ref(name)
      | Seq(rules) | Alt(rules) | Rep(rule) | Rep1(rule) | Opt(rule)
      | Wrap(kind, rule) | Field(name, rule)
      | Not(rule) | Ahead(rule)
-     | Left(kind, operand, op) | Eps
+     | Left(kind, operand, op)
+     | Recover(rule, head) | RecoverAll(rule, head) | Eps
 ```
 
 `Tok` keeps the token as a leaf, `Lit` matches and drops it, `Keep` keeps punctuation
@@ -52,11 +53,15 @@ level, each a `Left(kind, operand, op)` that matches `operand (op operand)*` and
 to the left afterwards. This is what every hand-written parser does; it just happens
 to be a value here.
 
-**Errors are the farthest failure.** The parser threads a `State { far, expected }`
+**Errors are the farthest failure.** The parser threads a `State { far, collect }`
 through every rule. Whenever a terminal fails at a token index beyond `far`, that
-becomes the new `far` and the expectation list restarts; at the same index the
-expectation is appended. When the start rule fails, the error is "unexpected X at
-`far` (expected …)". That position is where a human would say the syntax breaks.
+becomes the new `far`. When the start rule fails, the error is "unexpected X at `far`
+(expected …)"; that position is where a human would say the syntax breaks. What was
+expected there is gathered by a second parse, since a file that parses never needs it.
+
+**A grammar says where to carry on.** `Recover` and `RecoverAll` mark an item of a
+list that a reader would rather skip than lose the list over, and name a prefix of it
+worth keeping on its own. They do nothing on a strict parse. See "Error recovery".
 
 ## What the native backend taught the engine
 
