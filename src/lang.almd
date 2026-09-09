@@ -1,13 +1,24 @@
 // lang — which language a path is in.
 //
 // A language is a `Language`: a lexer spec (lex.almd) and a compiled grammar
-// (parser.almd). Neither is code specific to this module; adding a language is
-// adding a file that exports a `spec()` and a grammar, and a branch here.
+// (parser.almd). Neither is code specific to this module.
 //
-// The branch is written out rather than looked up in a list because reading an
-// element out of a list copies it, and a compiled grammar is the largest value
-// in the program. Every operation therefore takes a `Language` that a caller
-// already holds, and the extension is consulted once, at the edge.
+// ── adding a language ─────────────────────────────────────────────────────
+//
+// 1. `src/lang_<name>.almd`, exporting `spec() -> lex.Spec` and a grammar. If
+//    the lexer spec cannot say how its numbers or its strings are written, add
+//    a family to lex.almd rather than a special case here.
+// 2. Its extension in EXTENSIONS below.
+// 3. A `<name>_lang()` beside the others, and a field for it in `Engines` and
+//    `engines_for`.
+// 4. A branch in each of the four functions marked `per language` below. They
+//    are written out rather than looked up in a list because reading an element
+//    out of a list copies it, and a compiled grammar is the largest value in
+//    the program. Every other function takes a `Language` a caller already
+//    holds, so the extension is consulted only in those four.
+// 5. Validate against a corpus of real files in that language: the count that
+//    parse, and that everything rejected is rejected by the language's own
+//    compiler too. A grammar that has not met a corpus is a guess.
 
 import self.tree
 import self.lex
@@ -32,6 +43,7 @@ type Language = { lex: lex.Spec, grammar: parser.Compiled }
 fn almide_lang() -> Language = Language { lex: lang_almide.spec(), grammar: parser.compile(lang_almide.almide()) }
 fn go_lang() -> Language = Language { lex: lang_go.spec(), grammar: parser.compile(lang_go.go()) }
 
+// per language
 fn language_of(path: String) -> Result[Language, String] =
   if string.ends_with(path, ".go") then ok(go_lang())
   else if string.ends_with(path, ".almd") then ok(almide_lang())
@@ -39,6 +51,7 @@ fn language_of(path: String) -> Result[Language, String] =
 
 // Lexing alone needs no grammar, and compiling one takes about half a
 // millisecond, so `tokens` does not pay for one.
+// per language
 fn spec_of(path: String) -> Result[lex.Spec, String] =
   if string.ends_with(path, ".go") then ok(lang_go.spec())
   else if string.ends_with(path, ".almd") then ok(lang_almide.spec())
@@ -103,11 +116,13 @@ fn read_source(path: String, src: String) -> Result[Reading, String] = read_lang
 fn parse_source(path: String, src: String) -> Result[parser.Parsed, String] = parse_lang(language_of(path)!, path, src)
 
 // Many files, against grammars compiled once.
+// per language
 fn read_with(e: Engines, path: String, src: String) -> Result[Reading, String] =
   if string.ends_with(path, ".go") then read_lang(e.go, path, src)
   else if string.ends_with(path, ".almd") then read_lang(e.almd, path, src)
   else err(unknown_ext(path))
 
+// per language
 fn parse_with(e: Engines, path: String, src: String) -> Result[parser.Parsed, String] =
   if string.ends_with(path, ".go") then parse_lang(e.go, path, src)
   else if string.ends_with(path, ".almd") then parse_lang(e.almd, path, src)
