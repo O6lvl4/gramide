@@ -13,6 +13,8 @@ gramide check   src/main.almd     exit 0 if it parses, else `file:line:col: unex
 gramide outline src/main.almd     one line per declaration: L12-40 function_declaration parse
 gramide parse   src/main.almd     the whole tree as an s-expression
 gramide tags    src/main.almd     `def function parse L40-58`, `ref call list.map L44`, `ref type Node L12` — a repo map's input
+gramide balance Widget.java       delimiters and literals only, for a language with no grammar here:
+                                  it cannot see a missing semicolon, and it cannot reject valid code
 gramide tokens  src/main.almd     the token stream, one per line
 gramide map . --budget 1024 --task "fix parse_rule"
                                   a ranked map of the repository within the token budget:

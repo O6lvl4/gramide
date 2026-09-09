@@ -5,6 +5,8 @@
 //   gramide tokens <file>     the token stream, one per line
 //   gramide outline <file>    declarations with their lines
 //   gramide tags <file>       definitions and references, for a repo map
+//   gramide balance <file>    delimiters and literals only: the check a language
+//                             with no grammar here can still have
 //   gramide map <dir> [--budget N] [--task TEXT]
 //                             a ranked map of a repository within N tokens (default 1024),
 //                             personalised toward what TEXT mentions
@@ -17,12 +19,13 @@
 import self.tree
 import self.lang
 import self.tags
+import self.balance
 import self.map
 import fs
 import env
 import process
 
-fn usage() -> String = "usage: gramide (check | parse | tokens | outline | tags) <file>\n       gramide map <dir> [--budget N] [--task TEXT]"
+fn usage() -> String = "usage: gramide (check | parse | tokens | outline | tags | balance) <file>\n       gramide map <dir> [--budget N] [--task TEXT]"
 
 effect fn read(path: String) -> Result[String, String] = fs.read_text(path) |> result.map_err((e) => path + ": " + e)
 
@@ -38,6 +41,11 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
     "check" => { let _ = lang.parse_source(path, src)!; println(path + ": ok"); ok(()) },
     "outline" => { let p = lang.parse_source(path, src)!; for l in tags.outline(p.root, p.toks, src) { println(l) }; ok(()) },
     "tags" => { let p = lang.parse_source(path, src)!; for l in tags.tags(p.root, p.toks, src) { println(l) }; ok(()) },
+    // no grammar needed, and no false rejection possible: valid code balances
+    "balance" => match balance.check(src) {
+      none => { println(path + ": balanced"); ok(()) },
+      some(f) => err(path + ":" + int.to_string(f.line) + ":" + int.to_string(f.col) + ": " + f.message),
+    },
     _ => err(usage()),
   }
 }

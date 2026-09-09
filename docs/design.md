@@ -139,6 +139,25 @@ clause, an empty type-parameter list `[]`, an empty type-argument list, a parame
 list mixing named and unnamed parameters, `go` with a non-call or parenthesized
 expression, and a non-ASCII character (`☹`) that the lexer accepts as an identifier.
 
+## `balance`: a gate for the languages without a grammar
+
+A parser is the right gate, and there is one for Almide and Go. For everything else
+the honest options are no gate, or the language's compiler — which needs the whole
+project to tell a syntax error from a missing symbol, and one that refuses a correct
+edit is worse than none.
+
+`gramide balance` is the third option. It lexes a C-family file (line and block
+comments, string, character, backtick and raw-string literals, Java text blocks) and
+asks two questions a valid file always answers yes to: do `()`, `[]` and `{}` balance
+and nest, and does every literal and comment close. A rejection is therefore never
+wrong, and the failures it catches are the ones that actually happen — a generation
+that stopped halfway, a markdown fence, a paragraph of prose where a file should be.
+It cannot see a missing semicolon and does not claim to.
+
+Measured on all 8,077 `.go` files under `GOROOT/src`: 8,075 balanced, one directory,
+and one rejection — a deliberately malformed compiler fixture that `gofmt -e` also
+rejects. No false rejection.
+
 ## Next
 
 1. Memoisation of `Ref` results per (rule, position) if a grammar ever needs it; none
