@@ -203,8 +203,12 @@ type State = { far: Int, expected: List[Int], collect: Bool }
 
 fn fresh(collect: Bool) -> State = State { far: 0, expected: [], collect: collect }
 
-type Hit = { kids: List[tree.Node], pos: Int }
-type Out = { hit: Option[Hit], st: State }
+// A rule reports whether it matched and where it stopped. The nodes it built
+// are not carried in the result: they are pushed onto a single list that the
+// caller owns and passes down, so a child's subtree is never copied into its
+// parent. A rule that fails must leave that list exactly as it found it,
+// which `rollback` does; `mark` is the length on entry.
+type Out = { ok: Bool, pos: Int, st: State }
 
 type Failure = { line: Int, col: Int, found: String, expected: List[String] }
 
@@ -214,8 +218,63 @@ fn noted(st: State, pos: Int, what: Int) -> State =
   else if pos == st.far and not list.contains(st.expected, what) then State { far: st.far, expected: st.expected + [what], collect: true }
   else st
 
-fn miss(st: State, pos: Int, what: Int) -> Out = Out { hit: none, st: noted(st, pos, what) }
-fn hit(st: State, kids: List[tree.Node], pos: Int) -> Out = Out { hit: some(Hit { kids: kids, pos: pos }), st: st }
+fn miss(st: State, pos: Int, what: Int) -> Out = Out { ok: false, pos: pos, st: noted(st, pos, what) }
+fn good(st: State, pos: Int) -> Out = Out { ok: true, pos: pos, st: st }
+
+// Drop everything appended since `mark`. `list.pop` moves the element out, so
+// this frees the nodes without copying them.
+fn rollback(mut out: List[tree.Node], mark: Int) -> Unit = {
+  while list.len(out) > mark {
+    match list.pop(out) { some(_) => (), none => () }
+  }
+}
+
+// Move everything appended since `mark` into a list of its own, in order.
+// Two pops and two pushes per node, no clone: `list.reverse` would copy.
+fn take_from(mut out: List[tree.Node], mark: Int) -> List[tree.Node] = {
+  var rev: List[tree.Node] = []
+  while list.len(out) > mark {
+    match list.pop(out) { some(n) => list.push(rev, n), none => () }
+  }
+  var fwd: List[tree.Node] = []
+  while list.len(rev) > 0 {
+    match list.pop(rev) { some(n) => list.push(fwd, n), none => () }
+  }
+  fwd
+}
+
+// Name every node appended since `mark`, in place.
+fn label_from(mut out: List[tree.Node], mark: Int, name: String) -> Unit = {
+  var rev: List[tree.Node] = []
+  while list.len(out) > mark {
+    var n = match list.pop(out) { some(x) => x, none => tree.leaf("", 0) }
+    tree.set_field(n, name)
+    list.push(rev, n)
+  }
+  while list.len(rev) > 0 {
+    match list.pop(rev) { some(n) => list.push(out, n), none => () }
+  }
+}
+
+// The left fold's three parts in one drain: [mark, opmark) is the left
+// operand, [opmark, rmark) the operator, [rmark, end) the right operand.
+// Only the end of the list can be popped, so naming them in one pass is
+// also the only way to name a middle range without copying the list.
+fn fold_kids(mut out: List[tree.Node], mark: Int, opmark: Int, rmark: Int) -> List[tree.Node] = {
+  var rev: List[tree.Node] = []
+  var idx = list.len(out)
+  while idx > mark {
+    var n = match list.pop(out) { some(x) => x, none => tree.leaf("", 0) }
+    idx = idx - 1
+    tree.set_field(n, if idx >= rmark then "right" else if idx >= opmark then "operator" else "left")
+    list.push(rev, n)
+  }
+  var fwd: List[tree.Node] = []
+  while list.len(rev) > 0 {
+    match list.pop(rev) { some(n) => list.push(fwd, n), none => () }
+  }
+  fwd
+}
 
 fn text_at(c: Compiled, id: Int) -> String = match list.get(c.texts, id) { some(t) => t, none => "" }
 fn kid_at(c: Compiled, i: Int) -> Int = match list.get(c.kids, i) { some(k) => k, none => 0 }
@@ -229,14 +288,17 @@ fn kid_at(c: Compiled, i: Int) -> Int = match list.get(c.kids, i) { some(k) => k
 // the grammar and the token list, and parsing would go quadratic. For the
 // same reason there is no `??` on anything holding `c`: that form makes
 // the analysis treat the parameter as escaping.
-fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], st0: State, id: Int, pos: Int) -> Out = {
+fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node], st0: State, id: Int, pos: Int) -> Out = {
   let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
-  if op.kind == K_EPS then hit(st0, [], pos)
+  if op.kind == K_EPS then good(st0, pos)
   else if op.kind == K_TOK then {
     match list.get(tk, pos) {
       some(k) => if k != op.b then miss(st0, pos, id)
-        else if op.b == A_NEWLINE or op.b == A_EOF then hit(st0, [], pos + 1)
-        else hit(st0, [tree.leaf(text_at(c, id), pos)], pos + 1),
+        else if op.b == A_NEWLINE or op.b == A_EOF then good(st0, pos + 1)
+        else {
+          list.push(out, tree.leaf(text_at(c, id), pos))
+          good(st0, pos + 1)
+        },
       none => miss(st0, pos, id),
     }
   }
@@ -245,8 +307,11 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], st0: State, id: Int, po
       some(x) => if x != op.b then miss(st0, pos, id)
         else match list.get(tk, pos) {
           some(k) => if k == A_STRING or k == A_NEG then miss(st0, pos, id)
-            else if op.kind == K_LIT then hit(st0, [], pos + 1)
-            else hit(st0, [tree.leaf("op", pos)], pos + 1),
+            else if op.kind == K_LIT then good(st0, pos + 1)
+            else {
+              list.push(out, tree.leaf("op", pos))
+              good(st0, pos + 1)
+            },
           none => miss(st0, pos, id),
         },
       none => miss(st0, pos, id),
@@ -254,121 +319,134 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], st0: State, id: Int, po
   }
   else if op.kind == K_REF then {
     if op.a < 0 then miss(st0, pos, id)
-    else parse_rule(c, tk, tt,st0, op.a, pos)
+    else parse_rule(c, tk, tt, out, st0, op.a, pos)
   }
   else if op.kind == K_SEQ then {
+    let mark = list.len(out)
     var st = st0
     var p = pos
-    var kids: List[tree.Node] = []
     var failed = false
     var i = 0
     while not failed and i < op.b {
-      let o = parse_rule(c, tk, tt,st, kid_at(c, op.a + i), p)
+      let o = parse_rule(c, tk, tt, out, st, kid_at(c, op.a + i), p)
       st = o.st
-      match o.hit {
-        some(h) => { p = h.pos; for k in h.kids { list.push(kids, k) } },
-        none => { failed = true },
-      }
+      if o.ok then { p = o.pos } else { failed = true }
       i = i + 1
     }
-    if failed then Out { hit: none, st: st } else hit(st, kids, p)
+    if failed then {
+      rollback(out, mark)
+      Out { ok: false, pos: pos, st: st }
+    } else good(st, p)
   }
   else if op.kind == K_ALT then {
+    let mark = list.len(out)
     var st = st0
-    var found: Option[Hit] = none
+    var p = pos
     var done = false
     var i = 0
     while not done and i < op.b {
-      let o = parse_rule(c, tk, tt,st, kid_at(c, op.a + i), pos)
+      let o = parse_rule(c, tk, tt, out, st, kid_at(c, op.a + i), pos)
       st = o.st
-      match o.hit {
-        some(h) => { found = some(h); done = true },
-        none => (),
-      }
+      if o.ok then { done = true; p = o.pos } else rollback(out, mark)
       i = i + 1
     }
-    Out { hit: found, st: st }
+    Out { ok: done, pos: p, st: st }
   }
   else if op.kind == K_REP or op.kind == K_REP1 then {
     var st = st0
     var p = pos
-    var kids: List[tree.Node] = []
     var count = 0
     var go = true
     while go {
-      let o = parse_rule(c, tk, tt,st, op.a, p)
+      let mark = list.len(out)
+      let o = parse_rule(c, tk, tt, out, st, op.a, p)
       st = o.st
-      match o.hit {
-        some(h) => if h.pos == p then { go = false } else { p = h.pos; for k in h.kids { list.push(kids, k) }; count = count + 1 },
-        none => { go = false },
+      if o.ok and o.pos != p then { p = o.pos; count = count + 1 }
+      else {
+        rollback(out, mark)
+        go = false
       }
     }
-    if op.kind == K_REP1 and count == 0 then Out { hit: none, st: st } else hit(st, kids, p)
+    if op.kind == K_REP1 and count == 0 then Out { ok: false, pos: pos, st: st } else good(st, p)
   }
   else if op.kind == K_OPT then {
-    let o = parse_rule(c, tk, tt,st0, op.a, pos)
-    match o.hit {
-      some(_) => o,
-      none => hit(o.st, [], pos),
+    let mark = list.len(out)
+    let o = parse_rule(c, tk, tt, out, st0, op.a, pos)
+    if o.ok then o else {
+      rollback(out, mark)
+      good(o.st, pos)
     }
   }
   else if op.kind == K_WRAP then {
-    let o = parse_rule(c, tk, tt,st0, op.a, pos)
-    match o.hit {
-      some(h) => hit(o.st, [tree.node(text_at(c, id), h.kids, pos, h.pos)], h.pos),
-      none => o,
+    let mark = list.len(out)
+    let o = parse_rule(c, tk, tt, out, st0, op.a, pos)
+    if o.ok then {
+      let kids = take_from(out, mark)
+      list.push(out, tree.node(text_at(c, id), kids, pos, o.pos))
+      good(o.st, o.pos)
+    } else {
+      rollback(out, mark)
+      Out { ok: false, pos: pos, st: o.st }
     }
   }
   else if op.kind == K_FIELD then {
-    let o = parse_rule(c, tk, tt,st0, op.a, pos)
-    match o.hit {
-      some(h) => {
-        let name = text_at(c, id)
-        hit(o.st, list.map(h.kids, (k) => tree.with_field(k, name)), h.pos)
-      },
-      none => o,
+    let mark = list.len(out)
+    let o = parse_rule(c, tk, tt, out, st0, op.a, pos)
+    if o.ok then {
+      label_from(out, mark, text_at(c, id))
+      good(o.st, o.pos)
+    } else {
+      rollback(out, mark)
+      Out { ok: false, pos: pos, st: o.st }
     }
   }
-  else if op.kind == K_NOT then match parse_rule(c, tk, tt,st0, op.a, pos).hit {
-    some(_) => Out { hit: none, st: st0 },
-    none => hit(st0, [], pos),
+  else if op.kind == K_NOT then {
+    let mark = list.len(out)
+    let o = parse_rule(c, tk, tt, out, st0, op.a, pos)
+    rollback(out, mark)
+    if o.ok then Out { ok: false, pos: pos, st: st0 } else good(st0, pos)
   }
-  else if op.kind == K_AHEAD then match parse_rule(c, tk, tt,st0, op.a, pos).hit {
-    some(_) => hit(st0, [], pos),
-    none => Out { hit: none, st: st0 },
+  else if op.kind == K_AHEAD then {
+    let mark = list.len(out)
+    let o = parse_rule(c, tk, tt, out, st0, op.a, pos)
+    rollback(out, mark)
+    if o.ok then good(st0, pos) else Out { ok: false, pos: pos, st: st0 }
   }
   else {                                                                 // K_LEFT: a = operand, b = op
-    let o = parse_rule(c, tk, tt,st0, op.a, pos)
-    match o.hit {
-      none => o,
-      some(h) => {
-        var st = o.st
-        var p = h.pos
-        var left = h.kids
-        var go = true
-        while go {
-          let oo = parse_rule(c, tk, tt,st, op.b, p)
-          st = oo.st
-          match oo.hit {
-            none => { go = false },
-            some(oh) => {
-              let rr = parse_rule(c, tk, tt,st, op.a, oh.pos)
-              st = rr.st
-              match rr.hit {
-                none => { go = false },
-                some(rh) => {
-                  let lhs = list.map(left, (n) => tree.with_field(n, "left"))
-                  let opk = list.map(oh.kids, (n) => tree.with_field(n, "operator"))
-                  let rhs = list.map(rh.kids, (n) => tree.with_field(n, "right"))
-                  left = [tree.node(text_at(c, id), lhs + opk + rhs, pos, rh.pos)]
-                  p = rh.pos
-                },
-              }
-            },
+    let mark = list.len(out)
+    let o = parse_rule(c, tk, tt, out, st0, op.a, pos)
+    if not o.ok then {
+      rollback(out, mark)
+      Out { ok: false, pos: pos, st: o.st }
+    } else {
+      var st = o.st
+      var p = o.pos
+      var go = true
+      while go {
+        // out holds the left operand from `mark`; the operator lands at
+        // `opmark` and the right operand at `rmark`, so one drain can name
+        // all three and fold them into a single node
+        let opmark = list.len(out)
+        let oo = parse_rule(c, tk, tt, out, st, op.b, p)
+        st = oo.st
+        if not oo.ok then {
+          rollback(out, opmark)
+          go = false
+        } else {
+          let rmark = list.len(out)
+          let rr = parse_rule(c, tk, tt, out, st, op.a, oo.pos)
+          st = rr.st
+          if not rr.ok then {
+            rollback(out, opmark)
+            go = false
+          } else {
+            let kids = fold_kids(out, mark, opmark, rmark)
+            list.push(out, tree.node(text_at(c, id), kids, pos, rr.pos))
+            p = rr.pos
           }
         }
-        hit(st, left, p)
-      },
+      }
+      good(st, p)
     }
   }
 }
@@ -406,15 +484,21 @@ fn parse(g: Grammar, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
   let c = compile(g)
   let tk = kind_ids(c, toks)
   let tt = text_ids(c, toks)
-  let o = parse_rule(c, tk, tt, fresh(false), c.start, 0)
-  match o.hit {
-    some(h) => match list.first(list.filter(h.kids, (k) => k.kind != "eof")) {
-      some(root) => ok(Parsed { root: root, toks: toks }),
-      none => ok(Parsed { root: tree.node(g.start, [], 0, list.len(toks)), toks: toks }),
-    },
+  var out: List[tree.Node] = []
+  let o = parse_rule(c, tk, tt, out, fresh(false), c.start, 0)
+  if o.ok then {
+    // the start rule leaves one node; take it without copying it, which
+    // means draining the list rather than reading its first element
+    var rev: List[tree.Node] = []
+    while list.len(out) > 0 {
+      match list.pop(out) { some(n) => list.push(rev, n), none => () }
+    }
+    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(g.start, [], 0, list.len(toks)) }, toks: toks })
+  } else {
     // the run above knows where it failed but not what it wanted there;
     // this second run collects that, and only a file that fails pays for it
-    none => err(failure_at(c, toks, parse_rule(c, tk, tt, fresh(true), c.start, 0).st)),
+    var again: List[tree.Node] = []
+    err(failure_at(c, toks, parse_rule(c, tk, tt, again, fresh(true), c.start, 0).st))
   }
 }
 

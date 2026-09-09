@@ -23,6 +23,14 @@ fn node(kind: String, kids: List[Node], start: Int, end: Int) -> Node =
 fn with_field(n: Node, field: String) -> Node =
   Node { kind: n.kind, field: field, start: n.start, end: n.end, kids: n.kids }
 
+// The same, in place. `with_field` rebuilds the record, and the native
+// backend renders that as a copy of the node's whole subtree; a parser that
+// names a child on every match cannot afford one copy of the subtree per
+// name. Assigning through a `mut` binding writes the one field.
+fn set_field(mut n: Node, field: String) -> Unit = {
+  n.field = field
+}
+
 // The child a grammar named `field`, if the node has one.
 fn child(n: Node, field: String) -> Option[Node] = list.find(n.kids, (k) => k.field == field)
 
