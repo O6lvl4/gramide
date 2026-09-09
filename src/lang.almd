@@ -16,7 +16,15 @@
 //    out of a list copies it, and a compiled grammar is the largest value in
 //    the program. Every other function takes a `Language` a caller already
 //    holds, so the extension is consulted only in those four.
-// 5. Validate against a corpus of real files in that language: the count that
+// 5. Name the nodes the way the other grammars do, or `outline`, `tags` and
+//    `map` will see nothing. tags.almd knows a fixed vocabulary and no more:
+//    the declarations in its DECLS list (function_declaration,
+//    method_declaration, type_declaration, let_declaration, test_declaration,
+//    protocol_declaration, method_signature, variant, type_spec, var_spec,
+//    const_spec, field), plus `type_name` for a mentioned type, `arguments`
+//    and `field_access` for a call, and the field names `name` and `field`.
+//    A grammar free to invent kinds still parses; it just stays invisible.
+// 6. Validate against a corpus of real files in that language: the count that
 //    parse, and that everything rejected is rejected by the language's own
 //    compiler too. A grammar that has not met a corpus is a guess.
 
