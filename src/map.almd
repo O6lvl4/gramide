@@ -35,8 +35,10 @@ type Scan = { files: List[FileTags], errors: List[String] }
 
 fn skipped(rel: String) -> Bool = list.any(string.split(rel, "/"), (seg) => list.contains(SKIP, seg))
 
-// Every parseable file under root, in path order, with its tags. Files that
-// do not parse are reported and left out; the map is of what is well-formed.
+// Every file under root the grammars know, in path order, with its tags. A
+// file that does not parse is read as far as the grammar can and reported;
+// leaving it out entirely would hide whatever an agent is halfway through
+// editing, which is exactly the file it most wants on the map.
 effect fn scan(root: String) -> Result[Scan, String] = {
   let all = fs.walk(root) |> result.map_err((e) => root + ": " + e)!
   var files: List[FileTags] = []
@@ -50,9 +52,14 @@ effect fn scan(root: String) -> Result[Scan, String] = {
       if size > MAX_FILE_BYTES then list.push(errors, rel + ": skipped, larger than 512 KB")
       else match fs.read_text(p) {
         err(e) => list.push(errors, rel + ": " + e),
-        ok(src) => match lang.parse_with(engines, rel, src) {
-          err(e) => list.push(errors, e),
-          ok(parsed) => list.push(files, FileTags { path: rel, tags: tags.walk(parsed.root, parsed.toks, src) }),
+        // a file that does not parse still contributes what it could be read
+        // as; the reason is reported either way
+        ok(src) => match lang.read_with(engines, rel, src) {
+          err(e) => list.push(errors, e + " [skipped]"),
+          ok(d) => {
+            match d.error { some(e) => list.push(errors, e + " [recovered]"), none => () }
+            list.push(files, FileTags { path: rel, tags: tags.walk(d.parsed.root, d.parsed.toks, src) })
+          },
         },
       }
     } else ()

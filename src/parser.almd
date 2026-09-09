@@ -33,6 +33,8 @@ type Rule =
   | Not(Rule)                   // negative lookahead, consumes nothing
   | Ahead(Rule)                 // positive lookahead, consumes nothing
   | Left(String, Rule, Rule)    // operand (op operand)* folded left into nodes of this kind
+  | Recover(Rule)               // on a recovering parse: skip to where this matches again,
+  | RecoverAll(Rule)            //   leaving an ERROR node over what was skipped
   | Eps
 
 type Grammar = { start: String, rules: Map[String, Rule] }
@@ -61,7 +63,14 @@ let A_NEWLINE = 0
 let A_EOF = 1
 let A_STRING = 2
 let A_NEG = 3
-let SEEDS = ["newline", "eof", "string", "neg"]
+let A_LPAREN = 4
+let A_RPAREN = 5
+let A_LBRACK = 6
+let A_RBRACK = 7
+let A_LBRACE = 8
+let A_RBRACE = 9
+let A_SEMI = 10
+let SEEDS = ["newline", "eof", "string", "neg", "(", ")", "[", "]", "{", "}", ";"]
 
 let K_EPS = 0
 let K_TOK = 1
@@ -78,6 +87,8 @@ let K_FIELD = 11
 let K_NOT = 12
 let K_AHEAD = 13
 let K_LEFT = 14
+let K_RECOVER = 15
+let K_RECOVER_ALL = 16
 
 // Append a rule's subtree to the arena and answer where its own node landed.
 // The three lists are the arena itself, handed down rather than returned:
@@ -101,6 +112,8 @@ fn emit(r: Rule, mut ops: List[Op], mut texts: List[String], mut kids: List[Int]
     Not(x) => (K_NOT, "", [x]),
     Ahead(x) => (K_AHEAD, "", [x]),
     Left(k, x, y) => (K_LEFT, k, [x, y]),
+    Recover(x) => (K_RECOVER, "", [x]),
+    RecoverAll(x) => (K_RECOVER_ALL, "", [x]),
   }
   var ids: List[Int] = []
   for s in subs {
@@ -186,9 +199,14 @@ fn text_ids(c: Compiled, toks: List[tree.Token]) -> List[Int] = {
 // failed alternative, which is the busiest path in the engine. So the first
 // pass runs with `collect: false` and `parse` runs the whole thing again
 // with `collect: true` when, and only when, it has an error to describe.
-type State = { far: Int, collect: Bool }
+// `recover` is off for the parse that answers "does this file parse". It is
+// on for the second parse a reader makes after the first said no, where a
+// `Recover` rule may skip past what it could not read and leave an ERROR node
+// behind rather than give up on the whole file.
+type State = { far: Int, collect: Bool, recover: Bool }
 
-fn fresh(collect: Bool) -> State = State { far: 0, collect: collect }
+fn fresh(collect: Bool) -> State = State { far: 0, collect: collect, recover: false }
+fn recovering() -> State = State { far: 0, collect: false, recover: true }
 
 // A rule reports whether it matched and where it stopped. The nodes it built
 // are not carried in the result: they are pushed onto a single list that the
@@ -207,7 +225,7 @@ fn noted(mut exp: List[Int], st: State, pos: Int, what: Int) -> State = {
       list.clear(exp)
       list.push(exp, what)
     } else ()
-    State { far: pos, collect: st.collect }
+    State { far: pos, collect: st.collect, recover: st.recover }
   } else {
     if st.collect and pos == st.far and not list.contains(exp, what) then list.push(exp, what) else ()
     st
@@ -224,6 +242,53 @@ fn untrack(mut exp: List[Int], mark: Int) -> Unit = {
   while list.len(exp) > mark {
     match list.pop(exp) { some(_) => (), none => () }
   }
+}
+
+// How far a recovery may skip from `from`.
+//
+// Never past the end of the file. If `bounded`, never past a closing bracket
+// that belongs to something outside: a statement list inside braces must not
+// recover by eating the brace that ends it. At the top level nothing encloses
+// the skip, so a stray closer is itself part of what could not be read.
+fn skip_limit(tk: List[Int], tt: List[Int], from: Int, bounded: Bool) -> Int = {
+  var depth = 0
+  var q = from
+  var limit = -1
+  while limit < 0 {
+    match list.get(tk, q) {
+      none => { limit = q },
+      some(k) => if k == A_EOF then { limit = q }
+        else {
+          let x = match list.get(tt, q) { some(v) => v, none => -1 }
+          let real = k != A_STRING and k != A_NEG
+          if real and (x == A_LPAREN or x == A_LBRACK or x == A_LBRACE) then depth = depth + 1
+          else if real and (x == A_RPAREN or x == A_RBRACK or x == A_RBRACE) then {
+            if depth == 0 and bounded then limit = q else depth = int.max(0, depth - 1)
+          } else ()
+          if limit < 0 then q = q + 1 else ()
+        },
+    }
+  }
+  limit
+}
+
+// Is there anything between these two positions but separators? Giving up on
+// a run of newlines is not an error, it is the end of a list, and a recovery
+// that reported one would put an ERROR node at the end of every file.
+fn real_between(tk: List[Int], tt: List[Int], from: Int, to: Int) -> Bool = {
+  var i = from
+  var found = false
+  while not found and i < to {
+    match list.get(tk, i) {
+      none => { i = to },
+      some(k) => {
+        let x = match list.get(tt, i) { some(v) => v, none => -1 }
+        if k != A_NEWLINE and not (k != A_STRING and x == A_SEMI) then found = true else ()
+        i = i + 1
+      },
+    }
+  }
+  found
 }
 
 // Drop everything appended since `mark`. `list.pop` moves the element out, so
@@ -405,6 +470,40 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
       Out { ok: false, pos: pos, st: o.st }
     }
   }
+  else if op.kind == K_RECOVER or op.kind == K_RECOVER_ALL then {
+    let mark = list.len(out)
+    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    if o.ok then o
+    else {
+      rollback(out, mark)
+      if not st0.recover then Out { ok: false, pos: pos, st: o.st }
+      else {
+        // find the next place the rule reads, and give up the tokens between
+        let limit = skip_limit(tk, tt, pos, op.kind == K_RECOVER)
+        var st = o.st
+        var q = pos + 1
+        var resume = -1
+        while resume < 0 and q < limit {
+          let a = parse_rule(c, tk, tt, out, exp, st, op.a, q)
+          st = a.st
+          rollback(out, mark)
+          if a.ok then resume = q else q = q + 1
+        }
+        if resume >= 0 then {
+          if real_between(tk, tt, pos, resume) then list.push(out, tree.node("ERROR", [], pos, resume)) else ()
+          let a = parse_rule(c, tk, tt, out, exp, st, op.a, resume)
+          if a.ok then Out { ok: true, pos: a.pos, st: a.st } else {
+            rollback(out, mark)
+            Out { ok: false, pos: pos, st: a.st }
+          }
+        } else if real_between(tk, tt, pos, limit) then {
+          // nothing else in reach reads: the rest of this list is the error
+          list.push(out, tree.node("ERROR", [], pos, limit))
+          Out { ok: true, pos: limit, st: st }
+        } else Out { ok: false, pos: pos, st: st }
+      }
+    }
+  }
   else if op.kind == K_NOT then {
     let mark = list.len(out)
     let emark = list.len(exp)
@@ -518,6 +617,39 @@ fn parse_with(c: Compiled, toks: List[tree.Token]) -> Result[Parsed, Failure] = 
   }
 }
 
+// A tree for a file that does not parse, if the grammar says where it is
+// worth carrying on. Every `Recover` rule that fails skips to the next place
+// it reads and leaves an ERROR node over what it gave up, so an outline of a
+// file someone is halfway through editing still names the parts that are
+// whole. This never answers "does this file parse": `check` uses the strict
+// parse above, and a reader should run this only after that has said no.
+fn parse_recovering(c: Compiled, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
+  let tk = kind_ids(c, toks)
+  let tt = text_ids(c, toks)
+  var out: List[tree.Node] = []
+  var exp: List[Int] = []
+  let o = parse_rule(c, tk, tt, out, exp, recovering(), c.start, 0)
+  if o.ok then {
+    var rev: List[tree.Node] = []
+    while list.len(out) > 0 {
+      match list.pop(out) { some(n) => list.push(rev, n), none => () }
+    }
+    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(c.name, [], 0, list.len(toks)) }, toks: toks })
+  } else {
+    var again: List[tree.Node] = []
+    var wanted: List[Int] = []
+    let d = parse_rule(c, tk, tt, again, wanted, fresh(true), c.start, 0)
+    err(failure_at(c, toks, d.st.far, wanted))
+  }
+}
+
+// How much of the tree the parser had to give up on.
+fn error_nodes(n: tree.Node) -> Int = {
+  var total = if n.kind == "ERROR" then 1 else 0
+  for k in n.kids { total = total + error_nodes(k) }
+  total
+}
+
 // ── constructors, so a grammar reads like a grammar ──────────────────────
 fn tok(k: String) -> Rule = Tok(k)
 fn lit(t: String) -> Rule = Lit(t)
@@ -533,6 +665,10 @@ fn field(name: String, x: Rule) -> Rule = Field(name, x)
 fn nott(x: Rule) -> Rule = Not(x)
 fn ahead(x: Rule) -> Rule = Ahead(x)
 fn leftf(kind: String, operand: Rule, op: Rule) -> Rule = Left(kind, operand, op)
+// An item in a list that a reader would rather skip than lose the list over.
+// `recover` is for a list inside brackets, `recover_all` for the file itself.
+fn recover(x: Rule) -> Rule = Recover(x)
+fn recover_all(x: Rule) -> Rule = RecoverAll(x)
 fn lits(ts: List[String]) -> Rule = Alt(list.map(ts, (t) => Lit(t)))
 fn keeps(ts: List[String]) -> Rule = Alt(list.map(ts, (t) => Keep(t)))
 // `a, b, c` with an optional trailing comma
@@ -587,5 +723,37 @@ test "the error names the farthest point and what was expected there" {
   match parse(arith(), toks_of(["1", "2", ""])) {
     ok(_) => assert(false),
     err(f) => assert_eq(f.col, 2),
+  }
+}
+
+test "a recovering parse skips what it cannot read and names the rest" {
+  // a list of `<integer>;` items, recoverable one item at a time
+  let g = grammar("list", [
+    ("list", wrap("list", rep(recover_all(seq([r("item"), lit(";")]))))),
+    ("item", wrap("item", tok("integer"))),
+  ])
+  let c = compile(g)
+  let toks = toks_of(["1", ";", "!", "!", "2", ";", ""])
+  // strict: the whole thing fails
+  match parse_with(c, toks) { ok(_) => assert(false), err(_) => () }
+  // recovering: both items survive, with one ERROR node over what was skipped
+  match parse_recovering(c, toks) {
+    err(_) => assert(false),
+    ok(p) => {
+      assert_eq(tree.sexp(p.root), "(list (item (integer)) (ERROR) (item (integer)))")
+      assert_eq(error_nodes(p.root), 1)
+    },
+  }
+}
+
+test "a Recover rule that matches leaves no trace of itself in the tree" {
+  let g = grammar("list", [
+    ("list", wrap("list", rep(recover_all(seq([r("item"), lit(";")]))))),
+    ("item", wrap("item", tok("integer"))),
+  ])
+  let c = compile(g)
+  match parse_with(c, toks_of(["1", ";", "2", ";", ""])) {
+    err(_) => assert(false),
+    ok(p) => assert_eq(tree.sexp(p.root), "(list (item (integer)) (item (integer)))"),
   }
 }

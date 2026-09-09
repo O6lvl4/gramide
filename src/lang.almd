@@ -55,6 +55,41 @@ fn engines_for(paths: List[String]) -> Engines = Engines {
   go: parser.compile(if list.any(paths, (p) => string.ends_with(p, ".go")) then lang_go.go() else no_grammar()),
 }
 
+// What a reader gets back. `error` is set when the file did not parse and the
+// tree is the recovered one: the parts the grammar could still read, with an
+// ERROR node over each part it gave up. `check` never uses this; it wants the
+// strict answer and nothing else.
+type Reading = { parsed: parser.Parsed, error: Option[String], errors: Int }
+
+fn tokens_recovering(path: String, src: String) -> List[tree.Token] =
+  if string.ends_with(path, ".go") then lex_go.tokenize_recovering(src) else lexer.tokenize_recovering(src)
+
+fn recovered(c: parser.Compiled, toks: List[tree.Token], msg: String) -> Result[Reading, String] =
+  match parser.parse_recovering(c, toks) {
+    ok(p) => ok(Reading { parsed: p, error: some(msg), errors: parser.error_nodes(p.root) }),
+    err(_) => err(msg),
+  }
+
+fn read_compiled(c: parser.Compiled, path: String, src: String) -> Result[Reading, String] =
+  match tokens_for(path, src) {
+    // it lexes; the parser decides whether it also parses
+    ok(toks) => match parser.parse_with(c, toks) {
+      ok(p) => ok(Reading { parsed: p, error: none, errors: 0 }),
+      err(f) => recovered(c, toks, path + ":" + parser.format_failure(f)),
+    },
+    // it does not even lex, which is the ordinary state of a half-typed
+    // string: lex again turning what it cannot read into `error` tokens
+    err(e) => recovered(c, tokens_recovering(path, src), e),
+  }
+
+fn read_source(path: String, src: String) -> Result[Reading, String] =
+  read_compiled(parser.compile(grammar_for(path)!), path, src)
+
+fn read_with(e: Engines, path: String, src: String) -> Result[Reading, String] =
+  if string.ends_with(path, ".go") then read_compiled(e.go, path, src)
+  else if string.ends_with(path, ".almd") then read_compiled(e.almd, path, src)
+  else err(path + ": no grammar for this extension (known: " + list.join(EXTENSIONS, ", ") + ")")
+
 fn parse_with(e: Engines, path: String, src: String) -> Result[parser.Parsed, String] = {
   let toks = tokens_for(path, src)!
   if string.ends_with(path, ".go") then

@@ -213,9 +213,40 @@ why `check` takes many files at a time. And the remaining gap to `gofmt` is not 
 missing trick: it is that every value the engine touches is copied, which is the cost
 of the property that makes the grammar editable at runtime.
 
+## Error recovery
+
+A file an agent is halfway through editing usually does not parse, and it is the file
+the agent most needs to read. So a reader that fails asks a second time, recovering.
+
+The grammar says where recovery is worth attempting, with `recover` on an item of a
+list inside brackets and `recover_all` on an item of the file itself. Both are
+transparent when nothing goes wrong: they produce no node of their own, and the strict
+parse behaves exactly as if they were not there. On a recovering parse, an item that
+fails is retried at each following position until it reads again; the tokens given up
+become one `ERROR` node, and the list carries on. The skip stops at end of file, and
+for `recover` also at a closing bracket that belongs to something outside, so a
+statement list can never recover by eating the brace that ends it. A run of separators
+is not an error, so giving up at the end of a list leaves no node.
+
+The lexer recovers too, because the ordinary state of a file someone is typing into is
+an unterminated string. `tokenize_recovering` turns each run it cannot read into an
+`error` token, which no grammar rule asks for, so the parser's recovery gives up on the
+smallest enclosing list rather than on the file.
+
+What this buys, on the 102 files of the validation corpus that do not parse: 99 give an
+outline, 663 declarations in total. The three that give nothing are a directory, an
+empty file, and a file of English prose named `.go` — in each case there is no Go
+before the first thing that fails. Recovery costs about 14 ms on a 130 KB file that
+fails, and nothing at all on a file that parses.
+
+`check` never recovers. It is the gate, its exit code is a verdict, and its output on
+all 11,364 corpus files is byte-identical to the engine before recovery existed.
+`parse`, `outline`, `tags` and `map` all recover, and say so: the reason goes to stderr
+and, for `map`, into the notes under the map.
+
 ## Next
 
-1. Error recovery. One bad token means no tree, so an outline of a file an agent is
-   in the middle of editing returns nothing. This is worth more than speed is.
+1. Recovery inside a declaration's header, so a function whose signature is being
+   edited keeps its name instead of becoming one ERROR node.
 2. Memoisation of `Ref` results per (rule, position) if a grammar ever needs it; none
    does so far.

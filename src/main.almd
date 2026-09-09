@@ -11,6 +11,11 @@
 //                             a ranked map of a repository within N tokens (default 1024),
 //                             personalised toward what TEXT mentions
 //
+// `check` is the gate: strict, and its exit code is the verdict. Every other
+// command is a reader, and a reader answers about the file it was given even
+// when that file does not parse — the tree is the recovered one, with an ERROR
+// node over each part the grammar had to give up, and the reason goes to stderr.
+//
 // Languages: Almide (.almd) and Go (.go). Each is a lexer (src/lex_*.almd /
 // src/lexer.almd) plus a grammar value (src/lang_*.almd); the engine in
 // src/parser.almd and the walkers in src/tags.almd are shared. src/lang.almd
@@ -29,6 +34,13 @@ fn usage() -> String = "usage: gramide (parse | tokens | outline | tags) <file>\
 
 effect fn read(path: String) -> Result[String, String] = fs.read_text(path) |> result.map_err((e) => path + ": " + e)
 
+// A reader that had to recover says so, on stderr, so its answer is never
+// mistaken for the answer about a file that parses.
+effect fn note(d: lang.Reading) -> Unit = match d.error {
+  none => (),
+  some(e) => eprintln(e + " [recovered, " + int.to_string(d.errors) + " part(s) skipped]"),
+}
+
 effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
   let src = read(path)!
   match cmd {
@@ -37,10 +49,13 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
       for t in toks { println(int.to_string(t.line) + ":" + int.to_string(t.col) + " " + t.kind + " " + t.text) }
       ok(())
     },
-    "parse" => { let p = lang.parse_source(path, src)!; println(tree.sexp(p.root)); ok(()) },
+    // the readers answer about the file they were given even when it does not
+    // parse: the tree is the recovered one and the reason goes to stderr
+    "parse" => { let d = lang.read_source(path, src)!; let _ = note(d); println(tree.sexp(d.parsed.root)); ok(()) },
+    "outline" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.outline(d.parsed.root, d.parsed.toks, src) { println(l) }; ok(()) },
+    "tags" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.tags(d.parsed.root, d.parsed.toks, src) { println(l) }; ok(()) },
+    // the gate. strict, and the only command whose exit code is a verdict
     "check" => { let _ = lang.parse_source(path, src)!; println(path + ": ok"); ok(()) },
-    "outline" => { let p = lang.parse_source(path, src)!; for l in tags.outline(p.root, p.toks, src) { println(l) }; ok(()) },
-    "tags" => { let p = lang.parse_source(path, src)!; for l in tags.tags(p.root, p.toks, src) { println(l) }; ok(()) },
     // no grammar needed, and no false rejection possible: valid code balances
     "balance" => match balance.check(src) {
       none => { println(path + ": balanced"); ok(()) },
@@ -101,7 +116,7 @@ effect fn run_map(argv: List[String]) -> Result[Unit, String] = {
   if m.text != "" then println(string.trim_end(m.text)) else ()
   eprintln("# " + int.to_string(m.files_scanned) + " files, " + int.to_string(m.symbols_shown) + " of " + int.to_string(m.symbols_total)
     + " symbols shown, ~" + int.to_string(m.approx_tokens) + " tokens")
-  for e in m.errors { eprintln("# skipped " + e) }
+  for e in m.errors { eprintln("# " + e) }
   ok(())
 }
 

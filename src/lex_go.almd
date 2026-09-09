@@ -121,7 +121,21 @@ fn scan_operator(bytes: List[Int], start: Int) -> Option[String] = {
   found
 }
 
-fn tokenize(source: String) -> Result[List[tree.Token], LexError] = {
+fn tokenize(source: String) -> Result[List[tree.Token], LexError] = tokenize_with(source, false)
+
+// Tokens for a file that does not lex: every run the lexer cannot read becomes
+// an `error` token, which no grammar rule asks for. See lexer.almd.
+fn tokenize_recovering(source: String) -> List[tree.Token] =
+  match tokenize_with(source, true) { ok(t) => t, err(_) => [] }
+
+fn to_eol(bytes: List[Int], from: Int) -> Int = {
+  let n = list.len(bytes)
+  var e = from
+  while e < n and at(bytes, e) != 10 { e = e + 1 }
+  e
+}
+
+fn tokenize_with(source: String, recover: Bool) -> Result[List[tree.Token], LexError] = {
   let bytes = string.to_bytes(source)
   let n = list.len(bytes)
   var toks: List[tree.Token] = []
@@ -152,7 +166,8 @@ fn tokenize(source: String) -> Result[List[tree.Token], LexError] = {
         if at(bytes, i) == 10 then { had_newline = true; line = line + 1; line_start = i + 1 } else ()
         i = i + 1
       }
-      if i >= n then failure = some(LexError { line: line, col: s - line_start + 1, message: "unterminated block comment" })
+      if i >= n and recover then list.push(toks, mk(bytes, "error", s, n, line, line_start))
+      else if i >= n then failure = some(LexError { line: line, col: s - line_start + 1, message: "unterminated block comment" })
       else {
         i = i + 2
         if had_newline and last_ends(toks) then list.push(toks, mk(bytes, "newline", s, s, line, line_start)) else ()
@@ -166,7 +181,11 @@ fn tokenize(source: String) -> Result[List[tree.Token], LexError] = {
           while k < e { if at(bytes, k) == 10 then { line = line + 1; line_start = k + 1 } else (); k = k + 1 }
           i = e
         },
-        none => { failure = some(LexError { line: line, col: i - line_start + 1, message: "unterminated string" }) },
+        none => if recover then {
+          let e = to_eol(bytes, i)
+          list.push(toks, mk(bytes, "error", i, e, line, line_start))
+          i = e
+        } else { failure = some(LexError { line: line, col: i - line_start + 1, message: "unterminated string" }) },
       }
     }
     else if is_digit(b) or (b == 46 and is_digit(at(bytes, i + 1))) then {
@@ -182,7 +201,10 @@ fn tokenize(source: String) -> Result[List[tree.Token], LexError] = {
     }
     else match scan_operator(bytes, i) {
       some(op) => { list.push(toks, mk(bytes, "punct", i, i + string.len(op), line, line_start)); i = i + string.len(op) },
-      none => { failure = some(LexError { line: line, col: i - line_start + 1, message: "unexpected character " + string.from_bytes([b]) }) },
+      none => if recover then {
+        list.push(toks, mk(bytes, "error", i, i + 1, line, line_start))
+        i = i + 1
+      } else { failure = some(LexError { line: line, col: i - line_start + 1, message: "unexpected character " + string.from_bytes([b]) }) },
     }
   }
   match failure {

@@ -18,7 +18,7 @@
 import self.lex_go
 import self.tree
 import self.parser
-import self.parser.{ tok, lit, keep, r, seq, alt, rep, rep1, opt, wrap, field, ahead, leftf, lits, keeps, grammar }
+import self.parser.{ tok, lit, keep, r, seq, alt, rep, rep1, opt, wrap, field, ahead, leftf, lits, keeps, grammar, recover, recover_all }
 
 let ident = tok("identifier")
 let sep = rep1(alt([lit(";"), tok("newline")]))
@@ -65,7 +65,7 @@ fn expr_rules(sfx: String, composite: Bool) -> List[(String, parser.Rule)] = {
 }
 
 fn go() -> parser.Grammar = grammar("source_file", [
-  ("source_file", wrap("source_file", seq([osep, r("package"), sep, rep(seq([r("import"), sep])), rep(seq([r("top_decl"), osep]))]))),
+  ("source_file", wrap("source_file", seq([osep, r("package"), sep, rep(seq([r("import"), sep])), rep(recover_all(seq([r("top_decl"), osep])))]))),
   ("package", wrap("package_clause", seq([lit("package"), field("name", ident)]))),
   ("import", wrap("import", seq([lit("import"), grouped(r("import_spec"))]))),
   ("import_spec", wrap("import_spec", seq([opt(alt([ident, lit(".")])), field("path", tok("string"))]))),
@@ -113,7 +113,7 @@ fn go() -> parser.Grammar = grammar("source_file", [
   ("interface_elem", alt([wrap("method_signature", seq([field("name", ident), r("signature")])), r("constraint")])),
 
   // ── statements ────────────────────────────────────────────────────────
-  ("block", wrap("block", seq([lit("{"), osep, rep(seq([stmt, osep])), lit("}")]))),
+  ("block", wrap("block", seq([lit("{"), osep, rep(recover(seq([stmt, osep]))), lit("}")]))),
   ("stmt", alt([
      r("decl"),
      wrap("labeled", seq([ident, lit(":"), opt(stmt)])),
@@ -179,6 +179,15 @@ fn top_kinds(src: String) -> List[String] = match parse_src(src) {
   err(e) => ["ERROR " + e],
 }
 
+// what a reader gets from a file that does not parse
+fn recovered_kinds(src: String) -> List[String] = {
+  let toks = lex_go.tokenize_recovering(src)
+  match parser.parse_recovering(parser.compile(go()), toks) {
+    ok(p) => list.map(p.root.kids, (k) => k.kind),
+    err(_) => ["NOTHING"],
+  }
+}
+
 test "a small program parses with the right declaration kinds" {
   let src = """
 package main
@@ -233,4 +242,30 @@ test "a composite literal in an if header does not swallow the block" {
     err(e) => assert(string.starts_with(e, "2:")),
   }
   assert_eq(top_kinds("package p\nfunc f() { if x == (T{X: 1, Y: 2}) { return } }\n"), ["package_clause", "function_declaration"])
+}
+
+test "a broken statement loses its statement, not the file" {
+  let src = "package p\n\nfunc Alpha() int {\n\treturn 1\n}\n\nfunc Beta() int {\n\tz := 1 *\n\treturn z\n}\n\nfunc Gamma() int {\n\treturn 3\n}\n"
+  // strict is unchanged: this file does not parse
+  match parse_src(src) { ok(_) => assert(false), err(e) => assert(string.starts_with(e, "9:")) }
+  // recovering keeps all three declarations
+  assert_eq(recovered_kinds(src), ["package_clause", "function_declaration", "function_declaration", "function_declaration"])
+}
+
+test "a broken declaration becomes an ERROR node and the rest survives" {
+  let src = "package p\n\nfunc Alpha() int { return 1 }\n\nfunc ) Beta( {\n\nfunc Gamma() int { return 3 }\n"
+  assert_eq(list.contains(recovered_kinds(src), "ERROR"), true)
+  assert_eq(list.contains(recovered_kinds(src), "function_declaration"), true)
+}
+
+test "an unterminated string still gives up only the line it is on" {
+  let src = "package p\n\nfunc Alpha() string {\n\treturn \"hello\n}\n\nfunc Beta() int {\n\treturn 2\n}\n"
+  // the lexer alone rejects it
+  assert_eq(result.is_err(lex_go.tokenize(src)), true)
+  assert_eq(recovered_kinds(src), ["package_clause", "function_declaration", "function_declaration"])
+}
+
+test "a file that parses recovers to exactly the same tree" {
+  let src = "package p\n\nfunc Alpha() int { return 1 }\n"
+  assert_eq(recovered_kinds(src), top_kinds(src))
 }

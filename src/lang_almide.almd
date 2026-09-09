@@ -22,7 +22,7 @@
 import self.lexer
 import self.tree
 import self.parser
-import self.parser.{ tok, lit, keep, r, seq, alt, rep, rep1, opt, wrap, field, ahead, leftf, lits, keeps, grammar }
+import self.parser.{ tok, lit, keep, r, seq, alt, rep, rep1, opt, wrap, field, ahead, leftf, lits, keeps, grammar, recover, recover_all }
 
 let nl = opt(tok("newline"))
 let sep = rep1(alt([lit(";"), tok("newline")]))
@@ -45,7 +45,7 @@ let pattern = r("pattern")
 let block = r("block")
 
 fn almide() -> parser.Grammar = grammar("source_file", [
-  ("source_file", wrap("source_file", seq([opt(sep), opt(seq([r("decl"), rep(seq([sep, r("decl")])), opt(sep)]))]))),
+  ("source_file", wrap("source_file", seq([opt(sep), opt(seq([recover_all(r("decl")), rep(recover_all(seq([sep, r("decl")]))), opt(sep)]))]))),
 
   // ── declarations ──────────────────────────────────────────────────────
   ("decl", alt([r("import"), r("module"), r("type_decl"), r("fn_decl"), r("protocol_decl"),
@@ -167,7 +167,7 @@ fn almide() -> parser.Grammar = grammar("source_file", [
 
   // statements normally sit on their own lines; the compiler also accepts two
   // on one line with no separator (`let m = n * 2 m + 1`), so the separator is optional
-  ("block", wrap("block", seq([lit("{"), opt(sep), opt(seq([r("stmt"), rep(seq([opt(sep), r("stmt")])), opt(sep)])), lit("}")]))),
+  ("block", wrap("block", seq([lit("{"), opt(sep), opt(seq([recover(r("stmt")), rep(recover(seq([opt(sep), r("stmt")]))), opt(sep)])), lit("}")]))),
   // an expression, or an assignment to one: parsed once, never re-parsed
   ("stmt", alt([r("let"), r("var"), r("guard"), r("expr_stmt")])),
   ("expr_stmt", seq([expr, opt(wrap("assignment", seq([lit("="), nl, field("value", expr)])))])),
@@ -223,6 +223,15 @@ fn top_kinds(src: String) -> List[String] = match parse_src(src) {
   err(e) => ["ERROR " + e],
 }
 
+// what a reader gets from a file that does not parse
+fn recovered_kinds(src: String) -> List[String] = {
+  let toks = lexer.tokenize_recovering(src)
+  match parser.parse_recovering(parser.compile(almide()), toks) {
+    ok(p) => list.map(p.root.kids, (k) => k.kind),
+    err(_) => ["NOTHING"],
+  }
+}
+
 test "declarations of every kind parse" {
   let src = "import self.tree\nimport std.io.{ read, write }\n\ntype P = { x: Int, y: Int }\ntype R = | A(Int) | B\n\nfn add(a: Int, b: Int) -> Int = a + b\neffect fn main() -> Unit = println(\"hi\")\nlet N = 3\nprotocol Show { fn show(self) -> String }\ntest \"t\" { assert_eq(1, 1) }\n"
   assert_eq(top_kinds(src), ["import", "import", "type_declaration", "type_declaration", "function_declaration", "function_declaration", "let_declaration", "protocol_declaration", "test_declaration"])
@@ -270,4 +279,21 @@ test "a broken file fails at the right place" {
     ok(_) => assert(false),
     err(e) => assert(string.starts_with(e, "2:1")),
   }
+}
+
+test "a broken declaration loses that declaration, not the file" {
+  let src = "fn alpha(x: Int) -> Int = x + 1\n\nfn beta(y: -> Int = y\n\nfn gamma(s: String) -> String = s\n"
+  match parse_src(src) { ok(_) => assert(false), err(e) => assert(string.starts_with(e, "3:")) }
+  assert_eq(recovered_kinds(src), ["function_declaration", "ERROR", "function_declaration"])
+}
+
+test "an unterminated string still gives up only the line it is on" {
+  let src = "fn alpha() -> String = \"hello\n\nfn beta() -> Int = 2\n"
+  assert_eq(result.is_err(lexer.tokenize(src)), true)
+  assert_eq(list.contains(recovered_kinds(src), "function_declaration"), true)
+}
+
+test "a file that parses recovers to exactly the same tree" {
+  let src = "fn alpha(x: Int) -> Int = x + 1\n"
+  assert_eq(recovered_kinds(src), top_kinds(src))
 }
