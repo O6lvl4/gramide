@@ -41,6 +41,8 @@ effect fn scan(root: String) -> Result[Scan, String] = {
   let all = fs.walk(root) |> result.map_err((e) => root + ": " + e)!
   var files: List[FileTags] = []
   var errors: List[String] = []
+  // compiled once for the whole walk, not once per file
+  let engines = lang.engines_for(all)
   for p in list.sort(all) {
     let rel = if string.starts_with(p, root + "/") then string.slice(p, string.len(root) + 1, string.len(p)) else p
     if lang.known(p) and not skipped(rel) then {
@@ -48,7 +50,7 @@ effect fn scan(root: String) -> Result[Scan, String] = {
       if size > MAX_FILE_BYTES then list.push(errors, rel + ": skipped, larger than 512 KB")
       else match fs.read_text(p) {
         err(e) => list.push(errors, rel + ": " + e),
-        ok(src) => match lang.parse_source(rel, src) {
+        ok(src) => match lang.parse_with(engines, rel, src) {
           err(e) => list.push(errors, e),
           ok(parsed) => list.push(files, FileTags { path: rel, tags: tags.walk(parsed.root, parsed.toks, src) }),
         },

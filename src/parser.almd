@@ -55,7 +55,7 @@ type Grammar = { start: String, rules: Map[String, Rule] }
 // a record that owns two strings. The first four numbers are fixed so the
 // engine can name the kinds it tests by name.
 type Op = { kind: Int, a: Int, b: Int }
-type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int, atoms: Map[String, Int] }
+type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int, atoms: Map[String, Int], name: String }
 
 let A_NEWLINE = 0
 let A_EOF = 1
@@ -79,11 +79,12 @@ let K_NOT = 12
 let K_AHEAD = 13
 let K_LEFT = 14
 
-// A subtree's share of the arena: ops and texts numbered from `base`, child
-// index lists numbered from `kbase`. The subtree's own node is the last op.
-type Emitted = { ops: List[Op], texts: List[String], kids: List[Int] }
-
-fn emit(r: Rule, base: Int, kbase: Int) -> Emitted = {
+// Append a rule's subtree to the arena and answer where its own node landed.
+// The three lists are the arena itself, handed down rather than returned:
+// building a private arena per subtree and copying it into the parent made
+// compiling a grammar quadratic in its size, and a grammar is compiled once
+// per file.
+fn emit(r: Rule, mut ops: List[Op], mut texts: List[String], mut kids: List[Int]) -> Int = {
   let (kind, text, subs) = match r {
     Eps => (K_EPS, "", []),
     Tok(k) => (K_TOK, k, []),
@@ -101,26 +102,19 @@ fn emit(r: Rule, base: Int, kbase: Int) -> Emitted = {
     Ahead(x) => (K_AHEAD, "", [x]),
     Left(k, x, y) => (K_LEFT, k, [x, y]),
   }
-  var ops: List[Op] = []
-  var texts: List[String] = []
-  var kids: List[Int] = []
   var ids: List[Int] = []
   for s in subs {
-    let e = emit(s, base + list.len(ops), kbase + list.len(kids))
-    for o in e.ops { list.push(ops, o) }
-    for t in e.texts { list.push(texts, t) }
-    for k in e.kids { list.push(kids, k) }
-    list.push(ids, base + list.len(ops) - 1)
+    list.push(ids, emit(s, ops, texts, kids))
   }
   let op = if kind == K_SEQ or kind == K_ALT then {
-    let first = kbase + list.len(kids)
+    let first = list.len(kids)
     for id in ids { list.push(kids, id) }
     Op { kind: kind, a: first, b: list.len(ids) }
   } else if kind == K_LEFT then Op { kind: kind, a: list.get(ids, 0) ?? 0, b: list.get(ids, 1) ?? 0 }
   else Op { kind: kind, a: list.get(ids, 0) ?? -1, b: 0 }
   list.push(ops, op)
   list.push(texts, text)
-  Emitted { ops: ops, texts: texts, kids: kids }
+  list.len(ops) - 1
 }
 
 fn compile(g: Grammar) -> Compiled = {
@@ -129,18 +123,10 @@ fn compile(g: Grammar) -> Compiled = {
   var kids: List[Int] = []
   var names: Map[String, Int] = [:]
   for (name, rule) in map.entries(g.rules) {
-    let e = emit(rule, list.len(ops), list.len(kids))
-    for o in e.ops { list.push(ops, o) }
-    for t in e.texts { list.push(texts, t) }
-    for k in e.kids { list.push(kids, k) }
-    map.insert(names, name, list.len(ops) - 1)
+    map.insert(names, name, emit(rule, ops, texts, kids))
   }
   // the start rule plus eof, then resolve every reference to its target
-  let e = emit(Seq([Ref(g.start), Tok("eof")]), list.len(ops), list.len(kids))
-  for o in e.ops { list.push(ops, o) }
-  for t in e.texts { list.push(texts, t) }
-  for k in e.kids { list.push(kids, k) }
-  let start = list.len(ops) - 1
+  let start = emit(Seq([Ref(g.start), Tok("eof")]), ops, texts, kids)
   // resolve every reference to its target, and number every terminal's text
   var atoms: Map[String, Int] = [:]
   var next = 0
@@ -168,7 +154,7 @@ fn compile(g: Grammar) -> Compiled = {
     } else list.push(resolved, op)
     i = i + 1
   }
-  Compiled { ops: resolved, texts: texts, kids: kids, start: start, atoms: atoms }
+  Compiled { ops: resolved, texts: texts, kids: kids, start: start, atoms: atoms, name: g.start }
 }
 
 // The token stream, numbered against the grammar's terminals. A token whose
@@ -503,8 +489,12 @@ fn format_failure(f: Failure) -> String = {
 // Parse the whole token stream with the grammar's start rule. The start
 // rule must consume everything up to `eof`; anything left over is the
 // error, reported at the farthest point the grammar reached.
-fn parse(g: Grammar, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
-  let c = compile(g)
+fn parse(g: Grammar, toks: List[tree.Token]) -> Result[Parsed, Failure] = parse_with(compile(g), toks)
+
+// The same, against a grammar that is already compiled. Compiling is a
+// per-grammar cost, not a per-file one: a tool that reads a whole repository
+// should pay it once.
+fn parse_with(c: Compiled, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
   let tk = kind_ids(c, toks)
   let tt = text_ids(c, toks)
   var out: List[tree.Node] = []
@@ -517,7 +507,7 @@ fn parse(g: Grammar, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
     while list.len(out) > 0 {
       match list.pop(out) { some(n) => list.push(rev, n), none => () }
     }
-    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(g.start, [], 0, list.len(toks)) }, toks: toks })
+    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(c.name, [], 0, list.len(toks)) }, toks: toks })
   } else {
     // the run above knows where it failed but not what it wanted there;
     // this second run collects that, and only a file that fails pays for it

@@ -10,6 +10,7 @@ there is no generator step and no native library between the agent and the tree.
 
 ```
 gramide check   src/main.almd     exit 0 if it parses, else `file:line:col: unexpected X (expected …)`
+gramide check   src/*.almd        any number of files: each grammar is compiled once, not once per file
 gramide outline src/main.almd     one line per declaration: L12-40 function_declaration parse
 gramide parse   src/main.almd     the whole tree as an s-expression
 gramide tags    src/main.almd     `def function parse L40-58`, `ref call list.map L44`, `ref type Node L12` — a repo map's input

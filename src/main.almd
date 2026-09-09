@@ -1,11 +1,11 @@
 // gramide — syntax trees for agents.
 //
-//   gramide check <file>      exit 0 if the file parses, else the error and exit 1
+//   gramide check <file>...   exit 0 if every file parses, else the errors and exit 1
 //   gramide parse <file>      the tree as an s-expression
 //   gramide tokens <file>     the token stream, one per line
 //   gramide outline <file>    declarations with their lines
 //   gramide tags <file>       definitions and references, for a repo map
-//   gramide balance <file>    delimiters and literals only: the check a language
+//   gramide balance <file>... delimiters and literals only: the check a language
 //                             with no grammar here can still have
 //   gramide map <dir> [--budget N] [--task TEXT]
 //                             a ranked map of a repository within N tokens (default 1024),
@@ -25,7 +25,7 @@ import fs
 import env
 import process
 
-fn usage() -> String = "usage: gramide (check | parse | tokens | outline | tags | balance) <file>\n       gramide map <dir> [--budget N] [--task TEXT]"
+fn usage() -> String = "usage: gramide (parse | tokens | outline | tags) <file>\n       gramide (check | balance) <file>...\n       gramide map <dir> [--budget N] [--task TEXT]"
 
 effect fn read(path: String) -> Result[String, String] = fs.read_text(path) |> result.map_err((e) => path + ": " + e)
 
@@ -48,6 +48,37 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
     },
     _ => err(usage()),
   }
+}
+
+// `check` and `balance` take any number of files. Both are what a gate runs
+// over a whole tree, and running them in one process compiles each grammar
+// once instead of once per file. One file behaves exactly as before: the
+// verdict on stdout, the reason on stderr, exit 1 if anything failed.
+effect fn run_many(cmd: String, paths: List[String]) -> Unit = {
+  let engines = lang.engines_for(paths)
+  var failed = false
+  for p in paths {
+    match read(p) {
+      err(e) => {
+        eprintln(e)
+        failed = true
+      },
+      ok(src) => if cmd == "balance" then match balance.check(src) {
+        none => println(p + ": balanced"),
+        some(f) => {
+          eprintln(p + ":" + int.to_string(f.line) + ":" + int.to_string(f.col) + ": " + f.message)
+          failed = true
+        },
+      } else match lang.parse_with(engines, p, src) {
+        err(e) => {
+          eprintln(e)
+          failed = true
+        },
+        ok(_) => println(p + ": ok"),
+      },
+    }
+  }
+  if failed then process.exit(1) else ()
 }
 
 // `--budget N` and `--task TEXT` after the directory; anything else is the task too.
@@ -82,7 +113,9 @@ effect fn finish(r: Result[Unit, String]) -> Unit = match r {
 effect fn main() -> Unit = {
   let argv = env.args()
   let cmd = list.get(argv, 0) ?? ""
+  let rest = list.drop(argv, 1)
   if cmd == "map" then finish(run_map(argv))
+  else if (cmd == "check" or cmd == "balance") and list.len(rest) > 0 then run_many(cmd, rest)
   else match list.get(argv, 1) {
     some(path) => finish(run(cmd, path)),
     none => finish(err(usage())),

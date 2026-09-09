@@ -9,6 +9,7 @@
 
 ```
 gramide check   src/main.almd     パースできれば exit 0、失敗なら `file:line:col: unexpected X (expected …)`
+gramide check   src/*.almd        ファイルは何個でも: 文法のコンパイルはファイルごとではなく一度だけ
 gramide outline src/main.almd     宣言ごとに一行: L12-40 function_declaration parse
 gramide parse   src/main.almd     木全体を S 式で
 gramide tags    src/main.almd     `def function parse L40-58`、`ref call list.map L44`、`ref type Node L12` — リポジトリマップの入力

@@ -32,3 +32,34 @@ fn parse_source(path: String, src: String) -> Result[parser.Parsed, String] = {
   let toks = tokens_for(path, src)!
   parser.parse(g, toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
 }
+
+// Every grammar this build knows, compiled. Compiling is per grammar, not
+// per file, so a tool that reads a whole tree builds this once and hands it
+// to `parse_with` for each file. The languages are named fields rather than
+// a list because reading an element out of a list copies it, and a compiled
+// grammar is the largest value here.
+type Engines = { almd: parser.Compiled, go: parser.Compiled }
+
+fn engines() -> Engines = Engines {
+  almd: parser.compile(lang_almide.almide()),
+  go: parser.compile(lang_go.go()),
+}
+
+// A grammar with no rules, so a language none of the files are written in
+// costs nothing to have a field for. Compiling one grammar takes about half
+// a millisecond, which is worth avoiding when the answer is one file.
+fn no_grammar() -> parser.Grammar = parser.Grammar { start: "", rules: [:] }
+
+fn engines_for(paths: List[String]) -> Engines = Engines {
+  almd: parser.compile(if list.any(paths, (p) => string.ends_with(p, ".almd")) then lang_almide.almide() else no_grammar()),
+  go: parser.compile(if list.any(paths, (p) => string.ends_with(p, ".go")) then lang_go.go() else no_grammar()),
+}
+
+fn parse_with(e: Engines, path: String, src: String) -> Result[parser.Parsed, String] = {
+  let toks = tokens_for(path, src)!
+  if string.ends_with(path, ".go") then
+    parser.parse_with(e.go, toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
+  else if string.ends_with(path, ".almd") then
+    parser.parse_with(e.almd, toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
+  else err(path + ": no grammar for this extension (known: " + list.join(EXTENSIONS, ", ") + ")")
+}
