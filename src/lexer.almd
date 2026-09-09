@@ -49,7 +49,10 @@ let KEYWORDS = ["module", "import", "type", "protocol", "for", "in", "fn", "let"
   "return", "class", "impl", "deriving", "newtype"]
 
 // Multi-character operators, longest first so `..<` wins over `..`.
-let OPERATORS = ["..<", "...", "?.", "??", "->", "=>", "==", "!=", "<=", ">=", "|>", ">>", "**", "..",
+// `&&` and `||` are not Almide (it has `and` / `or`), but lexing them as one
+// token each makes the parse error name the whole operator a writer typed
+// rather than half of it.
+let OPERATORS = ["..<", "...", "?.", "??", "->", "=>", "==", "!=", "<=", ">=", "|>", ">>", "**", "..", "&&", "||",
   "=", "+", "-", "*", "/", "%", "^", "<", ">", "!", "?", ".", ",", ":", ";", "(", ")", "[", "]",
   "{", "}", "|", "@", "&", "#"]
 
