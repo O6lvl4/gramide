@@ -95,6 +95,32 @@ tree cloned a sub-grammar at every reference, and the parser state's `expected` 
 held strings that were copied on every call; it now holds node ids and renders them
 only for an error. Together: a 116k-line Go file from 188 s to 7.6 s.
 
+**Nothing that repeats compares strings.** `compile` numbers every distinct text a
+terminal asks for, and the token stream is numbered against the same table once per
+parse. A terminal match is an integer compare, and the engine never reads the token
+record, so it never copies a value that owns two strings. This is also the way round
+a backend that renders `t.kind == want` as a clone of both operands (almide/almide#2066)
+and `list.get` as a copy of the element (almide/almide#2070).
+
+**A result carries no nodes.** A rule pushes what it built onto one list the caller
+owns and hands down, and a rule that fails truncates that list back to where it found
+it. Returning the nodes meant every sequence copied its children into its parent, once
+per level of nesting, and naming a node rebuilt its whole subtree; a single chain of
+4,000 operators took 2.17 s and quadrupled with each doubling. It is now linear and
+takes 0.01 s. `list.pop` moves the element out, where `list.reverse`, `list.set` and
+`list.slice` all copy the list, so a drain of two pops and two pushes per node beats
+one copy of a subtree.
+
+**Nothing per call holds a list.** The parser state is two integers. What was expected
+at the farthest failure moves to a list the caller owns, which is right on its own
+terms because that set only ever moves forward and backtracking never has to undo it.
+The set is filled only on a second pass, which a file that parses never runs.
+
+**Compiling is per grammar, not per file.** `emit` appends to the arena it is given
+rather than building a private one and copying it up, and `parse_with` takes a grammar
+that is already compiled. `check` and `balance` take any number of files. The whole
+validation corpus, 11,364 files, went from 159 s at the start of this work to 18 s.
+
 ## What is measured
 
 **Almide.** Every `.almd` file in the Almide repository, excluding `research/grammar-lab` (syntax
@@ -158,7 +184,38 @@ Measured on all 8,077 `.go` files under `GOROOT/src`: 8,075 balanced, one direct
 and one rejection — a deliberately malformed compiler fixture that `gofmt -e` also
 rejects. No false rejection.
 
+## How fast, against something honest
+
+109 Go files, 1,338,916 bytes, on one core, with process startup taken out of both.
+`gofmt -e` is the fair comparison: it is a hand-written recursive descent parser for
+the same language, and `-e` makes it report every syntax error rather than the first.
+
+| | work | rate |
+|---|---|---|
+| `gofmt -e`, `GOMAXPROCS=1` | 0.047 s | 28 MB/s |
+| `gramide check`, all files in one process | 0.195 s | 6.9 MB/s |
+
+So about four times slower than the reference parser for the language, interpreting a
+grammar value rather than running code generated from one. It was twenty-seven times
+slower before the work described above.
+
+Where a run of `gramide check` spends its time, same corpus, one process per file:
+
+| | |
+|---|---|
+| process startup | 0.16 s |
+| compiling the grammar | 0.05 s |
+| lexing | 0.04 s |
+| parsing | 0.13 s |
+
+Two things follow. Parsing is no longer the largest item for a per-file run, which is
+why `check` takes many files at a time. And the remaining gap to `gofmt` is not one
+missing trick: it is that every value the engine touches is copied, which is the cost
+of the property that makes the grammar editable at runtime.
+
 ## Next
 
-1. Memoisation of `Ref` results per (rule, position) if a grammar ever needs it; none
+1. Error recovery. One bad token means no tree, so an outline of a file an agent is
+   in the middle of editing returns nothing. This is worth more than speed is.
+2. Memoisation of `Ref` results per (rule, position) if a grammar ever needs it; none
    does so far.
