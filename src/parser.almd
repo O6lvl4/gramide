@@ -33,8 +33,9 @@ type Rule =
   | Not(Rule)                   // negative lookahead, consumes nothing
   | Ahead(Rule)                 // positive lookahead, consumes nothing
   | Left(String, Rule, Rule)    // operand (op operand)* folded left into nodes of this kind
-  | Recover(Rule)               // on a recovering parse: skip to where this matches again,
-  | RecoverAll(Rule)            //   leaving an ERROR node over what was skipped
+  | Recover(Rule, Rule)         // on a recovering parse: skip to where the first matches
+  | RecoverAll(Rule, Rule)      //   again, keeping what the second reads of the failed item
+                                //   and leaving an ERROR node over the rest
   | Eps
 
 type Grammar = { start: String, rules: Map[String, Rule] }
@@ -112,8 +113,8 @@ fn emit(r: Rule, mut ops: List[Op], mut texts: List[String], mut kids: List[Int]
     Not(x) => (K_NOT, "", [x]),
     Ahead(x) => (K_AHEAD, "", [x]),
     Left(k, x, y) => (K_LEFT, k, [x, y]),
-    Recover(x) => (K_RECOVER, "", [x]),
-    RecoverAll(x) => (K_RECOVER_ALL, "", [x]),
+    Recover(x, h) => (K_RECOVER, "", [x, h]),
+    RecoverAll(x, h) => (K_RECOVER_ALL, "", [x, h]),
   }
   var ids: List[Int] = []
   for s in subs {
@@ -123,7 +124,7 @@ fn emit(r: Rule, mut ops: List[Op], mut texts: List[String], mut kids: List[Int]
     let first = list.len(kids)
     for id in ids { list.push(kids, id) }
     Op { kind: kind, a: first, b: list.len(ids) }
-  } else if kind == K_LEFT then Op { kind: kind, a: list.get(ids, 0) ?? 0, b: list.get(ids, 1) ?? 0 }
+  } else if kind == K_LEFT or kind == K_RECOVER or kind == K_RECOVER_ALL then Op { kind: kind, a: list.get(ids, 0) ?? 0, b: list.get(ids, 1) ?? 0 }
   else Op { kind: kind, a: list.get(ids, 0) ?? -1, b: 0 }
   list.push(ops, op)
   list.push(texts, text)
@@ -489,18 +490,26 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
           rollback(out, mark)
           if a.ok then resume = q else q = q + 1
         }
-        if resume >= 0 then {
-          if real_between(tk, tt, pos, resume) then list.push(out, tree.node("ERROR", [], pos, resume)) else ()
-          let a = parse_rule(c, tk, tt, out, exp, st, op.a, resume)
-          if a.ok then Out { ok: true, pos: a.pos, st: a.st } else {
-            rollback(out, mark)
-            Out { ok: false, pos: pos, st: a.st }
-          }
-        } else if real_between(tk, tt, pos, limit) then {
-          // nothing else in reach reads: the rest of this list is the error
-          list.push(out, tree.node("ERROR", [], pos, limit))
-          Out { ok: true, pos: limit, st: st }
-        } else Out { ok: false, pos: pos, st: st }
+        // where the tokens given up end: at the next item, or at the end of
+        // what this list may reach
+        let stop = if resume >= 0 then resume else limit
+        if resume < 0 and not real_between(tk, tt, pos, limit) then Out { ok: false, pos: pos, st: st }
+        else {
+          // keep whatever of the failed item is readable on its own
+          let h = parse_rule(c, tk, tt, out, exp, st, op.b, pos)
+          st = h.st
+          let kept = h.ok and h.pos > pos and h.pos <= stop
+          if not kept then rollback(out, mark) else ()
+          let from = if kept then h.pos else pos
+          if real_between(tk, tt, from, stop) then list.push(out, tree.node("ERROR", [], from, stop)) else ()
+          if resume >= 0 then {
+            let a = parse_rule(c, tk, tt, out, exp, st, op.a, resume)
+            if a.ok then Out { ok: true, pos: a.pos, st: a.st } else {
+              rollback(out, mark)
+              Out { ok: false, pos: pos, st: a.st }
+            }
+          } else Out { ok: true, pos: limit, st: st }
+        }
       }
     }
   }
@@ -667,8 +676,14 @@ fn ahead(x: Rule) -> Rule = Ahead(x)
 fn leftf(kind: String, operand: Rule, op: Rule) -> Rule = Left(kind, operand, op)
 // An item in a list that a reader would rather skip than lose the list over.
 // `recover` is for a list inside brackets, `recover_all` for the file itself.
-fn recover(x: Rule) -> Rule = Recover(x)
-fn recover_all(x: Rule) -> Rule = RecoverAll(x)
+// The `_keeping` forms name a prefix of the item worth having on its own: a
+// declaration whose signature is half-typed still has a name, and an outline
+// that names it is the whole point of reading a file mid-edit.
+fn nothing() -> Rule = Alt([])
+fn recover(x: Rule) -> Rule = Recover(x, nothing())
+fn recover_all(x: Rule) -> Rule = RecoverAll(x, nothing())
+fn recover_keeping(x: Rule, head: Rule) -> Rule = Recover(x, head)
+fn recover_all_keeping(x: Rule, head: Rule) -> Rule = RecoverAll(x, head)
 fn lits(ts: List[String]) -> Rule = Alt(list.map(ts, (t) => Lit(t)))
 fn keeps(ts: List[String]) -> Rule = Alt(list.map(ts, (t) => Keep(t)))
 // `a, b, c` with an optional trailing comma

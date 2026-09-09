@@ -233,8 +233,16 @@ an unterminated string. `tokenize_recovering` turns each run it cannot read into
 `error` token, which no grammar rule asks for, so the parser's recovery gives up on the
 smallest enclosing list rather than on the file.
 
+A declaration whose signature is half-typed keeps its name. `recover_all_keeping`
+names a second rule, a prefix of the item worth having on its own, and recovery reads
+it at the failure point before writing the ERROR node over the rest. Each grammar has
+a `decl_head` rule for this: `func` and a name, `type` and a name, and so on. So
+`func Beta(y int` with the rest still unwritten appears in the outline as
+`L5-5 function Beta`, which is the state a file is in for most of the time anyone is
+editing it.
+
 What this buys, on the 102 files of the validation corpus that do not parse: 99 give an
-outline, 663 declarations in total. The three that give nothing are a directory, an
+outline, 684 declarations in total. The three that give nothing are a directory, an
 empty file, and a file of English prose named `.go` — in each case there is no Go
 before the first thing that fails. Recovery costs about 14 ms on a 130 KB file that
 fails, and nothing at all on a file that parses.
@@ -246,7 +254,7 @@ and, for `map`, into the notes under the map.
 
 ## Next
 
-1. Recovery inside a declaration's header, so a function whose signature is being
-   edited keeps its name instead of becoming one ERROR node.
+1. Recovery inside a block, so a half-typed statement costs its statement rather than
+   the run of statements after it.
 2. Memoisation of `Ref` results per (rule, position) if a grammar ever needs it; none
    does so far.

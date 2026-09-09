@@ -22,7 +22,7 @@
 import self.lexer
 import self.tree
 import self.parser
-import self.parser.{ tok, lit, keep, r, seq, alt, rep, rep1, opt, wrap, field, ahead, leftf, lits, keeps, grammar, recover, recover_all }
+import self.parser.{ tok, lit, keep, r, seq, alt, rep, rep1, opt, wrap, field, ahead, leftf, lits, keeps, grammar, recover, recover_all, recover_all_keeping }
 
 let nl = opt(tok("newline"))
 let sep = rep1(alt([lit(";"), tok("newline")]))
@@ -45,11 +45,19 @@ let pattern = r("pattern")
 let block = r("block")
 
 fn almide() -> parser.Grammar = grammar("source_file", [
-  ("source_file", wrap("source_file", seq([opt(sep), opt(seq([recover_all(r("decl")), rep(recover_all(seq([sep, r("decl")]))), opt(sep)]))]))),
+  ("source_file", wrap("source_file", seq([opt(sep), opt(seq([recover_all_keeping(r("decl"), r("decl_head")), rep(recover_all_keeping(seq([sep, r("decl")]), seq([sep, r("decl_head")]))), opt(sep)]))]))),
 
   // ── declarations ──────────────────────────────────────────────────────
   ("decl", alt([r("import"), r("module"), r("type_decl"), r("fn_decl"), r("protocol_decl"),
                 r("test_where_def"), r("test_decl"), r("top_let")])),
+  // what is still worth knowing about a declaration that is half-typed: its
+  // kind and its name
+  ("decl_head", alt([
+     wrap("function_declaration", seq([r("visibility"), opt(lit("effect")), lit("fn"), field("name", r("fn_name"))])),
+     wrap("type_declaration", seq([opt(lits(["local", "mod"])), lit("type"), field("name", tname)])),
+     wrap("protocol_declaration", seq([lit("protocol"), field("name", tname)])),
+     wrap("test_declaration", seq([lit("test"), field("name", tok("string"))])),
+     wrap("let_declaration", seq([r("visibility"), lits(["let", "var"]), field("name", name)]))])),
   ("import", wrap("import", seq([lit("import"), field("path", dotted),
      opt(alt([seq([lit("."), bracketed("{", name, "}")]), seq([lit("as"), ident])]))]))),
   ("module", wrap("module", seq([lit("module"), field("path", dotted)]))),
@@ -281,10 +289,11 @@ test "a broken file fails at the right place" {
   }
 }
 
-test "a broken declaration loses that declaration, not the file" {
+test "a broken declaration keeps its name and loses only its body" {
   let src = "fn alpha(x: Int) -> Int = x + 1\n\nfn beta(y: -> Int = y\n\nfn gamma(s: String) -> String = s\n"
   match parse_src(src) { ok(_) => assert(false), err(e) => assert(string.starts_with(e, "3:")) }
-  assert_eq(recovered_kinds(src), ["function_declaration", "ERROR", "function_declaration"])
+  // beta survives as a declaration with a name; what follows its name is the ERROR
+  assert_eq(recovered_kinds(src), ["function_declaration", "function_declaration", "ERROR", "function_declaration"])
 }
 
 test "an unterminated string still gives up only the line it is on" {
