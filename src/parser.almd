@@ -33,6 +33,7 @@ type Rule =
   | Not(Rule)                   // negative lookahead, consumes nothing
   | Ahead(Rule)                 // positive lookahead, consumes nothing
   | Left(String, Rule, Rule)    // operand (op operand)* folded left into nodes of this kind
+  | Any                         // any one token but the end of the file, kept out of the tree
   | Recover(Rule, Rule)         // on a recovering parse: skip to where the first matches
   | RecoverAll(Rule, Rule)      //   again, keeping what the second reads of the failed item
                                 //   and leaving an ERROR node over the rest
@@ -88,8 +89,9 @@ let K_FIELD = 11
 let K_NOT = 12
 let K_AHEAD = 13
 let K_LEFT = 14
-let K_RECOVER = 15
-let K_RECOVER_ALL = 16
+let K_ANY = 15
+let K_RECOVER = 16
+let K_RECOVER_ALL = 17
 
 // Append a rule's subtree to the arena and answer where its own node landed.
 // The three lists are the arena itself, handed down rather than returned:
@@ -113,6 +115,7 @@ fn emit(r: Rule, mut ops: List[Op], mut texts: List[String], mut kids: List[Int]
     Not(x) => (K_NOT, "", [x]),
     Ahead(x) => (K_AHEAD, "", [x]),
     Left(k, x, y) => (K_LEFT, k, [x, y]),
+    Any => (K_ANY, "", []),
     Recover(x, h) => (K_RECOVER, "", [x, h]),
     RecoverAll(x, h) => (K_RECOVER_ALL, "", [x, h]),
   }
@@ -388,6 +391,14 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
       none => miss(exp, st0, pos, id),
     }
   }
+  // the body of a macro is a balanced run of tokens the grammar has no reading
+  // of; `any` consumes one and leaves nothing behind
+  else if op.kind == K_ANY then {
+    match list.get(tk, pos) {
+      some(k) => if k == A_EOF then miss(exp, st0, pos, id) else good(st0, pos + 1),
+      none => miss(exp, st0, pos, id),
+    }
+  }
   else if op.kind == K_REF then {
     if op.a < 0 then miss(exp, st0, pos, id)
     else parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
@@ -574,7 +585,8 @@ type Parsed = { root: tree.Node, toks: List[tree.Token] }
 fn expectation(c: Compiled, id: Int) -> String = {
   let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
   let text = text_at(c, id)
-  if op.kind == K_TOK then text
+  if op.kind == K_ANY then "a token"
+  else if op.kind == K_TOK then text
   else if op.kind == K_REF then "<missing rule " + text + ">"
   else "`" + text + "`"
 }
@@ -673,6 +685,7 @@ fn wrap(kind: String, x: Rule) -> Rule = Wrap(kind, x)
 fn field(name: String, x: Rule) -> Rule = Field(name, x)
 fn nott(x: Rule) -> Rule = Not(x)
 fn ahead(x: Rule) -> Rule = Ahead(x)
+fn any() -> Rule = Any
 fn leftf(kind: String, operand: Rule, op: Rule) -> Rule = Left(kind, operand, op)
 // An item in a list that a reader would rather skip than lose the list over.
 // `recover` is for a list inside brackets, `recover_all` for the file itself.

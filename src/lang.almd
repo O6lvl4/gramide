@@ -33,8 +33,9 @@ import self.lex
 import self.parser
 import self.lang_almide
 import self.lang_go
+import self.lang_rust
 
-let EXTENSIONS = [".almd", ".go"]
+let EXTENSIONS = [".almd", ".go", ".rs"]
 
 fn known(path: String) -> Bool = list.any(EXTENSIONS, (e) => string.ends_with(path, e))
 
@@ -50,10 +51,12 @@ type Language = { lex: lex.Spec, grammar: parser.Compiled }
 
 fn almide_lang() -> Language = Language { lex: lang_almide.spec(), grammar: parser.compile(lang_almide.almide()) }
 fn go_lang() -> Language = Language { lex: lang_go.spec(), grammar: parser.compile(lang_go.go()) }
+fn rust_lang() -> Language = Language { lex: lang_rust.spec(), grammar: parser.compile(lang_rust.rust()) }
 
 // per language
 fn language_of(path: String) -> Result[Language, String] =
   if string.ends_with(path, ".go") then ok(go_lang())
+  else if string.ends_with(path, ".rs") then ok(rust_lang())
   else if string.ends_with(path, ".almd") then ok(almide_lang())
   else err(unknown_ext(path))
 
@@ -62,6 +65,7 @@ fn language_of(path: String) -> Result[Language, String] =
 // per language
 fn spec_of(path: String) -> Result[lex.Spec, String] =
   if string.ends_with(path, ".go") then ok(lang_go.spec())
+  else if string.ends_with(path, ".rs") then ok(lang_rust.spec())
   else if string.ends_with(path, ".almd") then ok(lang_almide.spec())
   else err(unknown_ext(path))
 
@@ -73,9 +77,9 @@ fn tokens_for(path: String, src: String) -> Result[List[tree.Token], String] =
 // Compiling is per grammar, not per file, so a tool that reads a whole tree
 // builds this once and hands the same `Language` to every file in it.
 
-type Engines = { almd: Language, go: Language }
+type Engines = { almd: Language, go: Language, rs: Language }
 
-fn engines() -> Engines = Engines { almd: almide_lang(), go: go_lang() }
+fn engines() -> Engines = Engines { almd: almide_lang(), go: go_lang(), rs: rust_lang() }
 
 // A grammar with no rules, so a language none of the files are written in
 // costs nothing to have a field for.
@@ -86,6 +90,8 @@ fn engines_for(paths: List[String]) -> Engines = Engines {
         else Language { lex: lang_almide.spec(), grammar: parser.compile(no_grammar()) },
   go: if list.any(paths, (p) => string.ends_with(p, ".go")) then go_lang()
       else Language { lex: lang_go.spec(), grammar: parser.compile(no_grammar()) },
+  rs: if list.any(paths, (p) => string.ends_with(p, ".rs")) then rust_lang()
+      else Language { lex: lang_rust.spec(), grammar: parser.compile(no_grammar()) },
 }
 
 // ── reading a file ────────────────────────────────────────────────────────
@@ -127,11 +133,13 @@ fn parse_source(path: String, src: String) -> Result[parser.Parsed, String] = pa
 // per language
 fn read_with(e: Engines, path: String, src: String) -> Result[Reading, String] =
   if string.ends_with(path, ".go") then read_lang(e.go, path, src)
+  else if string.ends_with(path, ".rs") then read_lang(e.rs, path, src)
   else if string.ends_with(path, ".almd") then read_lang(e.almd, path, src)
   else err(unknown_ext(path))
 
 // per language
 fn parse_with(e: Engines, path: String, src: String) -> Result[parser.Parsed, String] =
   if string.ends_with(path, ".go") then parse_lang(e.go, path, src)
+  else if string.ends_with(path, ".rs") then parse_lang(e.rs, path, src)
   else if string.ends_with(path, ".almd") then parse_lang(e.almd, path, src)
   else err(unknown_ext(path))

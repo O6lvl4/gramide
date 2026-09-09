@@ -78,7 +78,7 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
   operators are `Left(kind, operand, op)` and fold to the left after matching. The
   parser remembers the farthest token anything failed at and what was expected there,
   which is the error `check` prints.
-- **`src/lang_almide.almd`**, **`src/lang_go.almd`** — a language each: its lexer spec
+- **`src/lang_almide.almd`**, **`src/lang_go.almd`**, **`src/lang_rust.almd`** — a language each: its lexer spec
   and its grammar, both as values, in one file. The Go one builds its expression ladder
   twice from one function, with and without a trailing composite literal, which is how
   `if x == T{…} {` is kept unambiguous.

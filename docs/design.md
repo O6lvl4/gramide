@@ -35,6 +35,12 @@ wrong about where the code ends. So a new language names a family that fits, or 
 one; everything else about it is data. Go's lexing is 32 lines of spec where it used
 to be 229 lines of module.
 
+Rust was the first language added after the split, and it needed two families and one
+newline policy: numbers with a type suffix, strings where `r##"…"##` closes only on
+the hashes it opened with and `'a` is a lifetime rather than an unterminated
+character, and `NL_NONE` for a language that separates with `;` and braces. That is
+the shape the design expects. Everything else about Rust is 34 lines of spec.
+
 **Newlines are tokens.** Almide separates statements with newlines, so the grammar has
 to see them. The lexer emits one `newline` token per run of blank lines and drops
 whitespace and comments. The grammar says where a line may continue: after an
@@ -147,6 +153,14 @@ experiments in deliberately non-Almide forms) and `docs/roadmap` (pseudo-code wi
   as parse errors and 8 with a targeted syntax diagnostic (retired `..` ranges,
   `let … in`, `let rec`, `??` without a fallback).
 - 720 other `broken.almd` fixtures parse and fail later in the compiler, as intended.
+
+**Rust.** Every `.rs` file under `crates`, `tests`, `runtime`, `src` and `tools` of the
+Almide compiler (827 files, 15.7 MB):
+
+- 826 files parse. `rustfmt --edition 2024` accepts exactly those 826.
+- The one file `rustfmt` rejects, for using `gen` as a name in an edition that reserves
+  it, gramide accepts. That is a name resolution question, not a syntax one.
+- 15.7 MB in 2.4 s on one core, 6.6 MB/s, the same as the Go grammar.
 
 **Go.** Every `.go` file under `GOROOT/src` of Go 1.27 (8,077 files):
 

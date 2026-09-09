@@ -16,7 +16,7 @@
 // when that file does not parse — the tree is the recovered one, with an ERROR
 // node over each part the grammar had to give up, and the reason goes to stderr.
 //
-// Languages: Almide (.almd) and Go (.go). Each is one file (src/lang_*.almd)
+// Languages: Almide (.almd), Go (.go), Rust (.rs). Each is one file (src/lang_*.almd)
 // holding a lexer spec and a grammar value, both data. The lexer driver in
 // src/lex.almd, the engine in src/parser.almd and the walkers in src/tags.almd
 // are shared and know no language. src/lang.almd picks by extension.

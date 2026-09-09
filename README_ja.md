@@ -65,7 +65,7 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
   （`Tok`, `Lit`, `Seq`, `Alt`, `Rep`, `Opt`, `Wrap`, `Field`, `Left`, 先読み）。順序付き選択、
   貪欲な繰り返し、左再帰なし。二項演算子は `Left(kind, operand, op)` で、マッチ後に左畳み込み。
   パーサは失敗した最遠のトークンとそこで期待していたものを覚えていて、それが `check` の出すエラー。
-- **`src/lang_almide.almd`**, **`src/lang_go.almd`** — 1 ファイルで 1 言語。字句解析の spec と文法を
+- **`src/lang_almide.almd`**, **`src/lang_go.almd`**, **`src/lang_rust.almd`** — 1 ファイルで 1 言語。字句解析の spec と文法を
   どちらも値として持ちます。Go 文法は式の梯子を一つの関数から 2 回（末尾の複合リテラルあり・なし）生成し、
   `if x == T{…} {` の曖昧さを避けています。セミコロン挿入は spec の `NL_SEMI` 指定だけで、
   文法は Go が区切りと見る場所にしか区切りを見ません。
