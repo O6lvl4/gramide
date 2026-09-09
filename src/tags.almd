@@ -4,10 +4,18 @@
 // for every call (qualified as `module.name` when written that way) and
 // `ref type <Name> L<n>` for every type mention. This is the input a repo
 // map needs: definitions to rank, references to rank them by.
+//
+// A function that belongs to a type is named with the type: `SpineDb::open`,
+// `Shape.Area`. A `def` line is read on its own — in a repo map, in a grep,
+// in a flat list of a file's symbols — and a bare `open` there is worth
+// nothing. Which languages write which separator is not known here; it
+// arrives as `sep`, from lang.almd.
 
 import self.tree
 import self.lex
 import self.lang_almide
+import self.lang_go
+import self.lang_rust
 import self.parser
 
 // Local copies of the tree helpers that take the token list: a list handed to
@@ -16,65 +24,134 @@ import self.parser
 fn leaf_text(n: tree.Node, toks: List[tree.Token]) -> String = match list.get(toks, n.start) { some(t) => t.text, none => "" }
 fn start_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks, n.start) { some(t) => t.line, none => 0 }
 fn end_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks, n.end - 1) { some(t) => t.line, none => 0 }
-fn text_of(n: tree.Node, toks: List[tree.Token], src: String) -> String =
-  match (list.get(toks, n.start), list.get(toks, n.end - 1)) {
-    (some(f), some(l)) => string.slice(src, f.start, l.end),
-    _ => "",
-  }
 
-type Tag = { role: String, kind: String, name: String, line: Int, end_line: Int }
+// A name of more than one token — `salsa::Database`, `Vec<u8>` — is joined
+// from the tokens, not cut out of the source. A token's offsets count bytes
+// and `string.slice` counts characters, so cutting the source puts a name in
+// a file with a `—` in a comment somewhere above it out by as many bytes as
+// that comment cost. Nothing here needs the gaps between tokens anyway.
+fn span_text(n: tree.Node, toks: List[tree.Token]) -> String = {
+  var s = ""
+  var i = n.start
+  while i < n.end {
+    match list.get(toks, i) { some(t) => { s = s + t.text }, none => () }
+    i = i + 1
+  }
+  s
+}
+
+// `name` is what is printed; `base` is the same name without its type, and is
+// what a reference can be matched against. A call site says `as_str`, never
+// `Applicability::as_str` — gramide resolves no names — so a repo map has to
+// join the two on the bare name while showing the useful one. For a `ref`, and
+// for anything that belongs to no type, they are equal.
+type Tag = { role: String, kind: String, name: String, base: String, line: Int, end_line: Int }
 
 fn render(t: Tag) -> String =
   if t.role == "def" then "def " + t.kind + " " + t.name + " L" + int.to_string(t.line) + "-" + int.to_string(t.end_line)
   else "ref " + t.kind + " " + t.name + " L" + int.to_string(t.line)
 
-// Node kinds that define a name, across languages. A grouped Go `type ( … )`
-// is a type_declaration without a name whose type_specs carry the names.
-let DECLS = ["function_declaration", "method_declaration", "type_declaration", "let_declaration", "test_declaration",
-  "protocol_declaration", "method_signature", "variant", "type_spec", "var_spec", "const_spec", "field"]
-
+// The node kinds that define a name, across languages, each mapped to the word
+// the output uses for it. Every other kind answers "", which is how the
+// walkers tell a declaration from anything else. A grouped Go `type ( … )` is
+// a type_declaration without a name whose type_specs carry the names.
+//
+// This is the whole vocabulary. A grammar that invents a kind still parses; it
+// is simply invisible to `outline`, `tags` and `map`.
 fn decl_kind(k: String) -> String = match k {
   "function_declaration" => "function",
   "method_declaration" => "method",
-  "type_spec" => "type",
-  "var_spec" => "var",
-  "const_spec" => "const",
-  "field" => "field",
+  "method_signature" => "method",
   "type_declaration" => "type",
+  "type_spec" => "type",
   "let_declaration" => "let",
   "test_declaration" => "test",
   "protocol_declaration" => "protocol",
-  "method_signature" => "method",
   "variant" => "variant",
-  _ => k,
+  "var_spec" => "var",
+  "const_spec" => "const",
+  "field" => "field",
+  "impl" => "impl",
+  "mod" => "mod",
+  "macro_definition" => "macro",
+  _ => "",
 }
+
+// A declaration whose name qualifies the functions written inside it. A `mod`
+// is deliberately not one: a module is a path, not an owner, and prefixing
+// every function in a file with it would say nothing.
+fn is_scope(k: String) -> Bool =
+  k == "impl" or k == "type_spec" or k == "type_declaration" or k == "protocol_declaration"
+
+// A declaration that is a function, and so takes the qualifier.
+fn is_callable(k: String) -> Bool =
+  k == "function_declaration" or k == "method_declaration" or k == "method_signature"
 
 fn child(n: tree.Node, field: String) -> Option[tree.Node] = list.find(n.kids, (k) => k.field == field)
 
-fn name_of(n: tree.Node, toks: List[tree.Token], src: String) -> String = match child(n, "name") {
-  some(m) => if list.is_empty(m.kids) then leaf_text(m, toks) else text_of(m, toks, src),
+fn name_of(n: tree.Node, toks: List[tree.Token]) -> String = match child(n, "name") {
+  some(m) => if list.is_empty(m.kids) then leaf_text(m, toks) else span_text(m, toks),
   none => "",
 }
+
+// The bare name to qualify by. A Rust impl is named by a whole type, and
+// nobody greps for `Vec<u8>::len`, so only the head of it is taken; a type
+// with no head to take — `[u8]`, `(A, B)` — qualifies nothing.
+fn scope_of(n: tree.Node, toks: List[tree.Token]) -> String = match child(n, "name") {
+  some(m) => if list.is_empty(m.kids) or m.kind == "type_name" then leaf_text(m, toks) else "",
+  none => "",
+}
+
+fn type_name_in(n: tree.Node, toks: List[tree.Token]) -> String =
+  if n.kind == "type_name" then leaf_text(n, toks)
+  else {
+    var found = ""
+    for k in n.kids { if found == "" then { found = type_name_in(k, toks) } else () }
+    found
+  }
+
+// Go names the owner in a receiver instead of by nesting, so a method there is
+// found at the top level with its type one field away.
+fn owner_for(n: tree.Node, owner: String, toks: List[tree.Token]) -> String =
+  if not is_callable(n.kind) then ""
+  else match child(n, "receiver") {
+    some(p) => type_name_in(p, toks),
+    none => owner,
+  }
+
+fn scope_under(n: tree.Node, owner: String, toks: List[tree.Token]) -> String =
+  if is_callable(n.kind) then ""            // a function body holds no methods
+  else if is_scope(n.kind) then scope_of(n, toks)
+  else owner
 
 // Walk the tree. Calls are recognised on the flat postfix chain the grammar
 // produces: `identifier arguments` or `identifier field_access arguments`.
 // The chain is read with one step of memory (what the previous two kids
 // were) rather than by looking ahead, because reading a kid with list.get
 // copies its whole subtree — a look-ahead would copy every subtree twice.
-fn walk(n: tree.Node, toks: List[tree.Token], src: String) -> List[Tag] = {
+fn walk(n: tree.Node, toks: List[tree.Token], scope: String, sep: String) -> List[Tag] = {
   var out: List[Tag] = []
-  let name = if list.contains(DECLS, n.kind) then name_of(n, toks, src) else ""
-  if name != "" then
-    list.push(out, Tag { role: "def", kind: decl_kind(n.kind), name: name, line: start_line(n, toks), end_line: end_line(n, toks) })
+  let kind = decl_kind(n.kind)
+  let name = if kind != "" then name_of(n, toks) else ""
+  if name != "" then {
+    let own = owner_for(n, scope, toks)
+    list.push(out, Tag {
+      role: "def",
+      kind: if own == "" then kind else "method",
+      name: if own == "" then name else own + sep + name,
+      base: name,
+      line: start_line(n, toks), end_line: end_line(n, toks) })
+  }
   else if n.kind == "type_name" and not list.is_empty(n.kids) then {
     match list.get(n.kids, 0) {
       some(leaf) => if (leaf.kind == "type_name" or leaf.kind == "identifier") and list.is_empty(leaf.kids) then
-        list.push(out, Tag { role: "ref", kind: "type", name: leaf_text(leaf, toks), line: start_line(leaf, toks), end_line: 0 })
+        list.push(out, Tag { role: "ref", kind: "type", name: leaf_text(leaf, toks), base: leaf_text(leaf, toks), line: start_line(leaf, toks), end_line: 0 })
       else (),
       none => (),
     }
   }
   else ()
+  let inner = scope_under(n, scope, toks)
   var prev_kind = ""          // the kid before this one
   var prev_name = ""          // its leaf text (identifier) or field name (field_access)
   var prev_line = 0
@@ -87,10 +164,10 @@ fn walk(n: tree.Node, toks: List[tree.Token], src: String) -> List[Tag] = {
       none => (),
       some(k) => {
         if k.kind == "arguments" and prev_kind == "identifier" then
-          list.push(out, Tag { role: "ref", kind: "call", name: prev_name, line: prev_line, end_line: 0 })
+          list.push(out, Tag { role: "ref", kind: "call", name: prev_name, base: prev_name, line: prev_line, end_line: 0 })
         else if k.kind == "arguments" and prev_kind == "field_access" then {
           let owner = if before_kind == "identifier" then before_name + "." else ""
-          list.push(out, Tag { role: "ref", kind: "call", name: owner + prev_name, line: prev_line, end_line: 0 })
+          list.push(out, Tag { role: "ref", kind: "call", name: owner + prev_name, base: owner + prev_name, line: prev_line, end_line: 0 })
         }
         else ()
         before_kind = prev_kind
@@ -100,7 +177,7 @@ fn walk(n: tree.Node, toks: List[tree.Token], src: String) -> List[Tag] = {
         prev_name = if k.kind == "identifier" then leaf_text(k, toks)
           else if k.kind == "field_access" then (match child(k, "field") { some(m) => leaf_text(m, toks), none => "" })
           else ""
-        for t in walk(k, toks, src) { list.push(out, t) }
+        for t in walk(k, toks, inner, sep) { list.push(out, t) }
       },
     }
     i = i + 1
@@ -108,34 +185,101 @@ fn walk(n: tree.Node, toks: List[tree.Token], src: String) -> List[Tag] = {
   out
 }
 
-fn tags(root: tree.Node, toks: List[tree.Token], src: String) -> List[String] = list.map(walk(root, toks, src), (t) => render(t))
+fn of_tree(root: tree.Node, toks: List[tree.Token], sep: String) -> List[Tag] = walk(root, toks, "", sep)
+
+fn tags(root: tree.Node, toks: List[tree.Token], sep: String) -> List[String] =
+  list.map(of_tree(root, toks, sep), (t) => render(t))
 
 test "definitions, calls and type mentions" {
   let src = "type P = { x: Int }\nfn area(p: P) -> Int = int.abs(p.x) * sq(2)\n"
   let toks = lex.tokenize(src, lang_almide.spec()) |> result.map_err((e) => e.message)!
   let p = parser.parse(lang_almide.almide(), toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert_eq(tags(p.root, toks, src), ["def type P L1-1", "def field x L1-1", "ref type Int L1", "def function area L2-2", "ref type P L2", "ref type Int L2", "ref call int.abs L2", "ref call sq L2"])
+  assert_eq(tags(p.root, toks, "."), ["def type P L1-1", "def field x L1-1", "ref type Int L1", "def function area L2-2", "ref type P L2", "ref type Int L2", "ref call int.abs L2", "ref call sq L2"])
 }
 
 // `outline`: the definitions only, one per line, nested ones indented by
-// how many definitions enclose them.
-fn outline(root: tree.Node, toks: List[tree.Token], src: String) -> List[String] = outline_walk(root, toks, src, "")
+// how many definitions enclose them. The name is qualified here too, even
+// though the indentation already shows what encloses what, so that one line
+// cut out of the output still says what it is.
+fn outline(root: tree.Node, toks: List[tree.Token], sep: String) -> List[String] =
+  outline_walk(root, toks, "", "", sep)
 
-fn outline_walk(n: tree.Node, toks: List[tree.Token], src: String, indent: String) -> List[String] = {
-  let name = if list.contains(DECLS, n.kind) then name_of(n, toks, src) else ""
+fn outline_walk(n: tree.Node, toks: List[tree.Token], indent: String, scope: String, sep: String) -> List[String] = {
+  let kind = decl_kind(n.kind)
+  let name = if kind != "" then name_of(n, toks) else ""
   var out: List[String] = []
-  if name != "" then
-    list.push(out, indent + "L" + int.to_string(start_line(n, toks)) + "-" + int.to_string(end_line(n, toks)) + " " + decl_kind(n.kind) + " " + name)
+  if name != "" then {
+    let own = owner_for(n, scope, toks)
+    list.push(out, indent + "L" + int.to_string(start_line(n, toks)) + "-" + int.to_string(end_line(n, toks))
+      + " " + (if own == "" then kind else "method")
+      + " " + (if own == "" then name else own + sep + name))
+  }
   else ()
   let deeper = if name == "" then indent else indent + "  "
+  let inner = scope_under(n, scope, toks)
   var i = 0
   let count = list.len(n.kids)
   while i < count {
     match list.get(n.kids, i) {
-      some(k) => for l in outline_walk(k, toks, src, deeper) { list.push(out, l) },
+      some(k) => for l in outline_walk(k, toks, deeper, inner, sep) { list.push(out, l) },
       none => (),
     }
     i = i + 1
   }
   out
+}
+
+test "a Rust method is named with the type it is implemented on" {
+  let src = """mod inner {
+    pub struct S { pub a: u8 }
+    impl S { pub fn new() -> S { S { a: 0 } } }
+    impl fmt::Display for S { fn fmt(&self) -> u8 { 0 } }
+    pub trait T { fn go(&self) -> u8; }
+}
+"""
+  let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
+  let p = parser.parse(lang_rust.rust(), toks) |> result.map_err((f) => parser.format_failure(f))!
+  assert_eq(outline(p.root, toks, "::"), [
+    "L1-6 mod inner",
+    "  L2-2 type S",
+    "    L2-2 field a",
+    "  L3-3 impl S",
+    "    L3-3 method S::new",
+    // `impl Display for S` is an impl of S, so its methods are S's
+    "  L4-4 impl S",
+    "    L4-4 method S::fmt",
+    "  L5-5 type T",
+    "    L5-5 method T::go",
+  ])
+}
+
+test "a Go method is named with its receiver, which is not where it is written" {
+  let src = "package p\n\ntype Shape struct{ w int }\n\nfunc (s *Shape) Area() int { return s.w }\n"
+  let toks = lex.tokenize(src, lang_go.spec()) |> result.map_err((e) => e.message)!
+  let p = parser.parse(lang_go.go(), toks) |> result.map_err((f) => parser.format_failure(f))!
+  assert(list.contains(outline(p.root, toks, "."), "L5-5 method Shape.Area"))
+}
+
+test "a function in a plain module keeps its own name" {
+  let src = "mod inner { pub fn free() -> u8 { 0 } }\n"
+  let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
+  let p = parser.parse(lang_rust.rust(), toks) |> result.map_err((f) => parser.format_failure(f))!
+  assert_eq(outline(p.root, toks, "::"), ["L1-1 mod inner", "  L1-1 function free"])
+}
+
+test "a multi-byte character above a name does not shift the name" {
+  // Every token offset counts bytes; `string.slice` counts characters. Cut a
+  // name out of the source and this file gives `eDb {}` where it should give
+  // `SpineDb`, one byte per non-ASCII character above it.
+  let src = "//! ≥ and — and §\nimpl salsa::Database for SpineDb {}\n"
+  let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
+  let p = parser.parse(lang_rust.rust(), toks) |> result.map_err((f) => parser.format_failure(f))!
+  assert_eq(outline(p.root, toks, "::"), ["L2-2 impl SpineDb"])
+}
+
+test "a function written inside a method body is not a method of the type" {
+  let src = "impl S { fn m() { fn helper() -> u8 { 0 } } }\n"
+  let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
+  let p = parser.parse(lang_rust.rust(), toks) |> result.map_err((f) => parser.format_failure(f))!
+  assert_eq(outline(p.root, toks, "::"), ["L1-1 impl S", "  L1-1 method S::m", "    L1-1 function helper"])
 }

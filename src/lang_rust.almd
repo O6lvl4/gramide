@@ -208,8 +208,16 @@ fn rust() -> parser.Grammar = grammar("source_file", tt_rules() + expr_rules("",
      field("name", ident), opt(r("generic_params")), opt(seq([lit(":"), r("bounds")])), opt(r("where")),
      lit("{"), rep(r("inner_attr")), rep(r("assoc_item")), lit("}")]))]))),
 
+  // `name` is always the type being implemented, so the methods inside can be
+  // qualified by it: in `impl Display for S` that is S, not Display. The trait
+  // is read first and only then is `for` looked for, which costs one type's
+  // worth of backtracking on an inherent impl and nothing on nesting, because
+  // an impl does not contain another one.
   ("impl_decl", wrap("impl", seq([opt(lit("unsafe")), lit("impl"), opt(r("generic_params")),
-     opt(lit("!")), field("type", r("type")), opt(seq([lit("for"), r("type")])), opt(r("where")),
+     opt(lit("!")),
+     alt([seq([field("trait", r("type")), lit("for"), field("name", r("type"))]),
+          field("name", r("type"))]),
+     opt(r("where")),
      lit("{"), rep(r("inner_attr")), rep(r("assoc_item")), lit("}")]))),
   ("assoc_item", seq([rep(r("attr")), r("visibility"), alt([
      r("fn_decl"), r("type_alias"), r("const_decl"), r("macro_item")])])),

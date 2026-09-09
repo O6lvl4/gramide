@@ -79,6 +79,29 @@ expected there is gathered by a second parse, since a file that parses never nee
 list that a reader would rather skip than lose the list over, and name a prefix of it
 worth keeping on its own. They do nothing on a strict parse. See "Error recovery".
 
+**A name says what owns it.** `outline` and `tags` print one line per declaration, and
+that line is read on its own — in a repo map, in a grep, in a flat list of a file's
+symbols. `fn as_str` is worth nothing there; `Applicability::as_str` is the answer.
+So a function is named with the type that owns it, found one of two ways: the nearest
+enclosing `impl`, `type_spec` or `protocol_declaration` (Rust, and a trait's methods),
+or the `receiver` field (Go, which writes the owner in the signature instead of by
+nesting). A `mod` is deliberately not an owner: a module is a path, not a type, and
+prefixing every function in a file with it would say nothing. Neither is a function
+body, so a helper written inside a method is not a method.
+
+The separator — `::` or `.` — is the third field of a `Language`, beside the lexer
+spec and the grammar, because neither of those carries it. `src/tags.almd` knows no
+language: it knows the node kinds in `decl_kind`, the fields `name`, `field` and
+`receiver`, and nothing else.
+
+**Offsets are bytes.** A token's `start` and `end` count bytes, because the lexer
+reads bytes. `string.slice` counts characters. Cutting a name out of the source with
+token offsets therefore works until a file has a `—` in a comment above it, and then
+it is wrong by one byte per non-ASCII character — silently, and only on the files
+least likely to be in a test. Names are joined from their tokens instead
+(`tree.span_text`); `tree.text_of`, which is the only thing that needs the whitespace
+between tokens, cuts the source as bytes and says what that costs.
+
 ## What the native backend taught the engine
 
 Every one of these showed up as a corpus run that did not finish. Each is a

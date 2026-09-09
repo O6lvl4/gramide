@@ -9,8 +9,9 @@
 //    the lexer spec cannot say how its numbers or its strings are written, add
 //    a family to lex.almd rather than a special case here.
 // 2. Its extension in EXTENSIONS below.
-// 3. A `<name>_lang()` beside the others, and a field for it in `Engines` and
-//    `engines_for`.
+// 3. A `<name>_lang()` beside the others, with the separator the language
+//    writes between a type and one of its methods, and a field for it in
+//    `Engines` and `engines_for`.
 // 4. A branch in each of the four functions marked `per language` below. They
 //    are written out rather than looked up in a list because reading an element
 //    out of a list copies it, and a compiled grammar is the largest value in
@@ -18,12 +19,18 @@
 //    holds, so the extension is consulted only in those four.
 // 5. Name the nodes the way the other grammars do, or `outline`, `tags` and
 //    `map` will see nothing. tags.almd knows a fixed vocabulary and no more:
-//    the declarations in its DECLS list (function_declaration,
-//    method_declaration, type_declaration, let_declaration, test_declaration,
-//    protocol_declaration, method_signature, variant, type_spec, var_spec,
-//    const_spec, field), plus `type_name` for a mentioned type, `arguments`
-//    and `field_access` for a call, and the field names `name` and `field`.
-//    A grammar free to invent kinds still parses; it just stays invisible.
+//    the declarations listed in its `decl_kind` (function_declaration,
+//    method_declaration, method_signature, type_declaration, type_spec,
+//    let_declaration, test_declaration, protocol_declaration, variant,
+//    var_spec, const_spec, field, impl, mod, macro_definition), plus
+//    `type_name` for a mentioned type, `arguments` and `field_access` for a
+//    call, and the field names `name`, `field` and `receiver`. A grammar free
+//    to invent kinds still parses; it just stays invisible.
+//    A function is named with the type that owns it, which is either the
+//    nearest enclosing `impl` / `type_spec` / `protocol_declaration`, or — for
+//    a language that writes the owner in the signature, as Go does — the
+//    `receiver` field. Put the name of the implemented type in the `name`
+//    field of the enclosing node and this needs no code.
 // 6. Validate against a corpus of real files in that language: the count that
 //    parse, and that everything rejected is rejected by the language's own
 //    compiler too. A grammar that has not met a corpus is a guess.
@@ -47,11 +54,14 @@ fn unknown_ext(path: String) -> String =
 
 // ── a language ────────────────────────────────────────────────────────────
 
-type Language = { lex: lex.Spec, grammar: parser.Compiled }
+// `sep` is how the language writes a name that belongs to a type, and it is
+// here rather than in the lexer spec or the grammar because neither of those
+// carries it: it is what `tags` and `outline` put between `Shape` and `Area`.
+type Language = { lex: lex.Spec, grammar: parser.Compiled, sep: String }
 
-fn almide_lang() -> Language = Language { lex: lang_almide.spec(), grammar: parser.compile(lang_almide.almide()) }
-fn go_lang() -> Language = Language { lex: lang_go.spec(), grammar: parser.compile(lang_go.go()) }
-fn rust_lang() -> Language = Language { lex: lang_rust.spec(), grammar: parser.compile(lang_rust.rust()) }
+fn almide_lang() -> Language = Language { lex: lang_almide.spec(), grammar: parser.compile(lang_almide.almide()), sep: "." }
+fn go_lang() -> Language = Language { lex: lang_go.spec(), grammar: parser.compile(lang_go.go()), sep: "." }
+fn rust_lang() -> Language = Language { lex: lang_rust.spec(), grammar: parser.compile(lang_rust.rust()), sep: "::" }
 
 // per language
 fn language_of(path: String) -> Result[Language, String] =
@@ -87,11 +97,11 @@ fn no_grammar() -> parser.Grammar = parser.Grammar { start: "", rules: [:] }
 
 fn engines_for(paths: List[String]) -> Engines = Engines {
   almd: if list.any(paths, (p) => string.ends_with(p, ".almd")) then almide_lang()
-        else Language { lex: lang_almide.spec(), grammar: parser.compile(no_grammar()) },
+        else Language { lex: lang_almide.spec(), grammar: parser.compile(no_grammar()), sep: "." },
   go: if list.any(paths, (p) => string.ends_with(p, ".go")) then go_lang()
-      else Language { lex: lang_go.spec(), grammar: parser.compile(no_grammar()) },
+      else Language { lex: lang_go.spec(), grammar: parser.compile(no_grammar()), sep: "." },
   rs: if list.any(paths, (p) => string.ends_with(p, ".rs")) then rust_lang()
-      else Language { lex: lang_rust.spec(), grammar: parser.compile(no_grammar()) },
+      else Language { lex: lang_rust.spec(), grammar: parser.compile(no_grammar()), sep: "::" },
 }
 
 // ── reading a file ────────────────────────────────────────────────────────
@@ -100,11 +110,13 @@ fn engines_for(paths: List[String]) -> Engines = Engines {
 // tree is the recovered one: the parts the grammar could still read, with an
 // ERROR node over each part it gave up. `check` never uses this; it wants the
 // strict answer and nothing else.
-type Reading = { parsed: parser.Parsed, error: Option[String], errors: Int }
+// It carries `sep` so a reader that has a Reading needs nothing else to name a
+// method with its type.
+type Reading = { parsed: parser.Parsed, error: Option[String], errors: Int, sep: String }
 
-fn recovered(c: parser.Compiled, toks: List[tree.Token], msg: String) -> Result[Reading, String] =
+fn recovered(c: parser.Compiled, toks: List[tree.Token], msg: String, sep: String) -> Result[Reading, String] =
   match parser.parse_recovering(c, toks) {
-    ok(p) => ok(Reading { parsed: p, error: some(msg), errors: parser.error_nodes(p.root) }),
+    ok(p) => ok(Reading { parsed: p, error: some(msg), errors: parser.error_nodes(p.root), sep: sep }),
     err(_) => err(msg),
   }
 
@@ -112,12 +124,12 @@ fn read_lang(l: Language, path: String, src: String) -> Result[Reading, String] 
   match lex.tokenize(src, l.lex) {
     // it lexes; the parser decides whether it also parses
     ok(toks) => match parser.parse_with(l.grammar, toks) {
-      ok(p) => ok(Reading { parsed: p, error: none, errors: 0 }),
-      err(f) => recovered(l.grammar, toks, path + ":" + parser.format_failure(f)),
+      ok(p) => ok(Reading { parsed: p, error: none, errors: 0, sep: l.sep }),
+      err(f) => recovered(l.grammar, toks, path + ":" + parser.format_failure(f), l.sep),
     },
     // it does not even lex, which is the ordinary state of a half-typed
     // string: lex again turning what it cannot read into `error` tokens
-    err(e) => recovered(l.grammar, lex.tokenize_recovering(src, l.lex), lex_error(path, e)),
+    err(e) => recovered(l.grammar, lex.tokenize_recovering(src, l.lex), lex_error(path, e), l.sep),
   }
 
 fn parse_lang(l: Language, path: String, src: String) -> Result[parser.Parsed, String] = {

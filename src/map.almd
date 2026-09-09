@@ -58,7 +58,7 @@ effect fn scan(root: String) -> Result[Scan, String] = {
           err(e) => list.push(errors, e + " [skipped]"),
           ok(d) => {
             match d.error { some(e) => list.push(errors, e + " [recovered]"), none => () }
-            list.push(files, FileTags { path: rel, tags: tags.walk(d.parsed.root, d.parsed.toks, src) })
+            list.push(files, FileTags { path: rel, tags: tags.of_tree(d.parsed.root, d.parsed.toks, d.sep) })
           },
         },
       }
@@ -118,11 +118,14 @@ fn rank(files: List[FileTags], mentioned: List[String]) -> List[Ranked] = {
   var def_tags: Map[String, tags.Tag] = [:]
   for f in files {
     for t in f.tags {
+      // A definition is indexed under its bare name, because that is what a
+      // call site writes; the tag kept beside it still carries the name with
+      // its type, which is what the map prints.
       if t.role == "def" then {
-        var ds = map.get(defines, t.name) ?? []
+        var ds = map.get(defines, t.base) ?? []
         if not list.contains(ds, f.path) then list.push(ds, f.path) else ()
-        map.insert(defines, t.name, ds)
-        let key = f.path + " " + t.name
+        map.insert(defines, t.base, ds)
+        let key = f.path + " " + t.base
         if not map.contains(def_tags, key) then map.insert(def_tags, key, t) else ()
       } else {
         var m = map.get(references, t.name) ?? [:]
@@ -292,11 +295,15 @@ test "mentions: identifiers, paths and their stems" {
 }
 
 test "a reference across files ranks the definition, and the budget bounds the text" {
-  let a = FileTags { path: "a.almd", tags: [tags.Tag { role: "def", kind: "function", name: "compute_total", line: 3, end_line: 9 }] }
-  let b = FileTags { path: "b.almd", tags: [tags.Tag { role: "ref", kind: "call", name: "compute_total", line: 1, end_line: 0 },
-                                            tags.Tag { role: "def", kind: "function", name: "main", line: 1, end_line: 2 }] }
+  let a = FileTags { path: "a.almd", tags: [tags.Tag { role: "def", kind: "function", name: "compute_total", base: "compute_total", line: 3, end_line: 9 }] }
+  let b = FileTags { path: "b.almd", tags: [tags.Tag { role: "ref", kind: "call", name: "compute_total", base: "compute_total", line: 1, end_line: 0 },
+                                            tags.Tag { role: "def", kind: "function", name: "main", base: "main", line: 1, end_line: 2 }] }
   let ranked = rank([a, b], [])
   assert_eq(option.map(list.first(ranked), (r) => r.name), some("compute_total"))
+  // a method is joined to its call sites on the bare name and shown with its type
+  let c = FileTags { path: "c.rs", tags: [tags.Tag { role: "def", kind: "method", name: "Db::open", base: "open", line: 2, end_line: 4 }] }
+  let d = FileTags { path: "d.rs", tags: [tags.Tag { role: "ref", kind: "call", name: "open", base: "open", line: 1, end_line: 0 }] }
+  assert_eq(option.map(list.first(rank([c, d], [])), (r) => r.name), some("Db::open"))
   assert_eq(option.map(list.first(ranked), (r) => r.referenced), some(true))
   let (text, shown) = fit_to_budget(ranked, 100)
   assert_eq(shown, 2)

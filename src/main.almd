@@ -52,8 +52,8 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
     // the readers answer about the file they were given even when it does not
     // parse: the tree is the recovered one and the reason goes to stderr
     "parse" => { let d = lang.read_source(path, src)!; let _ = note(d); println(tree.sexp(d.parsed.root)); ok(()) },
-    "outline" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.outline(d.parsed.root, d.parsed.toks, src) { println(l) }; ok(()) },
-    "tags" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.tags(d.parsed.root, d.parsed.toks, src) { println(l) }; ok(()) },
+    "outline" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.outline(d.parsed.root, d.parsed.toks, d.sep) { println(l) }; ok(()) },
+    "tags" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.tags(d.parsed.root, d.parsed.toks, d.sep) { println(l) }; ok(()) },
     // the gate. strict, and the only command whose exit code is a verdict
     "check" => { let _ = lang.parse_source(path, src)!; println(path + ": ok"); ok(()) },
     // no grammar needed, and no false rejection possible: valid code balances

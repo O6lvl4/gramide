@@ -36,14 +36,35 @@ fn child(n: Node, field: String) -> Option[Node] = list.find(n.kids, (k) => k.fi
 
 fn children_of_kind(n: Node, kind: String) -> List[Node] = list.filter(n.kids, (k) => k.kind == kind)
 
-// The text a node spans, joined from its tokens with the original gaps.
+// The text a node spans, with the original gaps — the only way to get at
+// whitespace and comments, which the token stream drops.
+//
+// A token's `start` and `end` count bytes, because the lexer reads bytes,
+// while `string.slice` counts characters. On a file holding a `§` or a `—`
+// anywhere before the node the two disagree and the slice comes out shifted,
+// so the source is cut as bytes. That costs a pass over the whole source per
+// call: this is for pulling one node out of a file, not for walking a tree.
+// `span_text` below is the one to use in a walk.
 fn text_of(n: Node, toks: List[Token], source: String) -> String = {
   let first = list.get(toks, n.start)
   let last = list.get(toks, n.end - 1)
   match (first, last) {
-    (some(f), some(l)) => string.slice(source, f.start, l.end),
+    (some(f), some(l)) => string.from_bytes(list.slice(string.to_bytes(source), f.start, l.end)),
     _ => "",
   }
+}
+
+// The text a node spans, joined from its tokens. No source, no gaps, and
+// nothing to get wrong about bytes: `Vec < u8 >` comes back as `Vec<u8>`.
+// This is what a name wants.
+fn span_text(n: Node, toks: List[Token]) -> String = {
+  var s = ""
+  var i = n.start
+  while i < n.end {
+    match list.get(toks, i) { some(t) => { s = s + t.text }, none => () }
+    i = i + 1
+  }
+  s
 }
 
 // The text of a leaf's single token.
@@ -91,4 +112,17 @@ test "child by field" {
   let f = node("function_declaration", [name], 0, 2)
   assert_eq(option.map(child(f, "name"), (n) => n.kind), some("identifier"))
   assert_eq(child(f, "body"), none)
+}
+
+test "a node's text is cut by bytes, not by characters" {
+  // `//! —` is 6 characters and 8 bytes, so a character-indexed cut of the
+  // source would return `neDb` here. Offsets come from a lexer reading bytes.
+  let source = "//! —\nSpineDb x"
+  let toks = [
+    Token { kind: "identifier", text: "SpineDb", start: 8, end: 15, line: 2, col: 1 },
+    Token { kind: "identifier", text: "x", start: 16, end: 17, line: 2, col: 9 },
+  ]
+  let n = node("type_name", [], 0, 1)
+  assert_eq(text_of(n, toks, source), "SpineDb")
+  assert_eq(span_text(node("path", [], 0, 2), toks), "SpineDbx")
 }
