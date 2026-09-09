@@ -68,20 +68,20 @@ the largest file, a 116k-line generated Go source, takes 7.6 s alone.
 source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶ check / outline / parse
 ```
 
-- **`src/lexer.almd`** — a hand-written lexer over bytes. Newlines are tokens (Almide
-  separates statements with them), comments and blank-line runs are dropped, a string
-  literal with `${…}` interpolation, a heredoc or a raw string is one token.
+- **`src/lex.almd`** — one lexer over bytes for every language. A language hands it a
+  `Spec`: keywords, operators, comment markers, what a newline means, and a named
+  family for the two things a table cannot describe, how numbers are written and how
+  string literals end. Go's lexing is 32 lines of that spec.
 - **`src/parser.almd`** — the engine. A grammar is a `Grammar { start, rules }` whose
   rules are `Rule` values (`Tok`, `Lit`, `Seq`, `Alt`, `Rep`, `Opt`, `Wrap`, `Field`,
   `Left`, lookahead). Ordered choice, greedy repetition, no left recursion: binary
   operators are `Left(kind, operand, op)` and fold to the left after matching. The
   parser remembers the farthest token anything failed at and what was expected there,
   which is the error `check` prints.
-- **`src/lang_almide.almd`**, **`src/lang_go.almd`** — the grammars as values. The Go one
-  builds its expression ladder twice from one function, with and without a trailing
-  composite literal, which is how `if x == T{…} {` is kept unambiguous.
-- **`src/lex_go.almd`** — the Go lexer; semicolon insertion lives here, so the grammar
-  only ever sees a separator where Go sees one.
+- **`src/lang_almide.almd`**, **`src/lang_go.almd`** — a language each: its lexer spec
+  and its grammar, both as values, in one file. The Go one builds its expression ladder
+  twice from one function, with and without a trailing composite literal, which is how
+  `if x == T{…} {` is kept unambiguous.
 - **`src/tree.almd`** — `Node { kind, field, start, end, kids }` spanning token
   indices, with `child(n, "name")`, `text_of`, `sexp`, and `collect`.
 - **`src/tags.almd`**, **`src/map.almd`** — definitions and references per file, and the

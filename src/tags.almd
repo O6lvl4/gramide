@@ -6,7 +6,7 @@
 // map needs: definitions to rank, references to rank them by.
 
 import self.tree
-import self.lexer
+import self.lex
 import self.lang_almide
 import self.parser
 
@@ -112,7 +112,7 @@ fn tags(root: tree.Node, toks: List[tree.Token], src: String) -> List[String] = 
 
 test "definitions, calls and type mentions" {
   let src = "type P = { x: Int }\nfn area(p: P) -> Int = int.abs(p.x) * sq(2)\n"
-  let toks = lexer.tokenize(src)!
+  let toks = lex.tokenize(src, lang_almide.spec()) |> result.map_err((e) => e.message)!
   let p = parser.parse(lang_almide.almide(), toks) |> result.map_err((f) => parser.format_failure(f))!
   assert_eq(tags(p.root, toks, src), ["def type P L1-1", "def field x L1-1", "ref type Int L1", "def function area L2-2", "ref type P L2", "ref type Int L2", "ref call int.abs L2", "ref call sq L2"])
 }

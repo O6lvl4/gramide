@@ -17,7 +17,7 @@
 // markdown fence leaves an unterminated something. Those were the writes
 // that reached disk when there was no gate.
 
-import self.lexer.{ is_space }
+import self.lex.{ is_space }
 import self.tree
 
 type Flaw = { line: Int, col: Int, message: String }

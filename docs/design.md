@@ -20,10 +20,20 @@ reference edges between files, PageRank personalised toward the task's mentions)
 source ──lexer──▶ tokens ──parser(grammar)──▶ tree
 ```
 
-**Lexer per language, parser shared.** Every language has two or three places where a
-table-driven lexer cannot say what happens (string interpolation, heredocs, nested
-comments), and those are exactly the places a syntax check must get right. So the
-lexer is hand-written per language, over bytes, and the parser above it is generic.
+**A language is data.** One file per language holds two values: a lexer `Spec` and a
+`Grammar`. Neither is code that only that language can use, and nothing outside that
+file knows the language exists except one branch on the file extension.
+
+**One lexer, with named families.** The driver, the byte helpers and the operator
+scanner are shared. What differs between languages is keywords, operators, comment
+markers, what a newline means, and the two things a table genuinely cannot describe:
+how numbers are written and how string literals end. Those two are *families*, named
+constants selecting hand-written scanners that live beside each other in `lex.almd`.
+A table that claimed to describe every string syntax would be wrong the first time it
+met a Rust `r#"…"#` or a Python f-string, and being wrong about a string is being
+wrong about where the code ends. So a new language names a family that fits, or adds
+one; everything else about it is data. Go's lexing is 32 lines of spec where it used
+to be 229 lines of module.
 
 **Newlines are tokens.** Almide separates statements with newlines, so the grammar has
 to see them. The lexer emits one `newline` token per run of blank lines and drops

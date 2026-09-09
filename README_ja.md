@@ -58,15 +58,17 @@ gramide map . --budget 1024 --task "fix parse_rule"
 source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶ check / outline / parse
 ```
 
-- **`src/lexer.almd`** — バイト列上の手書き字句解析。改行はトークン（Almide は改行で文を区切る）、
-  コメントと空行の連続は捨て、`${…}` 補間つき文字列・ヒアドキュメント・raw 文字列は一つのトークン。
+- **`src/lex.almd`** — 全言語で 1 本のバイト列字句解析。言語が渡すのは `Spec` です。キーワード、
+  演算子、コメント記号、改行の意味、そして表では書けない 2 つ（数値の書き方と文字列リテラルの終わり方）
+  に対する族の指定。Go の字句解析はこの spec 32 行です。
 - **`src/parser.almd`** — エンジン。文法は `Grammar { start, rules }` で、規則は `Rule` 値
   （`Tok`, `Lit`, `Seq`, `Alt`, `Rep`, `Opt`, `Wrap`, `Field`, `Left`, 先読み）。順序付き選択、
   貪欲な繰り返し、左再帰なし。二項演算子は `Left(kind, operand, op)` で、マッチ後に左畳み込み。
   パーサは失敗した最遠のトークンとそこで期待していたものを覚えていて、それが `check` の出すエラー。
-- **`src/lang_almide.almd`**, **`src/lang_go.almd`** — 値としての文法。Go 文法は式の梯子を一つの関数から
-  2 回（末尾の複合リテラルあり・なし）生成し、`if x == T{…} {` の曖昧さを避けています。
-- **`src/lex_go.almd`** — Go の字句解析。セミコロン挿入はここで行い、文法は Go が区切りと見る場所にしか区切りを見ません。
+- **`src/lang_almide.almd`**, **`src/lang_go.almd`** — 1 ファイルで 1 言語。字句解析の spec と文法を
+  どちらも値として持ちます。Go 文法は式の梯子を一つの関数から 2 回（末尾の複合リテラルあり・なし）生成し、
+  `if x == T{…} {` の曖昧さを避けています。セミコロン挿入は spec の `NL_SEMI` 指定だけで、
+  文法は Go が区切りと見る場所にしか区切りを見ません。
 - **`src/tree.almd`** — トークン添字で範囲を持つ `Node { kind, field, start, end, kids }` と、
   `child(n, "name")`, `text_of`, `sexp`, `collect`。
 - **`src/tags.almd`**, **`src/map.almd`** — ファイルごとの定義と参照、そしてリポジトリの地図。

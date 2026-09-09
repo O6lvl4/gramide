@@ -19,7 +19,7 @@
 // `then`, `else`, before or after a binary operator); `sep` is what
 // separates statements and declarations.
 
-import self.lexer
+import self.lex
 import self.tree
 import self.parser
 import self.parser.{ tok, lit, keep, r, seq, alt, rep, rep1, opt, wrap, field, ahead, leftf, lits, keeps, grammar, recover, recover_all, recover_all_keeping }
@@ -43,6 +43,39 @@ let expr = r("expr")
 let ty = r("type")
 let pattern = r("pattern")
 let block = r("block")
+
+// ── how Almide is lexed ───────────────────────────────────────────────────
+//
+// `&&` and `||` are not Almide (it has `and` / `or`), but lexing them as one
+// token each makes the parse error name the whole operator a writer typed
+// rather than half of it. The four foreign keywords at the end of KEYWORDS are
+// there for the same reason: rejecting them makes `return x` or `class Foo`
+// fail instead of parsing as two statements.
+let KEYWORDS = ["module", "import", "type", "protocol", "for", "in", "fn", "let", "var", "mut", "if", "then", "else",
+  "match", "true", "false", "not", "and", "or", "pub", "effect", "test", "guard", "break", "continue", "while",
+  "local", "mod", "fan",
+  "return", "class", "impl", "deriving", "newtype"]
+
+let OPERATORS = ["..<", "...", "?.", "??", "->", "=>", "==", "!=", "<=", ">=", "|>", ">>", "**", "..", "&&", "||",
+  "=", "+", "-", "*", "/", "%", "^", "<", ">", "!", "?", ".", ",", ":", ";", "(", ")", "[", "]",
+  "{", "}", "|", "@", "&", "#"]
+
+fn spec() -> lex.Spec = lex.Spec {
+  keywords: KEYWORDS,
+  operators: OPERATORS,
+  numbers: lex.N_ALMIDE,
+  strings: lex.S_ALMIDE,
+  newlines: lex.NL_EVERY,
+  ends_kw: [],
+  line_comment: [47, 47],                 // //
+  block_open: [47, 42],                   // /*
+  block_close: [42, 47],                  // */
+  nested_block: true,
+  block_comment_newline: false,
+  upper_is_type: true,
+  backtick_ident: true,
+  neg_token: true,
+}
 
 fn almide() -> parser.Grammar = grammar("source_file", [
   ("source_file", wrap("source_file", seq([opt(sep), opt(seq([recover_all_keeping(r("decl"), r("decl_head")), rep(recover_all_keeping(seq([sep, r("decl")]), seq([sep, r("decl_head")]))), opt(sep)]))]))),
@@ -222,7 +255,7 @@ fn almide() -> parser.Grammar = grammar("source_file", [
 
 // ── tests ──────────────────────────────────────────────────────────────
 fn parse_src(src: String) -> Result[parser.Parsed, String] = {
-  let toks = lexer.tokenize(src) |> result.map_err((e) => "lex " + int.to_string(e.line) + ":" + int.to_string(e.col) + " " + e.message)!
+  let toks = lex.tokenize(src, spec()) |> result.map_err((e) => "lex " + int.to_string(e.line) + ":" + int.to_string(e.col) + " " + e.message)!
   parser.parse(almide(), toks) |> result.map_err((f) => parser.format_failure(f))
 }
 
@@ -233,7 +266,7 @@ fn top_kinds(src: String) -> List[String] = match parse_src(src) {
 
 // what a reader gets from a file that does not parse
 fn recovered_kinds(src: String) -> List[String] = {
-  let toks = lexer.tokenize_recovering(src)
+  let toks = lex.tokenize_recovering(src, spec())
   match parser.parse_recovering(parser.compile(almide()), toks) {
     ok(p) => list.map(p.root.kids, (k) => k.kind),
     err(_) => ["NOTHING"],
@@ -298,11 +331,47 @@ test "a broken declaration keeps its name and loses only its body" {
 
 test "an unterminated string still gives up only the line it is on" {
   let src = "fn alpha() -> String = \"hello\n\nfn beta() -> Int = 2\n"
-  assert_eq(result.is_err(lexer.tokenize(src)), true)
+  assert_eq(result.is_err(lex.tokenize(src, spec())), true)
   assert_eq(list.contains(recovered_kinds(src), "function_declaration"), true)
 }
 
 test "a file that parses recovers to exactly the same tree" {
   let src = "fn alpha(x: Int) -> Int = x + 1\n"
   assert_eq(recovered_kinds(src), top_kinds(src))
+}
+
+// ── lexing ────────────────────────────────────────────────────────────────
+
+test "words, keywords, numbers, operators" {
+  let toks = lex.tokenize("fn add(x: Int) -> Int = x + 0x1F", spec())!
+  assert_eq(lex.texts(toks), ["fn", "add", "(", "x", ":", "Int", ")", "->", "Int", "=", "x", "+", "0x1F", "", ""])
+  assert_eq(lex.kinds(toks), ["keyword", "identifier", "punct", "identifier", "punct", "type_name", "punct", "punct", "type_name", "punct", "identifier", "punct", "integer", "newline", "eof"])
+}
+
+test "floats and ranges do not eat each other" {
+  assert_eq(lex.texts(lex.tokenize("1.5 1..5 xs.0 2e3", spec())!), ["1.5", "1", "..", "5", "xs", ".", "0", "2e3", "", ""])
+}
+
+test "strings: escapes, interpolation with nested braces and quotes, heredoc, raw" {
+  let toks = lex.tokenize("\"a\\\"b\" \"x \${ f({y: \"}\"}) } z\" \"\"\"\nmulti\n\"\"\" r\"\"\"raw \\ \"\"\" 'q'", spec())!
+  assert_eq(lex.kinds(list.take(toks, 5)), ["string", "string", "string", "string", "string"])
+  assert_eq(list.get(lex.texts(toks), 1), some("\"x \${ f({y: \"}\"}) } z\""))
+}
+
+test "an unterminated string is an error with a position" {
+  assert_eq(result.is_err(lex.tokenize("let s = \"abc", spec())), true)
+  match lex.tokenize("let s = \"abc", spec()) { err(e) => { assert_eq(e.line, 1); assert_eq(e.col, 9) }, ok(_) => assert(false) }
+}
+
+test "comments vanish, newlines collapse, `?` is always its own token, backtick names" {
+  let toks = lex.tokenize("// c\nfn f() = 1 /* a /* b */ c */\n\n\nfn is_ok?(x: Int) -> Bool = x?\nlet `type` = 1\n", spec())!
+  assert_eq(lex.texts(toks), ["fn", "f", "(", ")", "=", "1", "", "fn", "is_ok", "?", "(", "x", ":", "Int", ")", "->", "Bool", "=", "x", "?", "", "let", "`type`", "=", "1", "", ""])
+  assert_eq(list.get(lex.kinds(toks), 22), some("identifier"))
+}
+
+test "line and column are 1-based and survive a heredoc" {
+  let toks = lex.tokenize("a\n\"\"\"\nx\n\"\"\"\nb", spec())!
+  let b = list.find(toks, (t) => t.text == "b")
+  assert_eq(option.map(b, (t) => t.line), some(5))
+  assert_eq(option.map(b, (t) => t.col), some(1))
 }
