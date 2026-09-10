@@ -28,9 +28,38 @@ for length in range(1,6):
 VALID += ['f(*a if b else c)', 'f(**a if b else c)', 'f(x=1,*a,**b,y=2)', 'f(*a,b,*c)', 'f(x=g(y=1), **h(z=2))']
 VALID += ['f('+','.join('x' for _ in range(2000))+')', 'f('+','.join(f'k{i}=x' for i in range(2000))+')']
 INVALID += ['f(x=)', 'f(=x)', 'f(a.b=x)', 'f((a)=x)', 'f(*a=1)', 'f(**)', 'f(*,)', 'f(x=1,,)', 'f(for=1)']
+# Named expressions are only admitted at the grammar's designated positions.
+for template in ['({})','[{}]','{{{}}}','({},)','f({})','a[{}]']:
+    for rhs in ['a','a + b','a if b else c','(b := c)']:
+        VALID.append(template.format('x := '+rhs))
+INVALID += ['x := a', 'x := a, b', '(a.b := x)', '(a[0] := x)', '((a) := x)', 'f(x=a := b)', 'a[x := 1:]', '{x := 1: y}', '[*x := y]']
+# Product coverage includes nested destructuring and receiver chains with calls.
+for target in ['x','x,y','(x,y)','[x,*y]','(x,(y,*z))','obj.x','obj[x]','f().x','f()[x]','obj.x[y].z','()','[]']:
+    for iterable in ['xs','a or b','f(x=1)','(a if b else c)']:
+        for template in ['[x for {} in {}]','{{x for {} in {}}}','{{x:y for {} in {}}}','(x for {} in {})','f(x for {} in {})']:
+            VALID.append(template.format(target,iterable))
+VALID += ['(a,b := x)', '[x for x in xs if x if x > 1]', '[x+y for x in xs for y in ys if y]', '[x async for x in xs if x]', '[x async for x in xs for y in ys]', '[(y := x) for x in xs]', '[y := x for x in xs]', '{y := x for x in xs}', '(y := x for x in xs)', 'f((x for x in xs), y=1)', '[x for x in xs if (y := x)]', 'a[*x if y else z]', '[(x,y) for x in [a for a in xs] for y in ys]']
+INVALID += ['[x for f() in xs]', '[x for a+b in xs]', '[x for 1 in xs]', '[x for x.y() in xs]', '[x for x in]', '[x for in xs]', '[x for x in xs if]', '[x for x in xs if y else z]', '[x for x in a if b else c]', '[x for x in xs,]', '[*x for x in xs]', '{**x for x in xs}', 'f(x for x in xs,)', 'f(x for x in xs,y)', '[x for x in xs if y := x]', '[x for **y in xs]']
+# Assignment target acceptance is independently classified by CPython's parser.
+for target in ['*x','(*x)','(*x,)','*x,y','(x)','((x))','[x,y.z]','x,','(x,)','[x,]',
+               '[*x,*y]','[1,x]','{x}','{x:y}','x if y else z','x or y','x+y','await x',
+               'x:=y','x.y()','x[y]()','x().y','x()[y]','(x+y).z','(x+y)[z]',
+               'f(x for x in xs).y','f(x for x in xs)[y]','True','None','...']:
+    source=f'[x for {target} in xs]'
+    try:ast.parse(source,mode='eval')
+    except SyntaxError:INVALID.append(source)
+    else:VALID.append(source)
+for async_a,async_b,filter_a,filter_b in itertools.product(['','async '],['','async '],['',' if x'],['',' if y if z']):
+    VALID.append(f'[x+y {async_a}for x in xs{filter_a} {async_b}for y in ys{filter_b}]')
 OP={ast.Add:'+',ast.Sub:'-',ast.Mult:'*',ast.Div:'/',ast.FloorDiv:'//',ast.Mod:'%',ast.MatMult:'@',ast.Pow:'**',ast.LShift:'<<',ast.RShift:'>>',ast.BitAnd:'&',ast.BitXor:'^',ast.BitOr:'|',ast.And:'and',ast.Or:'or',ast.Eq:'==',ast.NotEq:'!=',ast.Lt:'<',ast.LtE:'<=',ast.Gt:'>',ast.GtE:'>=',ast.In:'in',ast.NotIn:'not in',ast.Is:'is',ast.IsNot:'is not',ast.USub:'-',ast.UAdd:'+',ast.Invert:'~',ast.Not:'not'}
 def reference(n,source):
     if isinstance(n,(ast.Name,ast.Constant)):return ['atom',ast.get_source_segment(source,n)]
+    if isinstance(n,ast.NamedExpr):return ['named',reference(n.target,source),reference(n.value,source)]
+    if isinstance(n,(ast.ListComp,ast.SetComp,ast.DictComp,ast.GeneratorExp)):
+        kind={ast.ListComp:'listcomp',ast.SetComp:'setcomp',ast.DictComp:'dictcomp',ast.GeneratorExp:'generator'}[type(n)]
+        values=[reference(n.key,source),reference(n.value,source)] if isinstance(n,ast.DictComp) else [reference(n.elt,source)]
+        clauses=[[g.is_async,reference(g.target,source),reference(g.iter,source),[reference(v,source) for v in g.ifs]] for g in n.generators]
+        return [kind,values,clauses]
     if isinstance(n,ast.BinOp):return ['bin',OP[type(n.op)],reference(n.left,source),reference(n.right,source)]
     if isinstance(n,ast.UnaryOp):return ['unary',OP[type(n.op)],reference(n.operand,source)]
     if isinstance(n,ast.BoolOp):
@@ -49,6 +78,14 @@ def reference(n,source):
     raise AssertionError(ast.dump(n))
 def actual(n):
     kids=n['kids'];kind=n['kind']
+    if kind=='named':return ['named',actual(kids[0]),actual(kids[1])]
+    if kind in ('listcomp','setcomp','dictcomp','generator'):
+        count=2 if kind=='dictcomp' else 1
+        clauses=[]
+        for clause in kids[count:]:
+            parts=clause['kids'];async_=int(parts[0]['text']=='async')
+            clauses.append([async_,actual(parts[async_]),actual(parts[async_+1]),[actual(v['kids'][0]) for v in parts[async_+2:]]])
+        return [kind,[actual(v) for v in kids[:count]],clauses]
     if kind in ('list','tuple','set'):return [kind,[actual(k) for k in kids]]
     if kind=='starred':return ['starred',actual(kids[0])]
     if kind=='dict':return ['dict',[[None,actual(k['kids'][0])] if k['kind']=='dict_unpack' else [actual(k['kids'][0]),actual(k['kids'][1])] for k in kids]]
@@ -102,6 +139,6 @@ with tempfile.TemporaryDirectory() as tmp:
     for source,got in zip(INVALID,results[len(VALID):]):assert not got['ok'],(source,got)
 report=dict(python=platform.python_version(),matching_expression_trees=len(VALID),rejected_expressions=len(INVALID),
             expressions_sha256=hashlib.sha256(json.dumps(VALID+INVALID,ensure_ascii=False).encode()).hexdigest(),
-            scope='normalized operator trees, conditional order, comparisons, call/attribute/subscript structure, displays, unpacking, slices and call argument ordering; not a complete Python grammar')
+            scope='normalized operator trees, conditional order, comparisons, call/attribute/subscript structure, displays, unpacking, slices, call argument ordering, named expressions and comprehensions; not a complete Python grammar')
 if len(sys.argv)>1:Path(sys.argv[1]).write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report))
