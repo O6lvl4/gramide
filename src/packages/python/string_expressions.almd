@@ -25,7 +25,7 @@ fn rules() -> List[(String, parser.Rule)] = [
 ]
 
 // Keep CPython-compatible lexical STRING tokens and refine bytes only for the
-// grammar. Conversion adjacency is source-sensitive and cannot be a PEG Lit.
+// grammar, and distinguish imaginary numbers for pattern literals. Conversion adjacency is source-sensitive and cannot be a PEG Lit.
 fn prepare(tokens: List[tree.Token]) -> Result[List[tree.Token], parser.Failure] = {
   escapes.validate(tokens)!
   for i in 0..<list.len(tokens) {
@@ -41,6 +41,7 @@ fn prepare(tokens: List[tree.Token]) -> Result[List[tree.Token], parser.Failure]
   ok(list.map(tokens, (t) => {
     if t.kind == "string" and (option.map(strings.opening(bytes.from_string(t.text), 0), (o) => o.byte_literal) ?? false) then
       tree.Token { ...t, kind: "bytes" }
+    else if t.kind == "number" and string.ends_with(string.to_lower(t.text), "j") then tree.Token { ...t, kind: "imaginary" }
     else t
   }))
 }

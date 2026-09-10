@@ -37,7 +37,7 @@ fn rules() -> List[(String, parser.Rule)] = [
   ("attribute_suffix", wrap("attribute", seq([lit("."), r("name")]))),
   ("call_suffix", wrap("call", seq([lit("("), opt(r("call_arguments")), lit(")")]))),
   ("subscript_suffix", wrap("subscript", seq([lit("["), r("slices"), lit("]")]))),
-  ("atom", alt([tok("number"), r("strings"), keeps(["True", "False", "None", "..."]), r("name"), r("comprehension"), r("tuple_display"), r("list_display"), r("dict_display"), r("set_display"), seq([lit("("), alt([r("yield_expression"), r("named_expression")]), lit(")")])])),
+  ("atom", alt([tok("number"), tok("imaginary"), r("strings"), keeps(["True", "False", "None", "..."]), r("name"), r("comprehension"), r("tuple_display"), r("list_display"), r("dict_display"), r("set_display"), seq([lit("("), alt([r("yield_expression"), r("named_expression")]), lit(")")])])),
   ("yield_expression", alt([
     wrap("yield_from", seq([lit("yield"), lit("from"), r("expression")])),
     wrap("yield", seq([lit("yield"), opt(r("yield_values"))]))

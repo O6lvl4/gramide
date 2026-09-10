@@ -499,3 +499,31 @@ fixtures were removed and the deadline is unchanged. A local diagnostic on the
 same inspect.py observed approximately 42.84 seconds for the old output path,
 0.07 seconds with tree output omitted, and 0.35 seconds for the indexed output.
 These are single-run harness diagnostics, not a production/tree-sitter benchmark.
+
+## Python implementation progress: match patterns
+
+`patterns.almd` follows CPython v3.14.4's pattern grammar rather than accepting
+arbitrary expressions after `case`. It preserves wildcard/capture/value/as/or,
+sequence/star, mapping/rest and class positional/keyword patterns, plus case
+guards and subject tuples. `match` and `case` retain their soft-keyword behavior.
+
+Literal preparation now distinguishes imaginary numeric tokens for grammar use,
+while the lexical token contract remains unchanged. Ordinary expressions accept
+both numeric kinds; complex-number patterns require a real left operand and an
+imaginary right operand. Attribute/class paths and capture targets have their
+own lookahead restrictions. Empty class-pattern arguments cannot contain a
+comma, and mapping rest captures must occur last.
+
+The statement oracle now matches **857** structures and rejects **1,600** malformed
+inputs. It compares pattern kinds, capture names, mapping keys/rests, class
+positions/keywords, guards and case bodies. Dataclasses.py and typing.py are now
+included as **complete files**, bringing the full standard-library corpus to
+12 files. [Evidence](evidence/python-match-patterns.json) records the list and
+corpus hash. This remains structural AST comparison, not literal decoding or
+execution.
+
+Compiler-context checks (for example duplicate captures, inconsistent OR-pattern
+bindings or unreachable cases), type comments, Unicode-name escape validation,
+recovery, package registration and hew integration remain unfinished. Python is
+still unregistered at this checkpoint; the next integration stage must preserve
+the literal-preparation path and document remaining validation limits.
