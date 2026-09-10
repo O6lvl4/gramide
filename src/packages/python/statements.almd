@@ -1,0 +1,52 @@
+// Python simple statements, reusable by the forthcoming compound suites.
+import self.parser
+import self.packages.python.expressions
+import self.packages.python.containers
+import self.packages.python.arguments
+import self.parser.{ seq, nott, wrap, r, opt, keep, keeps, alt, rep, tok, lit, grammar }
+
+fn rules() -> List[(String, parser.Rule)] = [
+  ("simple_stmts", seq([r("simple_stmt"), rep(seq([lit(";"), r("simple_stmt")])), opt(lit(";")), tok("newline")])),
+  ("simple_stmt", alt([
+    r("assignment"), r("import_stmt"),
+    wrap("return", seq([lit("return"), opt(r("yield_values"))])),
+    wrap("raise", seq([lit("raise"), opt(seq([r("expression"), opt(seq([lit("from"), r("expression")]))]))])),
+    wrap("assert", seq([lit("assert"), r("expression"), opt(seq([lit(","), r("expression")]))])),
+    wrap("pass", lit("pass")), wrap("break", lit("break")), wrap("continue", lit("continue")),
+    wrap("global", seq([lit("global"), arguments.comma_list(r("name"))])),
+    wrap("nonlocal", seq([lit("nonlocal"), arguments.comma_list(r("name"))])),
+    wrap("delete", seq([lit("del"), containers.separated(r("delete_target"))])),
+    wrap("expr_stmt", r("yield_expression")), wrap("expr_stmt", r("yield_values"))
+  ])),
+  ("rhs", alt([r("yield_expression"), r("yield_values")])),
+  ("single_target", alt([r("target_primary"), r("name"), seq([lit("("), r("single_target"), lit(")")])])),
+  ("assignment", alt([
+    wrap("annassign_simple", seq([r("name"), lit(":"), r("expression"), opt(seq([lit("="), r("rhs")]))])),
+    wrap("annassign", seq([alt([r("target_primary"), seq([lit("("), r("single_target"), lit(")")])]), lit(":"), r("expression"), opt(seq([lit("="), r("rhs")]))])),
+    wrap("assign", seq([r("assignment_target"), rep(r("assignment_target")), r("rhs"), nott(lit("="))])),
+    wrap("augassign", seq([r("single_target"), keeps(["+=", "-=", "*=", "@=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "**=", "//="]), r("rhs")]))
+  ])),
+  ("assignment_target", seq([r("targets"), lit("=")])),
+  ("delete_target", alt([
+    r("target_primary"), r("name"), seq([lit("("), r("delete_target"), lit(")")]),
+    wrap("tuple", seq([lit("("), opt(seq([r("delete_target"), lit(","), opt(containers.separated(r("delete_target")))])), lit(")")])),
+    wrap("list", seq([lit("["), opt(containers.separated(r("delete_target"))), lit("]")]))
+  ])),
+  ("dotted_name", wrap("dotted_name", seq([r("name"), rep(seq([lit("."), r("name")]))]))),
+  ("import_alias", wrap("alias", seq([r("dotted_name"), opt(seq([lit("as"), r("name")]))]))),
+  ("from_alias", wrap("alias", seq([r("name"), opt(seq([lit("as"), r("name")]))]))),
+  ("import_stmt", alt([
+    wrap("import", seq([lit("import"), arguments.comma_list(r("import_alias"))])),
+    wrap("import_from", seq([lit("from"), r("from_source"), lit("import"), alt([
+      seq([lit("("), containers.separated(r("from_alias")), lit(")")]),
+      arguments.comma_list(r("from_alias")), wrap("alias", keep("*"))
+    ])]))
+  ])),
+  ("from_source", wrap("from_source", alt([
+    seq([rep(keeps([".", "..."])), r("dotted_name")]),
+    seq([keeps([".", "..."]), rep(keeps([".", "..."]))])
+  ]))),
+]
+fn file_grammar() -> parser.Grammar = grammar("file", [
+  ("file", wrap("module", rep(r("simple_stmts"))))
+] + rules() + expressions.rules())
