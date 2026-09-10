@@ -66,6 +66,44 @@ INVALID += ['def f(a=1,b): pass\n','def f(a: *T): pass\n','def f(**kw: *T): pass
             'class C[]: pass\n','def f[](): pass\n','type A[] = int\n','type A =\n',
             'type A[*Ts: Bound] = T\n','class C(x=1,Base): pass\n']
 
+# Pattern syntax is classified independently by CPython; semantic name-binding
+# constraints remain compiler-context checks, not grammar acceptance checks.
+pattern_cases=['_', 'capture', 'None', 'True', 'False', '0', '-1', '1j', '-1j', '1+2j', '-1-2j',
+               '1+2', '1j+2j', '+1', '"text"', 'b"data"', 'f"{x}"', 't"{x}"',
+               'Color.RED', 'pkg.Color.RED', '(x)', '()', '(x,)', '[]', '[a,*rest]', '[a,*_]',
+               '*x', '(*x)', '(*x,)', '{"x": x, **rest}', '{Color.RED: x}', '{None: x}',
+               '{key: x}', '{**_}', '{**rest, "x": x}', 'C()', 'C(,)', 'C(a,b,)',
+               'pkg.C(a,field=b,)', 'C(field=a)', 'C(field=a,b)', 'C(*args)', 'C(**kw)',
+               'a | b', '1 | 2 as value', '[a | b, c as d]', 'x as _', '_ as name',
+               'x.y as name', 'x.y()', 'x[0]', '{1: [x, *rest], 2: C(value=y)}']
+for pattern in pattern_cases:
+    for guard in ['', ' if predicate(x)', ' if value := f()']:
+        source=f'match subject:\n case {pattern}{guard}: pass\n'
+        try:ast.parse(source)
+        except (SyntaxError,UnicodeError):INVALID.append(source)
+        else:VALID.append(source)
+VALID += ['match x,y:\n case a,b: pass\n', 'match *xs,:\n case [a,*b]: pass\n',
+          'match x:=f():\n case C(x):\n  match x:\n   case _: return x\n',
+          'match = 1\ncase = 2\nmatch(case)\n',
+          'match x:\n case 1: pass\n case 2: pass\n case _: pass\n']
+INVALID += ['match x: case _: pass\n','match x:\n pass\n','case _: pass\n',
+            'match x:\n case: pass\n','match x:\n case a |: pass\n','match x:\n case a as: pass\n',
+            'match x:\n case [a,,b]: pass\n','match x:\n case {1:}: pass\n']
+
+for atom,template in itertools.product(['_','name','1','pkg.VALUE','C(x)','[x,*rest]','{"key": x}'],
+                                      ['[{}, tail]','({})','C({}, field=_)','{{1: {}, **rest}}','{} | other','{} as whole']):
+    source='match subject:\n case '+template.format(atom)+': pass\n'
+    try:ast.parse(source)
+    except SyntaxError:INVALID.append(source)
+    else:VALID.append(source)
+for pattern in ['_()', '_ as _', 'x as y | z', '{**rest,}', '{1:x, **rest,}', 'C(x=_,)',
+                'C(x=_, x=_)', '[*a,*b]', 'match', 'case', '0x_FF', '1e3-2J', '1j-2',
+                '1-2', '1+-2j', 'C(x.y=_)', '[x,] as whole', '{1:x,1:y}']:
+    source=f'match subject:\n case {pattern}: pass\n'
+    try:ast.parse(source)
+    except SyntaxError:INVALID.append(source)
+    else:VALID.append(source)
+
 # Exercise real top-level simple statements without inventing replacements for
 # compound suites. Each exact AST source segment becomes a standalone fixture.
 stdlib=Path(sysconfig.get_path('stdlib'));stdlib_count=0;stdlib_compound_count=0
@@ -87,8 +125,20 @@ for outer,inner in itertools.product(['if outer','while outer','for outer in xs'
     VALID.append(f'{outer}:\n    {inner}:\n        x=1\n    else:\n        x=2\nelse:\n    x=3\nx=4\n')
 
 # Complete source files, now that declarations compose with control-flow suites.
-full_files=['keyword.py','token.py','stat.py','copyreg.py','genericpath.py','reprlib.py','textwrap.py','inspect.py','tokenize.py','ast.py']
+full_files=['keyword.py','token.py','stat.py','copyreg.py','genericpath.py','reprlib.py','textwrap.py','inspect.py','tokenize.py','ast.py','dataclasses.py','typing.py']
 for name in full_files:VALID.append((stdlib/name).read_text())
+
+def ref_pattern(n,source):
+    pat=lambda v:ref_pattern(v,source)
+    if isinstance(n,ast.MatchValue):return ['value',reference(n.value,source)]
+    if isinstance(n,ast.MatchSingleton):return ['singleton',repr(n.value)]
+    if isinstance(n,ast.MatchSequence):return ['sequence',[pat(v) for v in n.patterns]]
+    if isinstance(n,ast.MatchStar):return ['star',n.name]
+    if isinstance(n,ast.MatchMapping):return ['mapping',[[reference(k,source),pat(v)] for k,v in zip(n.keys,n.patterns)],n.rest]
+    if isinstance(n,ast.MatchClass):return ['class',reference(n.cls,source),[pat(v) for v in n.patterns],[[k,pat(v)] for k,v in zip(n.kwd_attrs,n.kwd_patterns)]]
+    if isinstance(n,ast.MatchAs):return ['as',pat(n.pattern) if n.pattern else None,n.name]
+    if isinstance(n,ast.MatchOr):return ['or',[pat(v) for v in n.patterns]]
+    raise AssertionError(ast.dump(n))
 
 def ref_signature(a,source):
     pos=a.posonlyargs+a.args;defaults=[None]*(len(pos)-len(a.defaults))+list(a.defaults)
@@ -104,6 +154,7 @@ def ref_types(params,source):
 def ref_stmt(n,source):
     ref=lambda v:reference(v,source) if v is not None else None
     body=lambda nodes:[ref_stmt(v,source) for v in nodes]
+    if isinstance(n,ast.Match):return ['match',ref(n.subject),[[ref_pattern(c.pattern,source),ref(c.guard),body(c.body)] for c in n.cases]]
     if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)):return ['function',n.name,int(isinstance(n,ast.AsyncFunctionDef)),ref_signature(n.args,source),ref(n.returns),[ref(v) for v in n.decorator_list],ref_types(n.type_params,source),body(n.body)]
     if isinstance(n,ast.ClassDef):return ['class',n.name,[ref(v) for v in n.bases],[[v.arg,ref(v.value)] for v in n.keywords],[ref(v) for v in n.decorator_list],ref_types(n.type_params,source),body(n.body)]
     if isinstance(n,ast.TypeAlias):return ['type_alias',n.name.id,ref_types(n.type_params,source),ref(n.value)]
@@ -145,6 +196,30 @@ def act_types(n):
             elif v['kind']=='default':default=maybe_node(v)
         out.append([p['kind'],parts[0]['text'],bound,default])
     return out
+def act_pattern(n):
+    k=n['kind'];kids=n['kids']
+    if k=='pattern_value':return ['value',actual(kids[0])]
+    if k=='pattern_singleton':return ['singleton',kids[0]['text']]
+    if k=='pattern_capture':return ['as',None,kids[0]['text']]
+    if k=='pattern_wild':return ['as',None,None]
+    if k=='pattern_as':return ['as',act_pattern(kids[0]),kids[1]['text']]
+    if k=='pattern_or':return ['or',[act_pattern(v) for v in kids]] if len(kids)>1 else act_pattern(kids[0])
+    if k=='pattern_sequence':return ['sequence',[act_pattern(v) for v in kids]]
+    if k=='pattern_star':return ['star',None if kids[0]['text']=='_' else kids[0]['text']]
+    if k=='pattern_mapping':
+        items=[];rest=None
+        for v in kids:
+            if v['kind']=='mapping_rest':rest=v['kids'][0]['text']
+            else:items.append([actual(v['kids'][0]),act_pattern(v['kids'][1])])
+        return ['mapping',items,rest]
+    if k=='pattern_class':
+        positional=[];keywords=[]
+        for v in kids[1:]:
+            if v['kind']=='class_keyword':keywords.append([v['kids'][0]['text'],act_pattern(v['kids'][1])])
+            else:positional.append(act_pattern(v))
+        return ['class',actual(kids[0]),positional,keywords]
+    raise AssertionError(n)
+
 def act_signature(n):
     out=dict(posonly=[],positional=[],vararg=None,keywordonly=[],kwarg=None);keywordonly=False
     def param(p):
@@ -162,6 +237,7 @@ def act_signature(n):
 
 def act_stmt(n):
     k=n['kind'];kids=n['kids'];at=lambda i:actual(kids[i]) if i<len(kids) else None
+    if k=='match_stmt':return ['match',at(0),[[act_pattern(c['kids'][0]),maybe_node(c['kids'][1]),act_block(c['kids'][2])] for c in kids[1:] if c['kind']=='case']]
     if k=='function_declaration':
         offset=int(kids[1]['text']=='async')
         decorators=[actual(v) for v in kids[0]['kids'] if v['kind']!='newline']
@@ -232,6 +308,6 @@ with tempfile.TemporaryDirectory() as tmp:
         result=[act_stmt(n) for n in got['tree']['kids'] if n['kind']!='newline']
         assert result==want,(source,want,result)
     for source,got in zip(INVALID,results[len(VALID):]):assert not got['ok'],(source,got)
-report=dict(python=platform.python_version(),matching_statement_trees=len(VALID),stdlib_simple_statements=stdlib_count,stdlib_compound_statements=stdlib_compound_count,full_stdlib_files=full_files,rejected_statements=len(INVALID),source_sha256=hashlib.sha256(json.dumps(VALID+INVALID,ensure_ascii=False).encode()).hexdigest(),scope='statement/declaration structure; no match, contextual compiler checks or literal decoding')
+report=dict(python=platform.python_version(),matching_statement_trees=len(VALID),stdlib_simple_statements=stdlib_count,stdlib_compound_statements=stdlib_compound_count,full_stdlib_files=full_files,rejected_statements=len(INVALID),source_sha256=hashlib.sha256(json.dumps(VALID+INVALID,ensure_ascii=False).encode()).hexdigest(),scope='statement/declaration structure; no contextual compiler checks or literal decoding')
 if len(sys.argv)>1:Path(sys.argv[1]).write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report))

@@ -3,6 +3,7 @@ import self.parser
 import self.packages.python.expressions
 import self.packages.python.compounds
 import self.packages.python.declarations
+import self.packages.python.patterns
 import self.packages.python.containers
 import self.packages.python.arguments
 import self.parser.{ seq, nott, wrap, r, opt, keep, keeps, alt, rep, tok, lit, grammar }
@@ -51,4 +52,4 @@ fn rules() -> List[(String, parser.Rule)] = [
 ]
 fn file_grammar() -> parser.Grammar = grammar("file", [
   ("file", wrap("module", rep(r("statement"))))
-] + rules() + declarations.rules() + compounds.rules() + expressions.rules())
+] + rules() + patterns.rules() + declarations.rules() + compounds.rules() + expressions.rules())
