@@ -6,7 +6,7 @@
 #include <stdint.h>
 extern const TSLanguage *tree_sitter_python(void);
 static const char *source;
-static int comma;
+static int comma, recovering;
 static int is(TSNode n, const char *kind) { return !strcmp(ts_node_type(n), kind); }
 static void json_string(const char *s) {
   putchar('"');
@@ -48,32 +48,53 @@ static TSNode first_identifier(TSNode n) {
   return (TSNode){0};
 }
 static void walk(TSNode n, const char *prefix, int class_owner) {
+  // Never promote declarations out of a parser ERROR subtree.
+  if (ts_node_is_null(n) || ts_node_is_error(n) || ts_node_is_missing(n)) return;
   if (is(n, "decorated_definition")) {
     TSNode definition = ts_node_child_by_field_name(n, "definition", 10);
     // Handle the envelope below without visiting decorators as declarations.
-    if (ts_node_is_null(definition)) exit(2);
+    if (ts_node_is_null(definition)) { if (recovering) return; exit(2); }
+    if (recovering) {
+      for (uint32_t i=0; i<ts_node_child_count(n); i++) {
+        TSNode child=ts_node_child(n,i);
+        if (!ts_node_eq(child,definition) && (ts_node_has_error(child) || ts_node_is_missing(child))) return;
+      }
+    }
   }
   TSNode decl = is(n, "decorated_definition") ? ts_node_child_by_field_name(n, "definition", 10) : n;
   int function = is(decl, "function_definition"), cls = is(decl, "class_definition"), alias = is(decl, "type_alias_statement");
   if (function || cls || alias) {
     TSNode name_node = alias ? first_identifier(ts_node_child_by_field_name(decl,"left",4)) : ts_node_child_by_field_name(decl,"name",4);
-    if (ts_node_is_null(name_node)) exit(2);
+    if (ts_node_is_null(name_node) || ts_node_is_missing(name_node)) { if (recovering) return; exit(2); }
+    // An intact body cannot establish a lexical owner from a broken header.
+    // Error-bearing bodies can still contain complete nested declarations.
+    TSNode body = ts_node_child_by_field_name(decl,"body",4);
+    if (recovering) {
+      for (uint32_t i=0; i<ts_node_child_count(decl); i++) {
+        TSNode child=ts_node_child(decl,i);
+        if (!ts_node_is_null(body) && ts_node_eq(child,body)) continue;
+        if (ts_node_has_error(child) || ts_node_is_missing(child)) return;
+      }
+    }
     char *name = text(name_node), *qualified = join(prefix, name);
     TSNode end = last_code(decl);
+    if (!ts_node_has_error(n)) {
     printf("%s{\"name\":", comma ? ",\n" : ""); json_string(qualified);
     printf(",\"kind\":"); json_string(function ? (class_owner ? "method" : "function") : cls ? "class" : "type");
     printf(",\"owner\":"); json_string(function && class_owner ? prefix : "");
     printf(",\"start\":%u,\"end\":%u,\"start_byte\":%u,\"end_byte\":%u}",
       ts_node_start_point(n).row+1, ts_node_end_point(end).row+1, ts_node_start_byte(n), ts_node_end_byte(end));
     comma = 1;
+    }
     if (function || cls) walk(ts_node_child_by_field_name(decl,"body",4),qualified,cls);
     free(name);free(qualified);return;
   }
   for (uint32_t i=0; i<ts_node_named_child_count(n); i++) walk(ts_node_named_child(n,i),prefix,class_owner);
 }
 int main(int argc, char **argv) {
-  if (argc != 2) return 2;
-  FILE *file = fopen(argv[1],"rb");
+  recovering = argc == 3 && !strcmp(argv[1], "--recover");
+  if (argc != 2 && !recovering) return 2;
+  FILE *file = fopen(argv[recovering ? 2 : 1],"rb");
   if (!file || fseek(file,0,SEEK_END)) return 2;
   long size = ftell(file);
   if (size < 0 || (unsigned long)size > UINT32_MAX || fseek(file,0,SEEK_SET)) return 2;
@@ -83,7 +104,10 @@ int main(int argc, char **argv) {
   TSParser *parser=ts_parser_new();
   if (!parser || !ts_parser_set_language(parser,tree_sitter_python())) return 2;
   TSTree *tree=ts_parser_parse_string(parser,NULL,buffer,(uint32_t)size);
-  if (!tree || ts_node_has_error(ts_tree_root_node(tree))) return 1;
+  if (!tree) return 1;
+  if (!recovering && ts_node_has_error(ts_tree_root_node(tree))) {
+    ts_tree_delete(tree);ts_parser_delete(parser);free(buffer);return 1;
+  }
   puts("["); walk(ts_tree_root_node(tree),"",0); puts("\n]");
   ts_tree_delete(tree);ts_parser_delete(parser);free(buffer);return 0;
 }
