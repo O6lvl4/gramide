@@ -9,3 +9,4 @@ python3 ci/symbols.py
 python3 ci/packages.py
 python3 ci/python_layout.py
 python3 ci/python_strings.py
+python3 ci/python_numbers.py

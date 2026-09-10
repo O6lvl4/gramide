@@ -107,3 +107,27 @@ malformed `\\x` escapes), f-string and t-string expression parsing, identifier a
 number scanning, recovery, and integration with layout/grammar are still pending.
 Interpolated prefixes are not accepted by this component and must be dispatched
 to an expression-aware scanner. Python remains unregistered.
+
+## Python implementation progress: numbers
+
+`src/packages/python/numbers.almd` scans decimal, binary, octal and hexadecimal
+integers, decimal fractions/exponents and imaginary suffixes. It enforces digit
+sets, underscore placement, leading-zero integer restrictions and ASCII suffix
+boundaries. It returns original-source byte endpoints without evaluating or
+converting numeric values, so large integers and overflowing float spellings do
+not acquire host numeric limits.
+
+The implementation follows the pinned CPython `Parser/lexer/number.c`, including
+its compatibility boundary before adjoining `and`, `else`, `for`, `if`, `in`,
+`is`, `or` and `not` keywords. CPython currently warns for these spellings rather
+than rejecting all of them; the eventual lexer diagnostic channel must report
+that warning. Non-ASCII identifier adjacency is left to identifier scanning and
+grammar integration, as CPython's numeric suffix check also distinguishes ASCII.
+
+`ci/python_numbers.py` compares compiler acceptance and tokenizer boundaries for
+650 cases, including every base, prefix case, digit separators, fractions,
+exponents, imaginary numbers, huge exponents, adjoining keywords and nonzero
+UTF-8 byte offsets. Another 32 malformed numeric spellings must be rejected by
+both implementations. Local oracle: CPython 3.14.4; CI reports its actual version.
+The complete lexer, identifier validation, interpolated strings and grammar
+remain unfinished; these component checks do not register Python support.
