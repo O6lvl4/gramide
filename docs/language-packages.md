@@ -51,3 +51,35 @@ During extraction, 40 Go/Rust reference files matched the previous binary across
 check, outline, symbols, tags and tokens (200 exact stdout/stderr/exit comparisons).
 The existing independent Go AST range oracle remains in CI. Large-file timing
 was measured for check only; no large-generated-file symbols speedup is claimed.
+
+## Python implementation progress: layout
+
+`src/packages/python/layout.almd` implements the strict layout stage. Its input
+is UTF-8 source and physical tokens ending in EOF. Token columns are one-based
+byte columns, matching gramide's existing token contract. The scanner must emit
+physical `newline`, `comment`, and `continuation` tokens (the latter includes a
+backslash plus the line ending), and must keep multiline strings indivisible.
+The stage preserves code tokens and adds logical newline/indent/dedent markers.
+Indent/dedent markers have empty text and zero-width byte spans at the next code
+token or EOF; they are not source whitespace tokens.
+
+The implementation follows CPython's lexer indentation and alternate-indentation
+stacks, tab stops, formfeed reset, leading line continuations, and the 100-entry
+indent / 200-entry delimiter bounds. Blank/comment lines and bracketed physical
+newlines do not produce statement separators. EOF completes a pending logical
+line and drains indentation. Mixed tab/space indentation, inconsistent dedents,
+unclosed/mismatched brackets and dangling continuations are rejected.
+
+`ci/python_layout.py` compares against the host CPython tokenizer and compiler,
+prints the oracle version, and runs the compiled Almide layout module through a
+test-only JSON adapter. The reference tokenizer supplies physical tokens for valid
+cases; a small independent adapter supplies malformed-layout fixtures so reference
+rejection does not prevent testing gramide. The comparison covers logical token
+kinds, preservation of original code-token text/positions, rejection and error
+lines. It does not claim equivalent diagnostic text or synthetic marker spans.
+Local CPython 3.14.4 validates 25 valid and 51 invalid cases.
+
+This module is not a registered Python package. Python string/f-string, number
+and identifier scanning, grammar rules, semantic ranges, recovery, real-source
+corpora and hew integration remain unfinished. Python's `check` capability stays
+unavailable until that end-to-end implementation is independently verified.

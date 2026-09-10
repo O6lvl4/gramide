@@ -7,3 +7,4 @@ compiler="${ALMIDE_BIN:-almide}"
 python3 ci/smoke.py
 python3 ci/symbols.py
 python3 ci/packages.py
+python3 ci/python_layout.py

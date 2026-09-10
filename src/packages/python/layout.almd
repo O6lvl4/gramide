@@ -1,0 +1,119 @@
+// Python physical tokens -> logical NEWLINE / INDENT / DEDENT tokens.
+// The scanner must preserve physical newline, comment and continuation tokens,
+// and keep strings (including their embedded newlines) as single tokens.
+// Layout is strict; recovery will be an explicit, separately tested policy.
+import self.tree
+import self.lex
+
+type Indent = { width: Int, alternate: Int }
+
+fn indentation(source: Bytes, at: Int) -> Indent = {
+  var i = at
+  var width = 0
+  var alternate = 0
+  var scanning = true
+  while scanning {
+    match bytes.get_or(source, i, -1) {
+      32 => { width = width + 1; alternate = alternate + 1; i = i + 1 },
+      9 => { width = (width / 8 + 1) * 8; alternate = alternate + 1; i = i + 1 },
+      12 => { width = 0; alternate = 0; i = i + 1 },
+      _ => { scanning = false },
+    }
+  }
+  Indent { width: width, alternate: alternate }
+}
+
+fn marker(kind: String, at: tree.Token) -> tree.Token =
+  tree.Token { kind: kind, text: "", start: at.start, end: at.start, line: at.line, col: at.col }
+
+fn fail(at: tree.Token, message: String) -> lex.LexError =
+  lex.LexError { line: at.line, col: at.col, message: message }
+
+fn change_indent(mut levels: List[Indent], mut out: List[tree.Token], next: Indent, at: tree.Token) -> Result[Unit, lex.LexError] = {
+  let previous = list.last(levels) ?? Indent { width: 0, alternate: 0 }
+  if next.width > previous.width then {
+    guard list.len(levels) < 100 else err(fail(at, "too many levels of indentation"))
+    guard next.alternate > previous.alternate else err(fail(at, "inconsistent tabs and spaces in indentation"))
+    list.push(levels, next)
+    list.push(out, marker("indent", at))
+  } else {
+    while list.len(levels) > 1 and (option.map(list.last(levels), (v) => v.width) ?? 0) > next.width {
+      let _ = list.pop(levels)
+      list.push(out, marker("dedent", at))
+    }
+    let top = list.last(levels) ?? Indent { width: 0, alternate: 0 }
+    guard top.width == next.width else err(fail(at, "unindent does not match any outer indentation level"))
+    guard top.alternate == next.alternate else err(fail(at, "inconsistent tabs and spaces in indentation"))
+  }
+  ok(())
+}
+
+fn apply(source: String, physical: List[tree.Token]) -> Result[List[tree.Token], lex.LexError] = {
+  guard (option.map(list.last(physical), (t) => t.kind) ?? "") == "eof" else err(lex.LexError { line: 1, col: 1, message: "physical token stream requires EOF" })
+  let buffer = bytes.from_string(source)
+  var out: List[tree.Token] = []
+  var levels = [Indent { width: 0, alternate: 0 }]
+  var brackets: List[tree.Token] = []
+  var beginning = true
+  var code = false
+  var continuation: Option[tree.Token] = none
+  var prefix: Option[Indent] = none
+  for t in physical {
+    if t.kind == "comment" then { continuation = none }
+    else if t.kind == "continuation" then {
+      if beginning then {
+        let here = indentation(buffer, t.start - t.col + 1)
+        // CPython retains the first nonzero column across leading backslashes.
+        if (option.map(prefix, (p) => p.width) ?? 0) == 0 and here.width > 0 then prefix = some(Indent { width: here.width, alternate: here.width }) else ()
+      } else ()
+      continuation = some(t)
+    }
+    else if t.kind == "newline" then {
+      continuation = none
+      if list.is_empty(brackets) and code then {
+        list.push(out, t)
+        beginning = true
+        code = false
+        prefix = none
+      } else if list.is_empty(brackets) then { prefix = none } else ()
+    }
+    else if t.kind == "eof" then {
+      guard option.is_none(continuation) else err(fail(continuation ?? t, "unexpected EOF after line continuation"))
+      guard list.is_empty(brackets) else err(fail(list.last(brackets) ?? t, "unclosed delimiter"))
+      if code then list.push(out, marker("newline", t)) else ()
+      while list.len(levels) > 1 {
+        let _ = list.pop(levels)
+        list.push(out, marker("dedent", t))
+      }
+      list.push(out, t)
+    }
+    else {
+      if beginning then {
+        let next = prefix ?? indentation(buffer, t.start - t.col + 1)
+        change_indent(levels, out, next, t)!
+        prefix = none
+        beginning = false
+      } else ()
+      if t.kind == "punct" then {
+        if list.contains(["(", "[", "{"], t.text) then {
+          guard list.len(brackets) < 200 else err(fail(t, "too many nested delimiters"))
+          list.push(brackets, t)
+        }
+        else if list.contains([")", "]", "}"], t.text) then {
+          let expected = if t.text == ")" then "(" else if t.text == "]" then "[" else "{"
+          guard option.map(list.pop(brackets), (opening) => opening.text) == some(expected) else err(fail(t, "mismatched closing delimiter"))
+        } else ()
+      } else ()
+      list.push(out, t)
+      code = true
+      continuation = none
+    }
+  }
+  ok(out)
+}
+
+test "indentation follows Python tab stops and formfeed resets" {
+  assert_eq(indentation(bytes.from_string(" \tx"), 0), Indent { width: 8, alternate: 2 })
+  assert_eq(indentation(bytes.from_string("        x"), 0), Indent { width: 8, alternate: 8 })
+  assert_eq(indentation(bytes.from_string("  \u{000c} x"), 0), Indent { width: 1, alternate: 1 })
+}
