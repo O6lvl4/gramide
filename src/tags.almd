@@ -23,7 +23,7 @@ import self.parser
 // node.
 fn leaf_text(n: tree.Node, toks: List[tree.Token]) -> String = match list.get(toks, n.start) { some(t) => t.text, none => "" }
 fn start_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks, n.start) { some(t) => t.line, none => 0 }
-fn end_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks, n.end - 1) { some(t) => t.line, none => 0 }
+fn end_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks, n.end - 1) { some(t) => t.line + string.count(t.text, "\n"), none => 0 }
 
 // A name of more than one token — `salsa::Database`, `Vec<u8>` — is joined
 // from the tokens, not cut out of the source. A token's offsets count bytes
@@ -283,3 +283,4 @@ test "a function written inside a method body is not a method of the type" {
   let p = parser.parse(lang_rust.rust(), toks) |> result.map_err((f) => parser.format_failure(f))!
   assert_eq(outline(p.root, toks, "::"), ["L1-1 impl S", "  L1-1 method S::m", "    L1-1 function helper"])
 }
+

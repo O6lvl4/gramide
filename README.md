@@ -14,6 +14,7 @@ gramide check   src/*.almd        any number of files: each grammar is compiled 
 gramide outline src/main.almd     one line per declaration: `L12-40 function parse`, and a method
                                   named with its type: `L82-89 method Applicability::as_str`
                                   a file that does not parse still gets an outline of the parts that do
+gramide symbols src/main.almd     versioned JSON names, owners, line and byte ranges (strict parse)
 gramide parse   src/main.almd     the whole tree as an s-expression
 gramide tags    src/main.almd     `def function parse L40-58`, `ref call list.map L44`, `ref type Node L12` — a repo map's input
 gramide balance Widget.java       delimiters and literals only, for a language with no grammar here:
@@ -111,3 +112,6 @@ Requires Almide 0.61 or later.
 ## License
 
 MIT or Apache-2.0, at your option.
+
+The [structured symbol contract](docs/symbols.md) connects gramide to source readers
+such as hew, with independent range comparisons against the Go parser.

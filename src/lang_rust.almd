@@ -142,7 +142,7 @@ fn rust() -> parser.Grammar = grammar("source_file", tt_rules() + expr_rules("",
   ("attr", seq([lit("#"), lit("["), rep(r("tt")), lit("]")])),
   ("visibility", opt(seq([lit("pub"), opt(seq([lit("("), alt([lit("crate"), lit("super"), lit("self"), seq([lit("in"), r("path")])]), lit(")")]))]))),
 
-  ("item", seq([rep(r("attr")), r("visibility"), r("item_kind")])),
+  ("item", wrap("item_envelope", seq([rep(r("attr")), r("visibility"), r("item_kind")]))),
   ("item_kind", alt([
      r("use_decl"), r("mod_decl"), r("fn_decl"), r("struct_decl"), r("enum_decl"), r("union_decl"),
      r("trait_decl"), r("impl_decl"), r("type_alias"), r("const_decl"), r("extern_block"),
@@ -219,8 +219,8 @@ fn rust() -> parser.Grammar = grammar("source_file", tt_rules() + expr_rules("",
           field("name", r("type"))]),
      opt(r("where")),
      lit("{"), rep(r("inner_attr")), rep(r("assoc_item")), lit("}")]))),
-  ("assoc_item", seq([rep(r("attr")), r("visibility"), alt([
-     r("fn_decl"), r("type_alias"), r("const_decl"), r("macro_item")])])),
+  ("assoc_item", wrap("item_envelope", seq([rep(r("attr")), r("visibility"), alt([
+     r("fn_decl"), r("type_alias"), r("const_decl"), r("macro_item")])]))),
 
   ("type_alias", wrap("type_declaration", seq([lit("type"), wrap("type_spec", seq([
      field("name", ident), opt(r("generic_params")), opt(seq([lit(":"), r("bounds")])), opt(r("where")),
@@ -348,15 +348,19 @@ fn parse_src(src: String) -> Result[parser.Parsed, String] = {
   parser.parse(rust(), toks) |> result.map_err((f) => parser.format_failure(f))
 }
 
+// Envelopes preserve modifiers/attributes without changing declaration kinds.
+fn item_kinds(kids: List[tree.Node]) -> List[String] = list.flat_map(kids, (k) =>
+  if k.kind == "item_envelope" then list.map(k.kids, (child) => child.kind) else [k.kind])
+
 fn top_kinds(src: String) -> List[String] = match parse_src(src) {
-  ok(p) => list.map(p.root.kids, (k) => k.kind),
+  ok(p) => item_kinds(p.root.kids),
   err(e) => ["ERROR " + e],
 }
 
 fn recovered_kinds(src: String) -> List[String] = {
   let toks = lex.tokenize_recovering(src, spec())
   match parser.parse_recovering(parser.compile(rust()), toks) {
-    ok(p) => list.map(p.root.kids, (k) => k.kind),
+    ok(p) => item_kinds(p.root.kids),
     err(_) => ["NOTHING"],
   }
 }
