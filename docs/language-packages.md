@@ -155,3 +155,30 @@ explicit version policy rather than silently adopting host character classes.
 Keyword classification, NFKC name identity, interpolated strings, lexer integration,
 grammar, recovery and hew's end-to-end Python reading remain pending. Python is
 still not registered as a supported grammar.
+
+## Python implementation progress: connected UTF-8 lexer
+
+`src/packages/python/lexer.almd` connects ordinary strings, numbers, Unicode
+identifiers and layout into `scan_source`. It handles longest-match Python
+operators, comments, physical CR/LF/CRLF newlines, explicit continuations and
+line tracking through multiline strings. The input contract is already-decoded
+UTF-8 text; source-file encoding-cookie/BOM handling is not implemented here.
+Hard/soft keyword interpretation remains a grammar concern: names currently use
+the common `identifier` token kind. Lexing does not claim syntax validity.
+
+`ci/python_lexer.py` compares complete logical token sequences and original code
+token text, byte endpoints, lines and byte columns with CPython. It excludes
+synthetic layout-marker positions from the position comparison, while retaining
+those markers in the token-kind comparison. The local CPython 3.14.4 result is
+15 matched inputs (including 2,000 declarations and `keyword.py`, `token.py`,
+`stat.py`), seven rejected malformed inputs, and four standard-library files
+explicitly unavailable because they contain interpolation (`copyreg.py`,
+`genericpath.py`, `reprlib.py`, `textwrap.py`). The latter are measured gaps,
+not skipped successes. [Evidence with source hashes](evidence/python-lexer.json)
+records this bounded result.
+
+F-string and t-string prefixes are detected and return an explicit unsupported
+error rather than being misread as adjacent identifiers and ordinary strings.
+Interpolation, escape validation, recovery, NFKC name identity, grammar and hew
+integration remain necessary before Python can be registered. Full CPython
+standard-library acceptance and tree-sitter parity have not been established.
