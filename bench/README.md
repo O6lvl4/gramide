@@ -99,3 +99,30 @@ is effectively unchanged; typing.py drops from about 20.7 MB to 20.3 MB. The
 report retains both RSS samples, including observed variation, and all raw time
 samples. This is a full-file structured-read improvement, not an incremental
 parsing result or a claim that grammar parsing itself is faster.
+
+## Looking up declaration fields without copying siblings
+
+The pinned compiler lowers `list.find` on a node's children by cloning the
+whole child list and candidate nodes. Looking up `name`, `trait` or `receiver`
+therefore also copied function bodies that were never selected. The lookup now
+scans borrowed fields, records the first matching index and retrieves only that
+node. Declaration-kind lookup also avoids creating a copied list for `find`.
+The first-match and missing-field contracts are unchanged. This shared helper
+also serves outline and tags; the measurements here still cover symbols only.
+
+[Paired measurements](../docs/evidence/python-symbols-field-lookup.json) compare
+against the preceding subtree-borrow change, with the same 15 inputs and oracle.
+All outputs match CPython; 24 complete Python symbol/outline JSON/text outputs
+are additionally byte-identical to the previous binary. The full suite and real
+hew integration passed.
+
+| Input | Before | After | tree-sitter |
+| --- | ---: | ---: | ---: |
+| inspect.py | 98.87 ms | 79.80 ms | 11.54 ms |
+| typing.py | 97.00 ms | 80.46 ms | 11.44 ms |
+| reprlib.py | 15.32 ms | 11.74 ms | 3.86 ms |
+
+14 of 15 measured medians improved. Keyword.py increased from 4.13 to 4.32 ms;
+small-file startup samples and RSS vary, and memory does not improve uniformly.
+All raw samples are retained. Tree-sitter remains ahead; this is a reduction in
+structured-read overhead, not a general grammar or incremental-parser victory.
