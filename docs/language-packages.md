@@ -344,3 +344,33 @@ appropriate function, duplicate parameter names and other compiler-context
 checks remain pending. Interpolated/concatenated string syntax, escape validation,
 statements, declarations, recovery and hew integration are still unfinished;
 Python remains unregistered.
+
+## Python implementation progress: string composition and interpolation syntax
+
+`string_expressions.almd` follows the CPython v3.14.4 string, f-string and t-string
+rules. It permits ordinary/f-string concatenation, bytes-only concatenation and
+t-string-only concatenation, rejecting mixtures across those families. Replacement
+fields use the existing expression/yield rules and preserve debug markers,
+conversions (`s`, `r`, `a`) and recursively nested format specifications.
+
+The package expression entry point is now `expressions.parse_with`. It applies
+`string_expressions.prepare` before the PEG parser: lexical STRING tokens remain
+CPython-compatible, but bytes literals become a distinct grammar token kind.
+It also verifies source adjacency after `!`, which token-text matching alone
+cannot express. Future package integration must retain this preparation step.
+
+The expanded oracle covers all four string-family categories through four
+concatenated pieces, plus 1,024 prefix/quote/body combinations, nested f/t strings,
+comments, yield/await, debug formatting, conversion errors and malformed fields.
+The cumulative corpus matches **2,607** structures and rejects **2,954** malformed
+expressions. [Evidence](evidence/python-string-expressions.json) records the hash.
+Comparison includes string families, replacement expressions, conversion defaults
+and nested format-field structure. Literal chunks remain in source tokens but
+are excluded from AST normalization; decoded literal text, t-string expression
+text and debug-generated text are not compared by this oracle. The separate
+lexer oracle continues to check exact source-token text and byte ranges.
+
+Escape decoding/validation and contextual compiler checks remain unfinished,
+as do statements, declarations, recovery and hew integration. Python remains
+unregistered; these expression milestones do not establish complete Python
+support or a performance win over tree-sitter.
