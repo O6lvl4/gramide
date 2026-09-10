@@ -52,6 +52,9 @@ check, outline, symbols, tags and tokens (200 exact stdout/stderr/exit compariso
 The existing independent Go AST range oracle remains in CI. Large-file timing
 was measured for check only; no large-generated-file symbols speedup is claimed.
 
+The implementation checkpoints below preserve historical results; the latest
+checkpoint states the current remaining work.
+
 ## Python implementation progress: layout
 
 `src/packages/python/layout.almd` implements the strict layout stage. Its input
@@ -182,3 +185,28 @@ error rather than being misread as adjacent identifiers and ordinary strings.
 Interpolation, escape validation, recovery, NFKC name identity, grammar and hew
 integration remain necessary before Python can be registered. Full CPython
 standard-library acceptance and tree-sitter parity have not been established.
+
+## Python implementation progress: f-string and t-string modes
+
+The connected lexer now scans both interpolation families. A stack tracks literal,
+replacement-expression and format-specifier modes; nested interpolation uses the
+same ordinary expression scanner as source outside strings. The dedicated
+`interpolation.almd` handles escaped braces, named Unicode escapes, quote widths,
+raw prefixes and transitions back to expression mode. Token spans follow CPython,
+including its split spans for doubled braces and zero-width format-middle tokens.
+This follows the pinned CPython `Parser/lexer/string.c` implementation.
+
+The expanded whole-source oracle compares 409 accepted inputs and 11 rejected
+malformed inputs with CPython 3.14.4. The accepted set contains 384 combinations of
+interpolation family/prefix, quote width, fields, nested expressions, raw strings,
+debug fields and dynamic format specifications, plus multiline-expression comments
+and 12 standard-library files. All four files blocked by interpolation in the prior
+checkpoint now match. Exact significant-token kinds, source spans, text, lines and
+byte columns are compared, including interpolation start/middle/end tokens.
+[Evidence and source hashes](evidence/python-interpolation.json) record the scope.
+
+These are lexical comparisons, not proof of valid replacement-expression grammar
+or format/conversion semantics. Escape validation, grammar and invalid-syntax
+corpora, recovery, NFKC name identity, source encoding handling, hew integration
+and comparative performance/memory measurements remain unfinished. Python remains
+unregistered until its capability contracts are demonstrated.
