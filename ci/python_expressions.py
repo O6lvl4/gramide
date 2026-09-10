@@ -83,8 +83,39 @@ VALID += ['a if b else lambda x: x', 'lambda: a if b else lambda: c',
 INVALID += ['a if lambda: b else c', 'a or lambda: b', 'lambda x: y := z',
             '(yield from a,b)', '(yield *a if b else c)', 'await lambda: x',
             'lambda **kw,*args:x', 'lambda *,x,/:x']
+# String families and source-sensitive replacement-field syntax.
+for length in range(1,5):
+    for pieces in itertools.product(['"text"', 'b"data"', 'f"{x}"', 't"{x}"'],repeat=length):
+        source=' '.join(pieces)
+        try:ast.parse(source,mode='eval')
+        except SyntaxError:INVALID.append(source)
+        else:VALID.append(source)
+for prefix,quote,body in itertools.product(['f','F','fr','RF','t','T','tr','RT'],[chr(34),chr(39),chr(34)*3,chr(39)*3],
+        ['', 'plain', '{{x}}', '{x}', '{x=}', '{ x = }', '{x!r}', '{x!s}', '{x!a}', '{x!q}', '{x! r}', '{x !r }',
+         '{x:}', '{x= :}', '{x:>{width}.{precision}}', '{x:{y:{z}}}', '{x,y}', '{*x,}', '{yield x}', '{yield from xs}',
+         '{(x:=1)}', '{x:=10}', '{(lambda: x)()}', '{lambda: x}', '{x+}', '{x!}', '{}', '{f"{y}"}', '{t"{y}"}',
+         '{[x for x in xs]}', '{ {"key": value} }', '日本語 {name}']):
+    source=prefix+quote+body+quote
+    try:ast.parse(source,mode='eval')
+    except SyntaxError:INVALID.append(source)
+    else:VALID.append(source)
+VALID += ['"a" "b"', 'b"a" BR"b"', 'f"a{x}" "tail" f"{y}"', 't"{x}" t"{y}"',
+          'f"{x!r:>{width}}"', 'f"{x=:.2f}"', 'f"{await f()}"', 'f"{x # comment\n}"']
+INVALID += ['f"{x!\tr}"', 'f"{x!\nr}"', 'f"{x!rr}"', 'f"{x!R}"', 'f"{x!1}"', 'f"{x!r!s}"']
 OP={ast.Add:'+',ast.Sub:'-',ast.Mult:'*',ast.Div:'/',ast.FloorDiv:'//',ast.Mod:'%',ast.MatMult:'@',ast.Pow:'**',ast.LShift:'<<',ast.RShift:'>>',ast.BitAnd:'&',ast.BitXor:'^',ast.BitOr:'|',ast.And:'and',ast.Or:'or',ast.Eq:'==',ast.NotEq:'!=',ast.Lt:'<',ast.LtE:'<=',ast.Gt:'>',ast.GtE:'>=',ast.In:'in',ast.NotIn:'not in',ast.Is:'is',ast.IsNot:'is not',ast.USub:'-',ast.UAdd:'+',ast.Invert:'~',ast.Not:'not'}
+def reference_fields(n,source):
+    fields=[]
+    for v in n.values:
+        if isinstance(v,(ast.FormattedValue,ast.Interpolation)):
+            fields.append([reference(v.value,source),chr(v.conversion) if v.conversion>=0 else None,
+                           reference_fields(v.format_spec,source) if v.format_spec is not None else None])
+    return fields
 def reference(n,source):
+    if isinstance(n,(ast.JoinedStr,ast.TemplateStr)):
+        family='template' if isinstance(n,ast.TemplateStr) else 'text'
+        return ['strings',family,reference_fields(n,source)]
+    if isinstance(n,ast.Constant) and isinstance(n.value,(str,bytes)):
+        return ['strings','bytes' if isinstance(n.value,bytes) else 'text',[]]
     if isinstance(n,(ast.Name,ast.Constant)):return ['atom',ast.get_source_segment(source,n)]
     if isinstance(n,ast.Lambda):
         a=n.args;pos=a.posonlyargs+a.args
@@ -118,8 +149,26 @@ def reference(n,source):
     if isinstance(n,ast.Call):return ['call',reference(n.func,source),[reference(v,source) for v in n.args],[[v.arg,reference(v.value,source)] for v in n.keywords]]
     if isinstance(n,ast.Subscript):return ['sub',reference(n.value,source),reference(n.slice,source)]
     raise AssertionError(ast.dump(n))
+def actual_fields(nodes):
+    fields=[]
+    for n in nodes:
+        if n['kind']!='replacement':continue
+        parts=n['kids'];conversion=None;format_=None;debug=False
+        for part in parts[1:]:
+            if part['kind']=='conversion':conversion=part['kids'][0]['text']
+            elif part['kind']=='format':format_=actual_fields(part['kids'])
+            elif part['text']=='=':debug=True
+        if debug and conversion is None and format_ is None:conversion='r'
+        fields.append([actual(parts[0]),conversion,format_])
+    return fields
 def actual(n):
     kids=n['kids'];kind=n['kind']
+    if kind in ('text_strings','byte_strings','template_strings'):
+        family={'text_strings':'text','byte_strings':'bytes','template_strings':'template'}[kind]
+        fields=[]
+        for part in kids:
+            if part['kind'] in ('fstring','tstring'):fields.extend(actual_fields(part['kids']))
+        return ['strings',family,fields]
     if kind=='lambda':
         params=dict(posonly=[],positional=[],vararg=None,keywordonly=[],kwarg=None)
         keywordonly=False
@@ -195,6 +244,6 @@ with tempfile.TemporaryDirectory() as tmp:
     for source,got in zip(INVALID,results[len(VALID):]):assert not got['ok'],(source,got)
 report=dict(python=platform.python_version(),matching_expression_trees=len(VALID),rejected_expressions=len(INVALID),
             expressions_sha256=hashlib.sha256(json.dumps(VALID+INVALID,ensure_ascii=False).encode()).hexdigest(),
-            scope='normalized operator trees, conditional order, comparisons, call/attribute/subscript structure, displays, unpacking, slices, call argument ordering, named expressions, comprehensions, lambdas and yield/await; not a complete Python grammar')
+            scope='normalized operator trees, conditional order, comparisons, call/attribute/subscript structure, displays, unpacking, slices, call argument ordering, named expressions, comprehensions, lambdas, yield/await, string families and interpolation fields (literal decoding excluded); not a complete Python grammar')
 if len(sys.argv)>1:Path(sys.argv[1]).write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report))

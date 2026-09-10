@@ -4,6 +4,8 @@ import self.packages.python.containers
 import self.packages.python.arguments
 import self.packages.python.comprehensions
 import self.packages.python.lambdas
+import self.packages.python.string_expressions
+import self.tree
 import self.parser
 import self.parser.{ seq, nott, lits, tok, wrap, r, opt, keep, leftf, alt, rep, keeps, lit, grammar }
 
@@ -35,7 +37,7 @@ fn rules() -> List[(String, parser.Rule)] = [
   ("attribute_suffix", wrap("attribute", seq([lit("."), r("name")]))),
   ("call_suffix", wrap("call", seq([lit("("), opt(r("call_arguments")), lit(")")]))),
   ("subscript_suffix", wrap("subscript", seq([lit("["), r("slices"), lit("]")]))),
-  ("atom", alt([tok("number"), tok("string"), keeps(["True", "False", "None", "..."]), r("name"), r("comprehension"), r("tuple_display"), r("list_display"), r("dict_display"), r("set_display"), seq([lit("("), alt([r("yield_expression"), r("named_expression")]), lit(")")])])),
+  ("atom", alt([tok("number"), r("strings"), keeps(["True", "False", "None", "..."]), r("name"), r("comprehension"), r("tuple_display"), r("list_display"), r("dict_display"), r("set_display"), seq([lit("("), alt([r("yield_expression"), r("named_expression")]), lit(")")])])),
   ("yield_expression", alt([
     wrap("yield_from", seq([lit("yield"), lit("from"), r("expression")])),
     wrap("yield", seq([lit("yield"), opt(r("yield_values"))]))
@@ -45,9 +47,13 @@ fn rules() -> List[(String, parser.Rule)] = [
     wrap("tuple", seq([r("yield_item"), lit(","), opt(containers.separated(r("yield_item")))])),
     r("yield_item")
   ])),
-] + containers.rules() + arguments.rules() + comprehensions.rules() + lambdas.rules()
+] + containers.rules() + arguments.rules() + comprehensions.rules() + lambdas.rules() + string_expressions.rules()
 
 fn expression_grammar() -> parser.Grammar = grammar("evaluation", [
   ("evaluation", seq([alt([r("evaluation_tuple"), r("expression")]), opt(tok("newline"))])),
   ("evaluation_tuple", wrap("tuple", seq([r("expression"), lit(","), opt(containers.separated(r("expression")))])))
 ] + rules())
+
+// Package entry point applies source-sensitive literal checks before PEG parsing.
+fn parse_with(compiled: parser.Compiled, tokens: List[tree.Token]) -> Result[parser.Parsed, parser.Failure] =
+  parser.parse_with(compiled, string_expressions.prepare(tokens)!)
