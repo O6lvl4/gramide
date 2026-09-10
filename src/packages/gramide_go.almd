@@ -17,6 +17,7 @@
 
 import self.lex
 import self.tree
+import self.package_api
 import self.parser
 import self.parser.{ tok, lit, keep, r, seq, alt, rep, rep1, opt, wrap, field, ahead, leftf, lits, keeps, grammar, recover, recover_all, recover_all_keeping }
 
@@ -321,4 +322,21 @@ test "numbers, runes, raw strings, operators" {
   let toks = lex.tokenize("x := 0x1p-2 + 1e3 + 2i + 'a' + `raw\nstring` &^ y", spec())!
   assert_eq(lex.kinds(list.take(toks, 12)), ["identifier", "punct", "float", "punct", "float", "punct", "imaginary", "punct", "rune", "punct", "string", "punct"])
   assert_eq(list.get(lex.texts(toks), 11), some("&^"))
+}
+
+fn symbol_rules() -> package_api.SymbolRules = package_api.SymbolRules {
+  declarations: [("function_declaration", "function"), ("method_declaration", "method"), ("method_signature", "method"), ("type_declaration", "type"), ("type_spec", "type"), ("var_spec", "var"), ("const_spec", "const"), ("field", "field")],
+  scopes: ["type_spec", "type_declaration"], callables: ["function_declaration", "method_declaration", "method_signature"],
+  envelopes: [], unnamed_envelopes: []
+}
+
+fn prepare_lexer() -> package_api.Tokenizer = {
+  let config = spec()
+  (source, recovering) => lex.tokenize_with(source, config, recovering)
+}
+
+fn definition() -> package_api.Definition = package_api.Definition {
+  id: "go", package_name: "gramide-go", version: "0.1.0", extensions: [".go"],
+  capabilities: ["check", "tokens", "parse", "outline", "symbols", "tags", "map"],
+  lexer: () => prepare_lexer(), grammar: () => go(), sep: ".", symbols: symbol_rules()
 }

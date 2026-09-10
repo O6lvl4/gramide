@@ -21,6 +21,7 @@
 // src/lex.almd, the engine in src/parser.almd and the walkers in src/tags.almd
 // are shared and know no language. src/lang.almd picks by extension.
 
+import self.registry
 import self.tree
 import self.lang
 import self.tags
@@ -31,7 +32,7 @@ import fs
 import env
 import process
 
-fn usage() -> String = "usage: gramide (parse | tokens | outline | symbols | tags) <file>\n       gramide (check | balance) <file>...\n       gramide map <dir> [--budget N] [--task TEXT]"
+fn usage() -> String = "usage: gramide languages\n       gramide (parse | tokens | outline | symbols | tags) <file>\n       gramide (check | balance) <file>...\n       gramide map <dir> [--budget N] [--task TEXT]"
 
 effect fn read(path: String) -> Result[String, String] = fs.read_text(path) |> result.map_err((e) => path + ": " + e)
 
@@ -43,6 +44,7 @@ effect fn note(d: lang.Reading) -> Unit = match d.error {
 }
 
 effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
+  guard cmd == "balance" or registry.supports(path, cmd) else err(path + ": no language package provides " + cmd)
   let src = read(path)!
   match cmd {
     "tokens" => {
@@ -54,8 +56,8 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
     // parse: the tree is the recovered one and the reason goes to stderr
     "parse" => { let d = lang.read_source(path, src)!; let _ = note(d); println(tree.sexp(d.parsed.root)); ok(()) },
     "symbols" => { println(symbols.document(path, src)!); ok(()) },
-    "outline" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.outline(d.parsed.root, d.parsed.toks, d.sep) { println(l) }; ok(()) },
-    "tags" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.tags(d.parsed.root, d.parsed.toks, d.sep) { println(l) }; ok(()) },
+    "outline" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.outline(d.parsed.root, d.parsed.toks, d.sep, d.symbols) { println(l) }; ok(()) },
+    "tags" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.tags(d.parsed.root, d.parsed.toks, d.sep, d.symbols) { println(l) }; ok(()) },
     // the gate. strict, and the only command whose exit code is a verdict
     "check" => { let _ = lang.verify_source(path, src)!; println(path + ": ok"); ok(()) },
     // no grammar needed, and no false rejection possible: valid code balances
@@ -215,7 +217,8 @@ effect fn main() -> Unit = {
   let argv = env.args()
   let cmd = list.get(argv, 0) ?? ""
   let rest = list.drop(argv, 1)
-  if cmd == "map" then finish(run_map(argv))
+  if cmd == "languages" then println(registry.manifest())
+  else if cmd == "map" then finish(run_map(argv))
   else if (cmd == "check" or cmd == "balance") and list.len(rest) > 0 then run_many(cmd, rest)
   else match list.get(argv, 1) {
     some(path) => finish(run(cmd, path)),

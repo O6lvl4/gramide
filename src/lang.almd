@@ -1,107 +1,46 @@
-// lang — which language a path is in.
-//
-// A language is a `Language`: a lexer spec (lex.almd) and a compiled grammar
-// (parser.almd). Neither is code specific to this module.
-//
-// ── adding a language ─────────────────────────────────────────────────────
-//
-// 1. `src/lang_<name>.almd`, exporting `spec() -> lex.Spec` and a grammar. If
-//    the lexer spec cannot say how its numbers or its strings are written, add
-//    a family to lex.almd rather than a special case here.
-// 2. Its extension in EXTENSIONS below.
-// 3. A `<name>_lang()` beside the others, with the separator the language
-//    writes between a type and one of its methods, and a field for it in
-//    `Engines` and `engines_for`.
-// 4. A branch in each of the four functions marked `per language` below. They
-//    are written out rather than looked up in a list because reading an element
-//    out of a list copies it, and a compiled grammar is the largest value in
-//    the program. Every other function takes a `Language` a caller already
-//    holds, so the extension is consulted only in those four.
-// 5. Name the nodes the way the other grammars do, or `outline`, `tags` and
-//    `map` will see nothing. tags.almd knows a fixed vocabulary and no more:
-//    the declarations listed in its `decl_kind` (function_declaration,
-//    method_declaration, method_signature, type_declaration, type_spec,
-//    let_declaration, test_declaration, protocol_declaration, variant,
-//    var_spec, const_spec, field, impl, mod, macro_definition), plus
-//    `type_name` for a mentioned type, `arguments` and `field_access` for a
-//    call, and the field names `name`, `field` and `receiver`. A grammar free
-//    to invent kinds still parses; it just stays invisible.
-//    A function is named with the type that owns it, which is either the
-//    nearest enclosing `impl` / `type_spec` / `protocol_declaration`, or — for
-//    a language that writes the owner in the signature, as Go does — the
-//    `receiver` field. Put the name of the implemented type in the `name`
-//    field of the enclosing node and this needs no code.
-// 6. Validate against a corpus of real files in that language: the count that
-//    parse, and that everything rejected is rejected by the language's own
-//    compiler too. A grammar that has not met a corpus is a guess.
+// Language-neutral host for statically registered language packages.
+// The composition root is registry.almd; grammar/lexer/semantic rules live in
+// src/packages. Engines compile only packages needed by a batch.
 
 import self.tree
 import self.lex
 import self.parser
-import self.lang_almide
-import self.lang_go
-import self.lang_rust
+import self.package_api
+import self.registry
 
-let EXTENSIONS = [".almd", ".go", ".rs"]
+fn known(path: String) -> Bool = registry.known(path)
+fn supports(path: String, capability: String) -> Bool = registry.supports(path, capability)
+fn unknown_ext(path: String) -> String = path + ": no registered grammar for this extension"
+fn lex_error(path: String, e: lex.LexError) -> String = path + ":" + int.to_string(e.line) + ":" + int.to_string(e.col) + ": " + e.message
 
-fn known(path: String) -> Bool = list.any(EXTENSIONS, (e) => string.ends_with(path, e))
+type Language = { definition: package_api.Definition, tokenize: package_api.Tokenizer, grammar: parser.Compiled, sep: String }
+type Engines = { loaded: List[Language] }
 
-fn lex_error(path: String, e: lex.LexError) -> String =
-  path + ":" + int.to_string(e.line) + ":" + int.to_string(e.col) + ": " + e.message
-
-fn unknown_ext(path: String) -> String =
-  path + ": no grammar for this extension (known: " + list.join(EXTENSIONS, ", ") + ")"
-
-// ── a language ────────────────────────────────────────────────────────────
-
-// `sep` is how the language writes a name that belongs to a type, and it is
-// here rather than in the lexer spec or the grammar because neither of those
-// carries it: it is what `tags` and `outline` put between `Shape` and `Area`.
-type Language = { lex: lex.Spec, grammar: parser.Compiled, sep: String }
-
-fn almide_lang() -> Language = Language { lex: lang_almide.spec(), grammar: parser.compile(lang_almide.almide()), sep: "." }
-fn go_lang() -> Language = Language { lex: lang_go.spec(), grammar: parser.compile(lang_go.go()), sep: "." }
-fn rust_lang() -> Language = Language { lex: lang_rust.spec(), grammar: parser.compile(lang_rust.rust()), sep: "::" }
-
-// per language
-fn language_of(path: String) -> Result[Language, String] =
-  if string.ends_with(path, ".go") then ok(go_lang())
-  else if string.ends_with(path, ".rs") then ok(rust_lang())
-  else if string.ends_with(path, ".almd") then ok(almide_lang())
-  else err(unknown_ext(path))
-
-// Lexing alone needs no grammar, and compiling one takes about half a
-// millisecond, so `tokens` does not pay for one.
-// per language
-fn spec_of(path: String) -> Result[lex.Spec, String] =
-  if string.ends_with(path, ".go") then ok(lang_go.spec())
-  else if string.ends_with(path, ".rs") then ok(lang_rust.spec())
-  else if string.ends_with(path, ".almd") then ok(lang_almide.spec())
-  else err(unknown_ext(path))
-
-fn tokens_for(path: String, src: String) -> Result[List[tree.Token], String] =
-  lex.tokenize(src, spec_of(path)!) |> result.map_err((e) => lex_error(path, e))
-
-// ── every language this build knows ───────────────────────────────────────
-//
-// Compiling is per grammar, not per file, so a tool that reads a whole tree
-// builds this once and hands the same `Language` to every file in it.
-
-type Engines = { almd: Language, go: Language, rs: Language }
-
-fn engines() -> Engines = Engines { almd: almide_lang(), go: go_lang(), rs: rust_lang() }
-
-// A grammar with no rules, so a language none of the files are written in
-// costs nothing to have a field for.
-fn no_grammar() -> parser.Grammar = parser.Grammar { start: "", rules: [:] }
-
+fn compile(d: package_api.Definition) -> Language = {
+  let make_lexer = d.lexer
+  let make_grammar = d.grammar
+  Language { definition: d, tokenize: make_lexer(), grammar: parser.compile(make_grammar()), sep: d.sep }
+}
+fn language_of(path: String) -> Result[Language, String] = ok(compile(registry.resolve(path)!))
+fn tokens_for(path: String, src: String) -> Result[List[tree.Token], String] = {
+  let d = registry.resolve(path)!
+  let prepare = d.lexer
+  let scan = prepare()
+  scan(src, false) |> result.map_err((e) => lex_error(path, e))
+}
+fn engines() -> Engines = Engines { loaded: list.map(registry.packages(), (d) => compile(d)) }
 fn engines_for(paths: List[String]) -> Engines = Engines {
-  almd: if list.any(paths, (p) => string.ends_with(p, ".almd")) then almide_lang()
-        else Language { lex: lang_almide.spec(), grammar: parser.compile(no_grammar()), sep: "." },
-  go: if list.any(paths, (p) => string.ends_with(p, ".go")) then go_lang()
-      else Language { lex: lang_go.spec(), grammar: parser.compile(no_grammar()), sep: "." },
-  rs: if list.any(paths, (p) => string.ends_with(p, ".rs")) then rust_lang()
-      else Language { lex: lang_rust.spec(), grammar: parser.compile(no_grammar()), sep: "::" },
+  loaded: list.filter(registry.packages(), (d) => list.any(paths, (path) => list.any(d.extensions, (ext) => string.ends_with(path, ext))))
+    |> list.map((d) => compile(d))
+}
+fn loaded_for(e: Engines, path: String) -> Result[Language, String] = {
+  let found = list.filter(e.loaded, (l) => list.any(l.definition.extensions, (ext) => string.ends_with(path, ext)))
+  guard list.len(found) <= 1 else err(path + ": ambiguous language packages")
+  list.first(found) |> option.to_result(unknown_ext(path))
+}
+fn tokenize(l: Language, src: String, recover: Bool) -> Result[List[tree.Token], lex.LexError] = {
+  let scan = l.tokenize
+  scan(src, recover)
 }
 
 // ── reading a file ────────────────────────────────────────────────────────
@@ -112,28 +51,31 @@ fn engines_for(paths: List[String]) -> Engines = Engines {
 // strict answer and nothing else.
 // It carries `sep` so a reader that has a Reading needs nothing else to name a
 // method with its type.
-type Reading = { parsed: parser.Parsed, error: Option[String], errors: Int, sep: String }
+type Reading = { parsed: parser.Parsed, error: Option[String], errors: Int, sep: String, language: String, symbols: package_api.SymbolRules }
 
-fn recovered(c: parser.Compiled, toks: List[tree.Token], msg: String, sep: String) -> Result[Reading, String] =
+fn recovered(c: parser.Compiled, toks: List[tree.Token], msg: String, l: Language) -> Result[Reading, String] =
   match parser.parse_recovering(c, toks) {
-    ok(p) => ok(Reading { parsed: p, error: some(msg), errors: parser.error_nodes(p.root), sep: sep }),
+    ok(p) => ok(Reading { parsed: p, error: some(msg), errors: parser.error_nodes(p.root), sep: l.sep, language: l.definition.id, symbols: l.definition.symbols }),
     err(_) => err(msg),
   }
 
 fn read_lang(l: Language, path: String, src: String) -> Result[Reading, String] =
-  match lex.tokenize(src, l.lex) {
+  match tokenize(l, src, false) {
     // it lexes; the parser decides whether it also parses
     ok(toks) => match parser.parse_with(l.grammar, toks) {
-      ok(p) => ok(Reading { parsed: p, error: none, errors: 0, sep: l.sep }),
-      err(f) => recovered(l.grammar, toks, path + ":" + parser.format_failure(f), l.sep),
+      ok(p) => ok(Reading { parsed: p, error: none, errors: 0, sep: l.sep, language: l.definition.id, symbols: l.definition.symbols }),
+      err(f) => recovered(l.grammar, toks, path + ":" + parser.format_failure(f), l),
     },
     // it does not even lex, which is the ordinary state of a half-typed
     // string: lex again turning what it cannot read into `error` tokens
-    err(e) => recovered(l.grammar, lex.tokenize_recovering(src, l.lex), lex_error(path, e), l.sep),
+    err(e) => {
+      let toks = tokenize(l, src, true) |> result.map_err((failure) => lex_error(path, failure))!
+      recovered(l.grammar, toks, lex_error(path, e), l)
+    },
   }
 
 fn parse_lang(l: Language, path: String, src: String) -> Result[parser.Parsed, String] = {
-  let toks = lex.tokenize(src, l.lex) |> result.map_err((e) => lex_error(path, e))!
+  let toks = tokenize(l, src, false) |> result.map_err((e) => lex_error(path, e))!
   parser.parse_with(l.grammar, toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
 }
 
@@ -141,7 +83,8 @@ fn parse_lang(l: Language, path: String, src: String) -> Result[parser.Parsed, S
 // tree. `check` is what an agent runs on every write, and it never looks at
 // one.
 fn verify_lang(l: Language, path: String, src: String) -> Result[Unit, String] = {
-  let toks = lex.tokenize(src, l.lex) |> result.map_err((e) => lex_error(path, e))!
+  guard list.contains(l.definition.capabilities, "check") else err(path + ": language package does not provide check")
+  let toks = tokenize(l, src, false) |> result.map_err((e) => lex_error(path, e))!
   parser.verify(l.grammar, toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
 }
 
@@ -150,24 +93,7 @@ fn read_source(path: String, src: String) -> Result[Reading, String] = read_lang
 fn parse_source(path: String, src: String) -> Result[parser.Parsed, String] = parse_lang(language_of(path)!, path, src)
 fn verify_source(path: String, src: String) -> Result[Unit, String] = verify_lang(language_of(path)!, path, src)
 
-// Many files, against grammars compiled once.
-// per language
-fn read_with(e: Engines, path: String, src: String) -> Result[Reading, String] =
-  if string.ends_with(path, ".go") then read_lang(e.go, path, src)
-  else if string.ends_with(path, ".rs") then read_lang(e.rs, path, src)
-  else if string.ends_with(path, ".almd") then read_lang(e.almd, path, src)
-  else err(unknown_ext(path))
-
-// per language
-fn parse_with(e: Engines, path: String, src: String) -> Result[parser.Parsed, String] =
-  if string.ends_with(path, ".go") then parse_lang(e.go, path, src)
-  else if string.ends_with(path, ".rs") then parse_lang(e.rs, path, src)
-  else if string.ends_with(path, ".almd") then parse_lang(e.almd, path, src)
-  else err(unknown_ext(path))
-
-// per language
-fn verify_with(e: Engines, path: String, src: String) -> Result[Unit, String] =
-  if string.ends_with(path, ".go") then verify_lang(e.go, path, src)
-  else if string.ends_with(path, ".rs") then verify_lang(e.rs, path, src)
-  else if string.ends_with(path, ".almd") then verify_lang(e.almd, path, src)
-  else err(unknown_ext(path))
+// Resolve cached engines without language-specific fields or dispatch branches.
+fn read_with(e: Engines, path: String, src: String) -> Result[Reading, String] = read_lang(loaded_for(e, path)!, path, src)
+fn parse_with(e: Engines, path: String, src: String) -> Result[parser.Parsed, String] = parse_lang(loaded_for(e, path)!, path, src)
+fn verify_with(e: Engines, path: String, src: String) -> Result[Unit, String] = verify_lang(loaded_for(e, path)!, path, src)

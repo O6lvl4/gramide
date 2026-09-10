@@ -6,3 +6,4 @@ compiler="${ALMIDE_BIN:-almide}"
 "$compiler" build
 python3 ci/smoke.py
 python3 ci/symbols.py
+python3 ci/packages.py

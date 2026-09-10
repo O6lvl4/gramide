@@ -72,7 +72,7 @@ the largest file, a 116k-line generated Go source, takes 7.6 s alone.
 source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶ check / outline / parse
 ```
 
-- **`src/lex.almd`** — one lexer over bytes for every language. A language hands it a
+- **`src/lex.almd`** — a reusable lexer over bytes for the bundled languages. A language hands it a
   `Spec`: keywords, operators, comment markers, what a newline means, and a named
   family for the two things a table cannot describe, how numbers are written and how
   string literals end. Go's lexing is 32 lines of that spec.
@@ -82,7 +82,7 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
   operators are `Left(kind, operand, op)` and fold to the left after matching. The
   parser remembers the farthest token anything failed at and what was expected there,
   which is the error `check` prints.
-- **`src/lang_almide.almd`**, **`src/lang_go.almd`**, **`src/lang_rust.almd`** — a language each: its lexer spec
+- **`src/packages/gramide_almide.almd`**, **`src/packages/gramide_go.almd`**, **`src/packages/gramide_rust.almd`** — a language each: its lexer spec
   and its grammar, both as values, in one file. The Go one builds its expression ladder
   twice from one function, with and without a trailing composite literal, which is how
   `if x == T{…} {` is kept unambiguous.
@@ -104,7 +104,7 @@ to 7.6 s).
 
 ```
 almide build            # → ./gramide
-almide test             # 22 tests across the nine modules
+almide test             # includes language-package contract tests
 ```
 
 Requires Almide 0.61 or later.
@@ -115,3 +115,15 @@ MIT or Apache-2.0, at your option.
 
 The [structured symbol contract](docs/symbols.md) connects gramide to source readers
 such as hew, with independent range comparisons against the Go parser.
+
+## Language packages
+
+`gramide languages` returns versioned JSON describing registered packages, file
+extensions and capabilities. The bundled `gramide-almide`, `gramide-go` and
+`gramide-rust` modules each own their lexer factory, grammar and symbol rules.
+The host loads only packages needed for the requested files. A package may supply
+a custom lexer for indentation-sensitive syntax.
+
+These are statically composed modules in this repository; separate package
+installation and dynamic loading are not implemented. Python is not yet a
+registered language. See [the package contract and Python design checkpoint](docs/language-packages.md).
