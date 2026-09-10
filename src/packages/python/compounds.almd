@@ -15,7 +15,7 @@ fn handler(star: Bool) -> parser.Rule = wrap("handler", seq([
   lit(":"), r("suite")
 ]))
 fn rules() -> List[(String, parser.Rule)] = [
-  ("statement", alt([r("compound_stmt"), r("simple_stmts")])),
+  ("statement", parser.recover_lines(alt([r("compound_stmt"), r("simple_stmts")]))),
   ("suite", wrap("block", alt([
     seq([tok("newline"), tok("indent"), more(r("statement")), tok("dedent")]),
     r("simple_stmts")

@@ -16,3 +16,4 @@ python3 ci/python_lexer.py
 python3 ci/python_expressions.py
 python3 ci/python_statements.py
 python3 ci/python_symbols.py
+python3 ci/python_recovery.py
