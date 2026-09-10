@@ -316,3 +316,31 @@ iteration variable or appearing in an iterable) are not checked by `ast.parse`
 and remain pending contextual validation. Lambdas, yield/await, interpolation
 syntax, statements, declarations, escape validation, recovery and hew integration
 remain unfinished. Python stays unregistered.
+
+## Python implementation progress: lambda, yield and await
+
+`lambdas.almd` follows the lambda parameter rules in the matching CPython v3.14.4
+reference. It preserves positional-only parameters, ordinary parameters,
+keyword-only parameters, defaults, `*args` and `**kwargs`. Defaults before `/`
+continue to constrain ordinary parameters after `/`; keyword-only parameters
+may independently have or omit defaults. Parameters use repeated groups rather
+than recursion per parameter.
+
+Expression rules also handle `await` at its primary-expression precedence,
+parenthesized `yield`, `yield from`, and yielded tuples/unpacking. Lambda bodies
+retain their low precedence, including nested lambdas and conditional bodies.
+
+The oracle enumerates all six lambda parameter categories through four positions
+(1,554 combinations) and includes longer mixed signatures, nested defaults,
+trailing commas and invalid annotations/ordering. All binary/comparison operator
+fixtures are combined with `await` on either side. The cumulative corpus matches
+**1,729** AST structures and rejects **2,454** malformed expressions.
+[Evidence](evidence/python-lambda-yield-await.json) records the corpus hash.
+Lambda comparison includes parameter categories and default associations, not
+just acceptance.
+
+These are grammar/AST checks. Restrictions on `await` or `yield` outside an
+appropriate function, duplicate parameter names and other compiler-context
+checks remain pending. Interpolated/concatenated string syntax, escape validation,
+statements, declarations, recovery and hew integration are still unfinished;
+Python remains unregistered.
