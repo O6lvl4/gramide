@@ -24,10 +24,11 @@ python3 ci/python_isolated_errors.py
 python3 ci/recovered_symbols.py
 python3 ci/recovery_comparison.py
 
-# A ratchet, not a target: `parse_rule` is the worst function in any of these repositories.
-# It is only ever allowed to go down. Raising it needs a reason written beside it.
+# A per-file ratchet, not a target: `parse_rule` is the worst function in any of these repositories.
+# Each file is held where it stands, so a clean one cannot rot up to the worst
+# one. Numbers only ever fall; --write-baseline records a fall.
 if command -v codopsy-almd >/dev/null; then
-  codopsy-almd --quiet --max 74 src/
+  codopsy-almd --quiet --baseline .codopsy-almd.json src/
 else
   echo "codopsy-almd not on PATH: structural check skipped (almide install github.com/O6lvl4/codopsy-almd)"
 fi
