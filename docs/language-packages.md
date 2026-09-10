@@ -210,3 +210,28 @@ or format/conversion semantics. Escape validation, grammar and invalid-syntax
 corpora, recovery, NFKC name identity, source encoding handling, hew integration
 and comparative performance/memory measurements remain unfinished. Python remains
 unregistered until its capability contracts are demonstrated.
+
+## Python implementation progress: expression precedence
+
+`src/packages/python/expressions.almd` supplies reusable expression rules plus a
+standalone evaluation entry for testing. It implements arithmetic/matrix/bitwise
+operators, Python's asymmetric unary/power precedence, boolean operations,
+comparison chains, right-associative conditional expressions, grouping, and
+simple call/attribute/subscript postfixes. Hard keywords are excluded from names;
+soft keywords remain usable as identifiers. The rules follow the expression
+sections of the pinned CPython `Grammar/python.gram`, targeting Python 3.14.
+
+`ci/python_expressions.py` compares 648 normalized expression trees with CPython
+ASTs. It covers all ordered pairs of the selected binary/boolean/comparison
+operators, explicit associativity/grouping cases, conditionals and basic postfix
+chains. Boolean AST lists are normalized to their equivalent left-fold structure;
+comparison chains retain their dedicated chain representation. No expression is
+evaluated. Another 47 malformed/keyword expressions must be rejected by both
+parsers. [Evidence](evidence/python-expressions.json) records the corpus hash and
+scope. This establishes more than acceptance: the tested operators bind to the
+same operands as the reference parser.
+
+This is not the complete expression grammar. Containers, comprehensions, slices,
+lambdas, assignment/yield/await forms, full call arguments and interpolation grammar
+still require implementation and oracle coverage. Statements, declarations, escape
+validation, recovery and hew integration remain unfinished; Python stays unregistered.
