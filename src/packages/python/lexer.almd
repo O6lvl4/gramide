@@ -1,0 +1,96 @@
+// UTF-8 Python source -> logical tokens. Grammar and recovery are separate.
+import self.tree
+import self.lex
+import self.packages.python.layout
+import self.packages.python.strings
+import self.packages.python.numbers
+import self.packages.python.identifiers
+
+type Operator = { text: String, data: Bytes }
+fn operators() -> List[Operator] = list.map([
+  "**=", "//=", ">>=", "<<=", "...", ":=", "**", "//", "<<", ">>", "<=", ">=", "==", "!=", "->",
+  "+=", "-=", "*=", "/=", "%=", "@=", "&=", "|=", "^=",
+  "+", "-", "*", "/", "%", "@", "<", ">", "=", "&", "|", "^", "~", ":", ".", ",", ";", "(", ")", "[", "]", "{", "}"
+], (s) => Operator { text: s, data: bytes.from_string(s) })
+fn matches(source: Bytes, at: Int, pattern: Bytes) -> Bool = {
+  var i = 0
+  var same = true
+  while i < bytes.len(pattern) and same {
+    same = bytes.get_or(source, at + i, -1) == bytes.get_or(pattern, i, -2)
+    i = i + 1
+  }
+  same
+}
+fn make(source: Bytes, kind: String, start: Int, end: Int, line: Int, line_start: Int) -> tree.Token =
+  tree.Token { kind: kind, text: bytes.to_string_lossy(bytes.slice(source, start, end)), start: start, end: end, line: line, col: start - line_start + 1 }
+fn newline_end(source: Bytes, at: Int) -> Int = at + (if bytes.get_or(source, at, -1) == 13 and bytes.get_or(source, at + 1, -1) == 10 then 2 else 1)
+
+fn physical(source: String) -> Result[List[tree.Token], lex.LexError] = {
+  guard not string.contains(source, "\u{0000}") else err(lex.LexError { line: 1, col: 1, message: "source code cannot contain null bytes" })
+  let buffer = bytes.from_string(source)
+  let classes = identifiers.prepare()
+  let ops = operators()
+  var tokens: List[tree.Token] = []
+  var i = 0
+  var line = 1
+  var line_start = 0
+  while i < bytes.len(buffer) {
+    let b = bytes.get_or(buffer, i, -1)
+    let start = i
+    let first_line = line
+    let first_line_start = line_start
+    let error = lex.LexError { line: line, col: i - line_start + 1, message: "unexpected Python character" }
+    var kind = ""
+    if b == 32 or b == 9 or b == 12 then i = i + 1
+    else if b == 10 or b == 13 then { kind = "newline"; i = newline_end(buffer, i) }
+    else if b == 35 then {
+      kind = "comment"
+      while i < bytes.len(buffer) and not list.contains([10, 13], bytes.get_or(buffer, i, -1)) { i = i + 1 }
+    }
+    else if b == 92 then {
+      guard list.contains([10, 13], bytes.get_or(buffer, i + 1, -1)) else err(lex.LexError { ...error, message: "unexpected character after line continuation" })
+      kind = "continuation"
+      i = newline_end(buffer, i + 1)
+    }
+    else if option.is_some(strings.opening(buffer, i)) then {
+      kind = "string"
+      i = strings.scan(buffer, i, line, i - line_start + 1)!
+    }
+    else if numbers.starts(buffer, i) then {
+      kind = "number"
+      i = numbers.scan(buffer, i, line, i - line_start + 1)!
+    }
+    else if identifiers.ascii_start(b) or b >= 128 then {
+      kind = "identifier"
+      i = identifiers.scan(classes, buffer, i, line, i - line_start + 1)!
+      let name = string.to_lower(bytes.to_string_lossy(bytes.slice(buffer, start, i)))
+      guard not (list.contains(["f", "fr", "rf", "t", "tr", "rt"], name) and strings.quote(bytes.get_or(buffer, i, -1))) else err(lex.LexError { ...error, message: "interpolated Python strings are not implemented yet" })
+    }
+    else {
+      let op = list.find(ops, (op) => matches(buffer, i, op.data)) |> option.to_result(error)!
+      kind = "punct"
+      i = i + bytes.len(op.data)
+    }
+    if kind != "" then list.push(tokens, make(buffer, kind, start, i, first_line, first_line_start)) else ()
+    // Count physical lines once, including those inside multiline strings.
+    var at = start
+    while at < i {
+      if list.contains([10, 13], bytes.get_or(buffer, at, -1)) then {
+        at = newline_end(buffer, at)
+        line = line + 1
+        line_start = at
+      } else at = at + 1
+    }
+  }
+  list.push(tokens, make(buffer, "eof", i, i, line, line_start))
+  ok(tokens)
+}
+fn scan_source(source: String) -> Result[List[tree.Token], lex.LexError] = layout.apply(source, physical(source)!)
+
+test "Python lexer joins lines and does not invent code inside strings" {
+  let ts = scan_source("if True:\n    日本語 = (1 +\n        2)\n    text = \"\"\"\nnot code\n\"\"\"\n")!
+  assert_eq(list.len(list.filter(ts, (t) => t.kind == "indent")), 1)
+  assert_eq(list.len(list.filter(ts, (t) => t.kind == "newline")), 3)
+  assert_eq(list.len(list.filter(ts, (t) => t.kind == "string")), 1)
+  assert(result.is_err(scan_source("x = f\"{value}\"\n")))
+}
