@@ -312,12 +312,13 @@ fn rollback(mut out: List[tree.Node], mark: Int) -> Unit = {
 
 // Move everything appended since `mark` into a list of its own, in order.
 // Two pops and two pushes per node, no clone: `list.reverse` would copy.
+// Exact drain lengths avoid growth reallocations and spare capacity in kids.
 fn take_from(mut out: List[tree.Node], mark: Int) -> List[tree.Node] = {
-  var rev: List[tree.Node] = []
+  var rev: List[tree.Node] = list.with_capacity(list.len(out) - mark)
   while list.len(out) > mark {
     match list.pop(out) { some(n) => list.push(rev, n), none => () }
   }
-  var fwd: List[tree.Node] = []
+  var fwd: List[tree.Node] = list.with_capacity(list.len(rev))
   while list.len(rev) > 0 {
     match list.pop(rev) { some(n) => list.push(fwd, n), none => () }
   }
@@ -326,7 +327,7 @@ fn take_from(mut out: List[tree.Node], mark: Int) -> List[tree.Node] = {
 
 // Name every node appended since `mark`, in place.
 fn label_from(mut out: List[tree.Node], mark: Int, name: String) -> Unit = {
-  var rev: List[tree.Node] = []
+  var rev: List[tree.Node] = list.with_capacity(list.len(out) - mark)
   while list.len(out) > mark {
     var n = match list.pop(out) { some(x) => x, none => tree.leaf("", 0) }
     tree.set_field(n, name)
@@ -342,7 +343,7 @@ fn label_from(mut out: List[tree.Node], mark: Int, name: String) -> Unit = {
 // Only the end of the list can be popped, so naming them in one pass is
 // also the only way to name a middle range without copying the list.
 fn fold_kids(mut out: List[tree.Node], mark: Int, opmark: Int, rmark: Int) -> List[tree.Node] = {
-  var rev: List[tree.Node] = []
+  var rev: List[tree.Node] = list.with_capacity(list.len(out) - mark)
   var idx = list.len(out)
   while idx > mark {
     var n = match list.pop(out) { some(x) => x, none => tree.leaf("", 0) }
@@ -350,7 +351,7 @@ fn fold_kids(mut out: List[tree.Node], mark: Int, opmark: Int, rmark: Int) -> Li
     tree.set_field(n, if idx >= rmark then "right" else if idx >= opmark then "operator" else "left")
     list.push(rev, n)
   }
-  var fwd: List[tree.Node] = []
+  var fwd: List[tree.Node] = list.with_capacity(list.len(rev))
   while list.len(rev) > 0 {
     match list.pop(rev) { some(n) => list.push(fwd, n), none => () }
   }

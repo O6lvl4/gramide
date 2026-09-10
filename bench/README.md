@@ -126,3 +126,23 @@ hew integration passed.
 small-file startup samples and RSS vary, and memory does not improve uniformly.
 All raw samples are retained. Tree-sitter remains ahead; this is a reduction in
 structured-read overhead, not a general grammar or incremental-parser victory.
+
+## Exact capacity for parser node drains
+
+Wrapping rules, field labels and left folds already know how many nodes they
+must move. Their temporary vectors now reserve that exact count, including the
+forward vector retained as a node's children. The move-only pop/push algorithm
+and ordering remain unchanged. This avoids growth reallocations and spare
+capacity in the resulting tree; it does not introduce a copy-based reversal.
+
+The [Python paired run](../docs/evidence/python-tree-capacity.json) preserves
+all 15 CPython comparisons. Typing.py changes from 78.25 to 73.00 ms and from
+19.94 MB peak RSS to 15.27 MB. Inspect.py changes from 79.19 to 73.11 ms and from
+20.23 MB to 15.43/17.27 MB in the two RSS samples. Small-input timing and RSS
+still vary; keyword.py's median increased by about 0.02 ms. Tree-sitter remains
+faster and smaller throughout this corpus.
+
+A separate [Go comparison](../docs/evidence/go-tree-capacity.json) retains
+identical ranges at 100, 400 and 800 generated functions. Its timings are
+roughly unchanged (800 functions: 21.03 to 21.08 ms); this is not a claimed Go
+speed win. All raw samples and binary/source hashes are retained.
