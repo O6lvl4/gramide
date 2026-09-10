@@ -287,13 +287,13 @@ test "a function written inside a method body is not a method of the type" {
 // structured reads quadratic in the size of the source.
 // Stable machine-readable declaration ranges: byte offsets are zero-based,
 // end-exclusive; line ranges are one-based and inclusive.
-fn symbol_rows_in(n: tree.Node, toks: List[tree.Token], scope: String, namespace: String, sep: String, rules: package_api.SymbolRules) -> List[Value] = {
+fn symbol_rows_in(n: tree.Node, start: Int, toks: List[tree.Token], scope: String, namespace: String, sep: String, rules: package_api.SymbolRules) -> List[Value] = {
   var out: List[Value] = []
   let kind = decl_kind(n.kind, rules)
   let name = if kind == "" then "" else name_of(n, toks)
   if name != "" then {
     let own = owner_for(n, scope, toks, rules)
-    match (list.get(toks, n.start), list.get(toks, code_end(n, toks) - 1)) {
+    match (list.get(toks, start), list.get(toks, code_end(n, toks) - 1)) {
       (some(first), some(last)) => list.push(out, value.object([
         ("kind", value.str(if own == "" then kind else "method")),
         ("name", value.str(flat_name(n, name, own, namespace, toks, sep, rules))),
@@ -306,16 +306,21 @@ fn symbol_rows_in(n: tree.Node, toks: List[tree.Token], scope: String, namespace
   } else ()
   let inner = scope_under(n, scope, toks, rules)
   let inner_namespace = namespace_under(n, namespace, toks, sep, rules)
+  let envelope = list.contains(rules.envelopes, n.kind) or (list.contains(rules.unnamed_envelopes, n.kind) and name == "")
   for k in n.kids {
-    let envelope = list.contains(rules.envelopes, n.kind) or (list.contains(rules.unnamed_envelopes, n.kind) and name == "")
-    let decl = if envelope and decl_kind(k.kind, rules) != "" then tree.Node { ...k, start: n.start } else k
-    for sym in symbol_rows_in(decl, toks, inner, inner_namespace, sep, rules) { list.push(out, sym) }
+    // An envelope changes only the reported start, not the subtree. Keep it
+    // separate so the native backend borrows children instead of cloning them.
+    // A leaf cannot contain the name field required for a declaration.
+    if not list.is_empty(k.kids) then {
+      let first = if envelope and decl_kind(k.kind, rules) != "" then start else k.start
+      for sym in symbol_rows_in(k, first, toks, inner, inner_namespace, sep, rules) { list.push(out, sym) }
+    } else ()
   }
   out
 }
 
 fn symbol_rows(n: tree.Node, toks: List[tree.Token], scope: String, sep: String, rules: package_api.SymbolRules) -> List[Value] =
-  symbol_rows_in(n, toks, scope, "", sep, rules)
+  symbol_rows_in(n, n.start, toks, scope, "", sep, rules)
 
 test "flat Rust names preserve nested modules and trait display without changing bases" {
   let src = "mod outer { mod inner { impl PartialEq<S> for S { fn eq(&self) {} } fn free() {} } }"

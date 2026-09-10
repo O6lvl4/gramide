@@ -6,12 +6,14 @@ from python_symbols import expected
 ap=argparse.ArgumentParser()
 ap.add_argument('--gramide',type=Path,required=True)
 ap.add_argument('--tree-sitter',type=Path,required=True)
+ap.add_argument('--before',type=Path,help='optional previous gramide binary for paired comparison')
 ap.add_argument('--references',type=Path,required=True)
 ap.add_argument('--output',type=Path,required=True)
 ap.add_argument('--samples',type=int,default=5)
 args=ap.parse_args()
 assert args.samples>0
 bins={'gramide':args.gramide.resolve(),'tree_sitter':args.tree_sitter.resolve()}
+if args.before:bins['gramide_before']=args.before.resolve()
 report=dict(platform=platform.platform(),python=platform.python_version(),
  mode='fresh process, file read + full parse + JSON declaration ranges; startup included; no incremental reuse',
  scope='generated functions and complete stdlib files; CPython AST ranges independently required before performance comparison; no general ranking',
@@ -20,7 +22,7 @@ report=dict(platform=platform.platform(),python=platform.python_version(),
  reference_commits={name:subprocess.check_output(['git','rev-parse','HEAD'],cwd=args.references/name,text=True).strip() for name in ['tree-sitter','tree-sitter-python']},cases=[])
 
 def invoke(label,path,memory=False):
- command=[str(bins[label])]+(['symbols'] if label=='gramide' else [])+[str(path)]
+ command=[str(bins[label])]+(['symbols'] if label!='tree_sitter' else [])+[str(path)]
  if memory:command=['/usr/bin/time','-l' if sys.platform=='darwin' else '-v']+command
  start=time.perf_counter()
  try:result=subprocess.run(command,capture_output=True,text=True,timeout=30)
@@ -28,7 +30,7 @@ def invoke(label,path,memory=False):
  elapsed=time.perf_counter()-start
  if result.returncode:return dict(error=f'exit {result.returncode}',stderr=result.stderr[:1200])
  payload=json.loads(result.stdout)
- rows=payload['symbols'] if label=='gramide' else payload
+ rows=payload['symbols'] if label!='tree_sitter' else payload
  rows=[{k:s[k] for k in ['name','kind','owner','start','end','start_byte','end_byte']} for s in rows]
  answer=dict(seconds=elapsed,rows=rows)
  if memory:
