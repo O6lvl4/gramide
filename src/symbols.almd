@@ -38,7 +38,8 @@ fn collect(n: tree.Node, toks: List[tree.Token], scope: String, sep: String) -> 
   } else ()
   let inner = tags.scope_under(n, scope, toks)
   for k in n.kids {
-    let decl = if n.kind == "item_envelope" and tags.decl_kind(k.kind) != "" then tree.Node { ...k, start: n.start } else k
+    let envelope = n.kind == "item_envelope" or (sep == "::" and n.kind == "type_declaration" and name == "")
+    let decl = if envelope and tags.decl_kind(k.kind) != "" then tree.Node { ...k, start: n.start } else k
     for sym in collect(decl, toks, inner, sep) { list.push(out, sym) }
   }
   out

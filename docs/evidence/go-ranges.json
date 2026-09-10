@@ -45,7 +45,7 @@
   "symbols": 551,
   "reference_commit": "e51216de8e26247ee0f3d2cfa576233b0d29f542",
   "go_version": "go version go1.26.1 darwin/arm64",
-  "binary_sha256": "a3ad20dc5842817b0a28ebbef9e08255b18554d16d82b17ffcf3f5a0dbe67b12",
+  "binary_sha256": "b86a22df5c953b010e5a67b88087722439011247dc7401db5fb630a3e6be1e86",
   "input_sha256": {
     "src/go/ast/ast.go": "3dfde677a97a1f6435e9befbc8523a975b34d2d7ee79e93151778c17cd596b41",
     "src/go/ast/ast_test.go": "4d2f048e2c30d9e4785cc794de5b8f0d098d8a1b342ad595295e194ca834c8a0",

@@ -35,6 +35,9 @@ func Other() {
  assert (method['owner'],method['start'],method['end'])==('Box',3,9),method
  assert rust.read_bytes()[method['start_byte']:method['end_byte']].startswith(b'#[inline]')
  assert not any('phantom' in s['name'] for s in syms)
+ rust.write_text('#[repr(C)]\npub struct\nBox { x: i32 }\n')
+ box=next(s for s in symbols(rust) if s['name']=='Box')
+ assert (box['start'],box['end'],box['start_byte'])==(1,3,0),box
  almd=root/'ranges.almd';almd.write_text('fn real() -> Int = {\n  1\n}\n')
  assert [(s['name'],s['start'],s['end']) for s in symbols(almd)]==[('real',1,3)]
  almd.write_text('fn real() -> String = """\nhello\n"""\n')
