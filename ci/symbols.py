@@ -45,4 +45,14 @@ func Other() {
  broken=root/'broken.rs';broken.write_text('fn real() {}\nfn broken(\n')
  p=subprocess.run([str(BIN),'symbols',str(broken)],capture_output=True,text=True)
  assert p.returncode!=0 and not p.stdout,(p.returncode,p.stdout,p.stderr)
+ # A per-node copy of the complete token stream made this path quadratic.
+ # Keep a generous process deadline: the fixed walk completes in well under a
+ # second locally, while the old walk takes tens of seconds on this input.
+ large=root/'many.go'
+ large.write_text('package sample\n'+''.join('func F%d(x int) int { return x + %d }\n'%(i,i) for i in range(2000)))
+ result=subprocess.run([str(BIN),'symbols',str(large)],capture_output=True,text=True,check=True,timeout=15)
+ actual=json.loads(result.stdout)['symbols']
+ expected=json.loads(subprocess.check_output([str(oracle),str(large)],text=True))
+ assert len(actual)==2000
+ assert [{k:s[k] for k in expected[0]} for s in actual]==expected
 print('Structured ranges passed: Go parser oracle, Rust ownership/raw strings, Almide, invalid input')

@@ -433,3 +433,34 @@ throwing away a syntax tree each time.
    the run of statements after it.
 2. Memoisation of `Ref` results per (rule, position) if a grammar ever needs it; none
    does so far.
+
+## Structured-read scaling checkpoint (2026-09-10)
+
+The new machine-readable `symbols` walk called naming helpers in `tags` for each
+node. On the current native backend, those module boundaries copied the token
+list repeatedly. Four times as many generated functions took about sixteen times
+as long. The text outline already kept its walk beside those helpers. Moving the
+structured walk there too preserves one shared implementation of naming and scope
+rules and pays the module boundary once per document.
+
+Full-process medians, three shuffled samples after warm-up, with identical Go
+function names and byte/line ranges checked before and during measurement:
+
+| Functions | Before | After | tree-sitter C baseline |
+|---|---:|---:|---:|
+| 100 | 88.7 ms | 8.18 ms | 4.38 ms |
+| 400 | 1,321 ms | 18.7 ms | 5.18 ms |
+| 800 | 5,243 ms | 33.7 ms | 7.41 ms |
+
+That removes the quadratic bottleneck and improves this 800-function case about
+155 times. Tree-sitter is still about 4.6 times faster on that case. Its cursor
+walk (`lib/src/tree_cursor.c`) keeps traversal state rather than copying syntax
+subtrees; gramide still has tree allocation and traversal costs to address.
+These numbers say nothing about incremental parsing or general language coverage.
+The gramide JSON contains more fields than the small C baseline. See
+[benchmark instructions and scope](../bench/README.md) and the
+[raw measurements](evidence/symbol-walk-benchmark.json).
+
+An independent Go AST oracle still matches all 551 functions/methods across 38
+reference files. CI now exercises 2,000 generated functions against that oracle
+with a generous 15-second deadline, to catch the former repeated full-stream copy.
