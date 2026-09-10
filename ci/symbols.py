@@ -38,6 +38,17 @@ func Other() {
  rust.write_text('#[repr(C)]\npub struct\nBox { x: i32 }\n')
  box=next(s for s in symbols(rust) if s['name']=='Box')
  assert (box['start'],box['end'],box['start_byte'])==(1,3,0),box
+ rust.write_text('mod outer {\n mod inner {\n  impl fmt::Display for S {\n   fn fmt(&self) {}\n  }\n  fn free() {}\n }\n}\nmod other { fn free() {} }\n')
+ syms=symbols(rust)
+ assert [s['name'] for s in syms]==['outer','outer::inner','fmt::Display for outer::inner::S','outer::inner::S::fmt','outer::inner::free','other','other::free'],syms
+ method=next(s for s in syms if s['kind']=='method')
+ assert method['owner']=='S' and method['start']==4 and method['end']==4,method
+ tags=subprocess.check_output([str(BIN),'tags',str(rust)],text=True)
+ assert 'def impl fmt::Display for outer::inner::S L3-5' in tags,tags
+ assert 'def function outer::inner::free L6-6' in tags and 'def function other::free L9-9' in tags,tags
+ outline=subprocess.check_output([str(BIN),'outline',str(rust)],text=True)
+ assert 'L3-5 impl fmt::Display for S' in outline and 'L4-4 method S::fmt' in outline,outline
+ assert 'L6-6 function free' in outline and 'outer::inner::free' not in outline,outline
  almd=root/'ranges.almd';almd.write_text('fn real() -> Int = {\n  1\n}\n')
  assert [(s['name'],s['start'],s['end']) for s in symbols(almd)]==[('real',1,3)]
  almd.write_text('fn real() -> String = """\nhello\n"""\n')

@@ -41,11 +41,11 @@ fn span_text(n: tree.Node, toks: List[tree.Token]) -> String = {
   s
 }
 
-// `name` is what is printed; `base` is the same name without its type, and is
+// `name` is what is printed; `base` is the original name without type or namespace qualification, and is
 // what a reference can be matched against. A call site says `as_str`, never
 // `Applicability::as_str` — gramide resolves no names — so a repo map has to
 // join the two on the bare name while showing the useful one. For a `ref`, and
-// for anything that belongs to no type, they are equal.
+// for anything that belongs to neither a type nor a namespace, they are equal.
 type Tag = { role: String, kind: String, name: String, base: String, line: Int, end_line: Int }
 
 fn render(t: Tag) -> String =
@@ -66,10 +66,24 @@ fn is_callable(k: String, rules: package_api.SymbolRules) -> Bool = list.contain
 
 fn child(n: tree.Node, field: String) -> Option[tree.Node] = list.find(n.kids, (k) => k.field == field)
 
-fn name_of(n: tree.Node, toks: List[tree.Token]) -> String = match child(n, "name") {
+fn bare_name(n: tree.Node, toks: List[tree.Token]) -> String = match child(n, "name") {
   some(m) => if list.is_empty(m.kids) then leaf_text(m, toks) else span_text(m, toks),
   none => "",
 }
+fn name_of(n: tree.Node, toks: List[tree.Token]) -> String = {
+  let name = bare_name(n, toks)
+  match child(n, "trait") {
+    some(trait_node) => span_text(trait_node, toks) + " for " + name,
+    none => name,
+  }
+}
+fn qualified(prefix: String, name: String, sep: String) -> String = if prefix == "" then name else prefix + sep + name
+fn flat_name(n: tree.Node, name: String, own: String, namespace: String, toks: List[tree.Token], sep: String) -> String = match child(n, "trait") {
+  some(trait_node) => span_text(trait_node, toks) + " for " + qualified(namespace, bare_name(n, toks), sep),
+  none => qualified(namespace, qualified(own, name, sep), sep),
+}
+fn namespace_under(n: tree.Node, namespace: String, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> String =
+  if list.contains(rules.namespaces, n.kind) then qualified(namespace, bare_name(n, toks), sep) else namespace
 
 // The bare name to qualify by. A Rust impl is named by a whole type, and
 // nobody greps for `Vec<u8>::len`, so only the head of it is taken; a type
@@ -106,7 +120,7 @@ fn scope_under(n: tree.Node, owner: String, toks: List[tree.Token], rules: packa
 // The chain is read with one step of memory (what the previous two kids
 // were) rather than by looking ahead, because reading a kid with list.get
 // copies its whole subtree — a look-ahead would copy every subtree twice.
-fn walk(n: tree.Node, toks: List[tree.Token], scope: String, sep: String, rules: package_api.SymbolRules) -> List[Tag] = {
+fn walk(n: tree.Node, toks: List[tree.Token], scope: String, namespace: String, sep: String, rules: package_api.SymbolRules) -> List[Tag] = {
   var out: List[Tag] = []
   let kind = decl_kind(n.kind, rules)
   let name = if kind != "" then name_of(n, toks) else ""
@@ -115,8 +129,8 @@ fn walk(n: tree.Node, toks: List[tree.Token], scope: String, sep: String, rules:
     list.push(out, Tag {
       role: "def",
       kind: if own == "" then kind else "method",
-      name: if own == "" then name else own + sep + name,
-      base: name,
+      name: flat_name(n, name, own, namespace, toks, sep),
+      base: bare_name(n, toks),
       line: start_line(n, toks), end_line: end_line(n, toks) })
   }
   else if n.kind == "type_name" and not list.is_empty(n.kids) then {
@@ -129,6 +143,7 @@ fn walk(n: tree.Node, toks: List[tree.Token], scope: String, sep: String, rules:
   }
   else ()
   let inner = scope_under(n, scope, toks, rules)
+  let inner_namespace = namespace_under(n, namespace, toks, sep, rules)
   var prev_kind = ""          // the kid before this one
   var prev_name = ""          // its leaf text (identifier) or field name (field_access)
   var prev_line = 0
@@ -154,7 +169,7 @@ fn walk(n: tree.Node, toks: List[tree.Token], scope: String, sep: String, rules:
         prev_name = if k.kind == "identifier" then leaf_text(k, toks)
           else if k.kind == "field_access" then (match child(k, "field") { some(m) => leaf_text(m, toks), none => "" })
           else ""
-        for t in walk(k, toks, inner, sep, rules) { list.push(out, t) }
+        for t in walk(k, toks, inner, inner_namespace, sep, rules) { list.push(out, t) }
       },
     }
     i = i + 1
@@ -162,7 +177,7 @@ fn walk(n: tree.Node, toks: List[tree.Token], scope: String, sep: String, rules:
   out
 }
 
-fn of_tree(root: tree.Node, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> List[Tag] = walk(root, toks, "", sep, rules)
+fn of_tree(root: tree.Node, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> List[Tag] = walk(root, toks, "", "", sep, rules)
 
 fn tags(root: tree.Node, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> List[String] =
   list.map(of_tree(root, toks, sep, rules), (t) => render(t))
@@ -223,7 +238,7 @@ test "a Rust method is named with the type it is implemented on" {
     "  L3-3 impl S",
     "    L3-3 method S::new",
     // `impl Display for S` is an impl of S, so its methods are S's
-    "  L4-4 impl S",
+    "  L4-4 impl fmt::Display for S",
     "    L4-4 method S::fmt",
     "  L5-5 type T",
     "    L5-5 method T::go",
@@ -251,7 +266,7 @@ test "a multi-byte character above a name does not shift the name" {
   let src = "//! ≥ and — and §\nimpl salsa::Database for SpineDb {}\n"
   let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
   let p = parser.parse(lang_rust.rust(), toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert_eq(outline(p.root, toks, "::", lang_rust.symbol_rules()), ["L2-2 impl SpineDb"])
+  assert_eq(outline(p.root, toks, "::", lang_rust.symbol_rules()), ["L2-2 impl salsa::Database for SpineDb"])
 }
 
 test "a function written inside a method body is not a method of the type" {
@@ -266,7 +281,7 @@ test "a function written inside a method body is not a method of the type" {
 // structured reads quadratic in the size of the source.
 // Stable machine-readable declaration ranges: byte offsets are zero-based,
 // end-exclusive; line ranges are one-based and inclusive.
-fn symbol_rows(n: tree.Node, toks: List[tree.Token], scope: String, sep: String, rules: package_api.SymbolRules) -> List[Value] = {
+fn symbol_rows_in(n: tree.Node, toks: List[tree.Token], scope: String, namespace: String, sep: String, rules: package_api.SymbolRules) -> List[Value] = {
   var out: List[Value] = []
   let kind = decl_kind(n.kind, rules)
   let name = if kind == "" then "" else name_of(n, toks)
@@ -275,7 +290,7 @@ fn symbol_rows(n: tree.Node, toks: List[tree.Token], scope: String, sep: String,
     match (list.get(toks, n.start), list.get(toks, n.end - 1)) {
       (some(first), some(last)) => list.push(out, value.object([
         ("kind", value.str(if own == "" then kind else "method")),
-        ("name", value.str(if own == "" then name else own + sep + name)),
+        ("name", value.str(flat_name(n, name, own, namespace, toks, sep))),
         ("owner", value.str(own)), ("syntax_kind", value.str(n.kind)),
         ("start", value.int(first.line)), ("end", value.int(end_line(n, toks))),
         ("start_byte", value.int(first.start)), ("end_byte", value.int(last.end))
@@ -284,10 +299,24 @@ fn symbol_rows(n: tree.Node, toks: List[tree.Token], scope: String, sep: String,
     }
   } else ()
   let inner = scope_under(n, scope, toks, rules)
+  let inner_namespace = namespace_under(n, namespace, toks, sep, rules)
   for k in n.kids {
     let envelope = list.contains(rules.envelopes, n.kind) or (list.contains(rules.unnamed_envelopes, n.kind) and name == "")
     let decl = if envelope and decl_kind(k.kind, rules) != "" then tree.Node { ...k, start: n.start } else k
-    for sym in symbol_rows(decl, toks, inner, sep, rules) { list.push(out, sym) }
+    for sym in symbol_rows_in(decl, toks, inner, inner_namespace, sep, rules) { list.push(out, sym) }
   }
   out
+}
+
+fn symbol_rows(n: tree.Node, toks: List[tree.Token], scope: String, sep: String, rules: package_api.SymbolRules) -> List[Value] =
+  symbol_rows_in(n, toks, scope, "", sep, rules)
+
+test "flat Rust names preserve nested modules and trait display without changing bases" {
+  let src = "mod outer { mod inner { impl PartialEq<S> for S { fn eq(&self) {} } fn free() {} } }"
+  let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
+  let p = parser.parse(lang_rust.rust(), toks) |> result.map_err((f) => parser.format_failure(f))!
+  let defs = list.filter(of_tree(p.root, toks, "::", lang_rust.symbol_rules()), (t) => t.role == "def")
+  assert_eq(list.map(defs, (t) => t.name), ["outer", "outer::inner", "PartialEq<S> for outer::inner::S", "outer::inner::S::eq", "outer::inner::free"])
+  assert_eq(list.map(defs, (t) => t.base), ["outer", "inner", "S", "eq", "free"])
+  assert_eq(list.map(defs, (t) => t.kind), ["mod", "mod", "impl", "method", "function"])
 }
