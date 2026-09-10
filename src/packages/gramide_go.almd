@@ -326,7 +326,7 @@ test "numbers, runes, raw strings, operators" {
 
 fn symbol_rules() -> package_api.SymbolRules = package_api.SymbolRules {
   declarations: [("function_declaration", "function"), ("method_declaration", "method"), ("method_signature", "method"), ("type_declaration", "type"), ("type_spec", "type"), ("var_spec", "var"), ("const_spec", "const"), ("field", "field")],
-  scopes: ["type_spec", "type_declaration"], callables: ["function_declaration", "method_declaration", "method_signature"],
+  scopes: ["type_spec", "type_declaration"], namespaces: [], callables: ["function_declaration", "method_declaration", "method_signature"],
   envelopes: [], unnamed_envelopes: []
 }
 

@@ -85,14 +85,22 @@ symbols. `fn as_str` is worth nothing there; `Applicability::as_str` is the answ
 So a function is named with the type that owns it, found one of two ways: the nearest
 enclosing `impl`, `type_spec` or `protocol_declaration` (Rust, and a trait's methods),
 or the `receiver` field (Go, which writes the owner in the signature instead of by
-nesting). A `mod` is deliberately not an owner: a module is a path, not a type, and
-prefixing every function in a file with it would say nothing. Neither is a function
-body, so a helper written inside a method is not a method.
+nesting). A module is a namespace, not a method owner. Outline conveys modules through
+indentation; flat tags and structured symbols carry the module path explicitly,
+such as `outer::inner::S::read` or `outer::inner::free`. The package declares
+namespace node kinds separately from owner scopes. A function body is not a
+method owner, so a helper written inside a method remains a function.
+
+Trait implementations retain both parts of their identity: outline prints
+`impl fmt::Display for S`, while flat output can print
+`impl fmt::Display for outer::S`. Method ownership still comes from `S`, not
+`fmt::Display`. Tag `base` retains the unqualified original name for heuristic
+reference matching; qualification improves display without claiming name resolution.
 
 The separator — `::` or `.` — is the third field of a `Language`, beside the lexer
 spec and the grammar, because neither of those carries it. `src/tags.almd` knows no
-language: it knows the node kinds in `decl_kind`, the fields `name`, `field` and
-`receiver`, and nothing else.
+language: it knows the node kinds in `decl_kind`, the fields `name`, `trait`, `field` and
+`receiver`, and package-provided declaration/owner/namespace rules.
 
 **Offsets are bytes.** A token's `start` and `end` count bytes, because the lexer
 reads bytes. `string.slice` counts characters. Cutting a name out of the source with
@@ -464,3 +472,19 @@ The gramide JSON contains more fields than the small C baseline. See
 An independent Go AST oracle still matches all 551 functions/methods across 38
 reference files. CI now exercises 2,000 generated functions against that oracle
 with a generous 15-second deadline, to catch the former repeated full-stream copy.
+
+
+## Rust trait and module identity regression (#18)
+
+The Rust reference AST (`rustc_ast::ast::Impl`) stores `of_trait` separately from
+`self_ty`; gramide already had the equivalent `trait` and `name` fields. The
+output walkers now preserve that distinction instead of dropping the trait.
+Namespace qualification applies to the implemented type, not to the trait path.
+
+Regression checks cover nested modules, generic and qualified trait names,
+unchanged method ownership and Tag bases, same-named functions in different
+modules, and structured source ranges. The full quality suite and real hew
+integration passed locally. Hew selected `outer::inner::S::fmt`,
+`outer::inner::free` and `other::free` from the corrected structured output.
+The previously reported tree-sitter timing and language-count gaps remain;
+this fix establishes output correctness for the covered cases, not a speed win.

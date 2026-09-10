@@ -9,7 +9,7 @@ type Token = tree.Token
 
 type Tokenizer = (String, Bool) -> Result[List[tree.Token], lex.LexError]
 type SymbolRules = {
-  declarations: List[(String, String)], scopes: List[String], callables: List[String],
+  declarations: List[(String, String)], scopes: List[String], namespaces: List[String], callables: List[String],
   envelopes: List[String], unnamed_envelopes: List[String]
 }
 type Definition = {

@@ -439,7 +439,7 @@ test "a half-typed signature keeps its name" {
 
 fn symbol_rules() -> package_api.SymbolRules = package_api.SymbolRules {
   declarations: [("function_declaration", "function"), ("method_declaration", "method"), ("method_signature", "method"), ("type_declaration", "type"), ("type_spec", "type"), ("let_declaration", "let"), ("variant", "variant"), ("field", "field"), ("impl", "impl"), ("mod", "mod"), ("macro_definition", "macro")],
-  scopes: ["impl", "type_spec", "type_declaration"], callables: ["function_declaration", "method_declaration", "method_signature"],
+  scopes: ["impl", "type_spec", "type_declaration"], namespaces: ["mod"], callables: ["function_declaration", "method_declaration", "method_signature"],
   envelopes: ["item_envelope"], unnamed_envelopes: ["type_declaration"]
 }
 

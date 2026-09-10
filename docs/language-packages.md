@@ -15,11 +15,17 @@ recovery. The shared lexer remains useful but is optional. The host compiles onl
 languages present in a batch and rejects ambiguous extension registrations.
 
 Symbol rules map syntax node kinds to semantic declaration kinds and identify
-scopes, callables and declaration envelopes. Grammars use the shared tree field
-conventions (`name`, `receiver`, `type_name`) consumed by tags and symbols. A new
+scopes, namespace scopes, callables and declaration envelopes. Grammars use the shared tree field
+conventions (`name`, `trait`, `receiver`, `type_name`) consumed by tags and symbols. A new
 syntax needing a new field convention must extend this ABI with tests.
 `src/package_contract_test.almd` exercises a custom lexer, grammar, declaration
 and owner rules without editing the built-in registry.
+
+`SymbolRules.namespaces` identifies declarations whose paths qualify flat tags
+and structured symbols, independently of method-owner `scopes`. Existing static
+package definitions must provide this field (an empty list if unused). Rust uses
+`mod`; outline keeps module nesting through indentation. This source-level
+contract addition does not change the JSON schema version or capability names.
 
 `gramide languages` emits `{ "schema_version": 1, "packages": [...] }`. Each
 entry has `id`, `name`, `version`, `extensions` and `capabilities`. Consumers must
