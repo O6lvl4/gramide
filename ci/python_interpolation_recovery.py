@@ -71,9 +71,11 @@ with tempfile.TemporaryDirectory() as tmp:
         case('def outer():\n def good(): pass\n x = '+family+'"""bad\ndef phantom(): pass\n', ['outer.good'])
     # Two failures exercise checkpoint reset and UTF-8 source offsets.
     case('# 日本語\nx = f"bad\ndef first(): pass\ny = t"bad\ndef second(): pass\n', ['first', 'second'])
-    # An enclosing unmatched bracket remains unsupported; recovery must not
-    # turn a physical newline inside it into a safe statement boundary.
+    # An enclosing unmatched bracket owns the tail; a physical newline
+    # inside it must not become a safe statement boundary.
     path.write_text('def before(): pass\nx = (f"bad\ndef phantom(): pass\n')
     result = run('symbols-recovered', path)
-    assert result.returncode != 0 and not result.stdout, result
+    assert result.returncode == 0, result
+    doc = json.loads(result.stdout)
+    assert not doc['complete'] and [s['name'] for s in doc['symbols']] == ['before'], doc
 print(f'Python interpolation recovery: {count} prefix, quote, newline, frame rollback and containment cases passed')
