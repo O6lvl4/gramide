@@ -65,33 +65,117 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
   }
 }
 
-// `check` and `balance` take any number of files. Both are what a gate runs
-// over a whole tree, and running them in one process compiles each grammar
-// once instead of once per file. One file behaves exactly as before: the
-// verdict on stdout, the reason on stderr, exit 1 if anything failed.
-effect fn run_many(cmd: String, paths: List[String]) -> Unit = {
-  let engines = lang.engines_for(paths)
+// One verdict, and which stream it belongs on. Keeping the two streams in ONE
+// ordered list rather than two buffers is the whole trick: a caller that has
+// merged them with `2>&1` sees exactly the order a sequential run produced.
+type Line = { text: String, is_err: Bool }
+type Chunk = { lines: List[Line], failed: Bool }
+
+// One slice of the file list, answered rather than printed, so that the arms of
+// a `fan` can finish in any order and the output still comes out in list order.
+effect fn check_chunk(cmd: String, paths: List[String], from: Int, to: Int) -> Chunk = {
+  let mine = list.slice(paths, from, to)
+  let engines = lang.engines_for(mine)
+  var lines: List[Line] = []
   var failed = false
-  for p in paths {
+  for p in mine {
     match read(p) {
       err(e) => {
-        eprintln(e)
+        list.push(lines, Line { text: e, is_err: true })
         failed = true
       },
       ok(src) => if cmd == "balance" then match balance.check(src) {
-        none => println(p + ": balanced"),
+        none => list.push(lines, Line { text: p + ": balanced", is_err: false }),
         some(f) => {
-          eprintln(p + ":" + int.to_string(f.line) + ":" + int.to_string(f.col) + ": " + f.message)
+          list.push(lines, Line { text: p + ":" + int.to_string(f.line) + ":" + int.to_string(f.col) + ": " + f.message, is_err: true })
           failed = true
         },
       } else match lang.verify_with(engines, p, src) {
         err(e) => {
-          eprintln(e)
+          list.push(lines, Line { text: e, is_err: true })
           failed = true
         },
-        ok(_) => println(p + ": ok"),
+        ok(_) => list.push(lines, Line { text: p + ": ok", is_err: false }),
       },
     }
+  }
+  Chunk { lines: lines, failed: failed }
+}
+
+// Where to cut the list into `of` slices of roughly equal BYTES. Cutting by
+// file count instead looks right and is not: on Go's tree it put 12.9 MB of
+// 25.5 into one of eight slices, and the slowest slice is the wall time.
+effect fn cut_points(paths: List[String], of: Int) -> List[Int] = {
+  var sizes: List[Int] = []
+  var total = 0
+  for p in paths {
+    let s = fs.file_size(p) ?? 0
+    list.push(sizes, s)
+    total = total + s
+  }
+  var cuts: List[Int] = [0]
+  var acc = 0
+  var target = 1
+  var i = 0
+  while i < list.len(sizes) {
+    acc = acc + (list.get(sizes, i) ?? 0)
+    if target < of and acc * of >= total * target then {
+      list.push(cuts, i + 1)
+      target = target + 1
+    } else ()
+    i = i + 1
+  }
+  while list.len(cuts) <= of { list.push(cuts, list.len(paths)) }
+  cuts
+}
+
+fn cut_at(cuts: List[Int], i: Int) -> Int = list.get(cuts, i) ?? 0
+
+// `check` and `balance` take any number of files. Both are what a gate runs
+// over a whole tree, and running them in one process compiles each grammar
+// once instead of once per file.
+//
+// The files are independent, so eight slices of the list are read and checked
+// in parallel and their output is printed afterwards in list order. `fan` is
+// defined to behave exactly as sequential evaluation would, and answering the
+// lines rather than printing them from inside an arm is what makes that true of
+// the bytes as well: `check` output is byte-identical on all 39,021 corpus
+// files, stdout and stderr merged. One file behaves exactly as before — the
+// verdict on stdout, the reason on stderr, exit 1 if anything failed, and the
+// same latency, since seven of the eight slices are then empty.
+//
+// 25.5 MB of Go, 1,500 files: 2.74 s to 0.70 s. `fan` runs sequentially on a
+// compiler without native scoped threads, which costs nothing but the speedup.
+effect fn run_many(cmd: String, paths: List[String]) -> Unit = {
+  // The eight boundaries are pulled out as scalars: a `fan` arm may not close
+  // over a list that was built by mutation.
+  let cuts = cut_points(paths, 8)!
+  let c0 = cut_at(cuts, 0)
+  let c1 = cut_at(cuts, 1)
+  let c2 = cut_at(cuts, 2)
+  let c3 = cut_at(cuts, 3)
+  let c4 = cut_at(cuts, 4)
+  let c5 = cut_at(cuts, 5)
+  let c6 = cut_at(cuts, 6)
+  let c7 = cut_at(cuts, 7)
+  let c8 = list.len(paths)
+  let r = fan {
+    check_chunk(cmd, paths, c0, c1),
+    check_chunk(cmd, paths, c1, c2),
+    check_chunk(cmd, paths, c2, c3),
+    check_chunk(cmd, paths, c3, c4),
+    check_chunk(cmd, paths, c4, c5),
+    check_chunk(cmd, paths, c5, c6),
+    check_chunk(cmd, paths, c6, c7),
+    check_chunk(cmd, paths, c7, c8)
+  }
+  let parts = [r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7]
+  var failed = false
+  for c in parts {
+    for l in c.lines {
+      if l.is_err then eprintln(l.text) else println(l.text)
+    }
+    if c.failed then failed = true else ()
   }
   if failed then process.exit(1) else ()
 }

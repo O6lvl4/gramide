@@ -238,28 +238,41 @@ rejects. No false rejection.
 
 ## How fast, against something honest
 
-1,500 Go files, 25,549,317 bytes, one core, one process each, alternating runs.
+1,500 Go files, 25,549,317 bytes, one process each, alternating runs, 14 cores.
 `gofmt -e` is the fair comparison: it is a hand-written recursive descent parser for
 the same language, and `-e` makes it report every syntax error rather than the first.
-`GOMAXPROCS=1` because gofmt parallelises across its file arguments by default and
-gramide cannot yet ask for a second core (almide#2080).
 
-| | 2026-09-10 | rate |
+| | one core | as each ships |
 |---|---|---|
-| `gofmt -e -l`, `GOMAXPROCS=1` | 1.30 s | 19.6 MB/s |
-| `gramide check` | 2.74 s | 9.3 MB/s |
+| `gofmt -e -l` | 1.30 s | **0.38 s** |
+| `gramide check` | 2.74 s | **0.70 s** |
 
-**About twice as slow as the reference parser for the language**, interpreting a grammar
-value rather than running code generated from one. It was 27x slower when this work
-started and 4.3x slower earlier the same day.
+Two numbers because gofmt has always parallelised across its file arguments and
+gramide now does too. On one core it is about twice the reference parser for the
+language, interpreting a grammar value rather than running code generated from one; as
+both actually run, **1.8x**. It was 27x when this work started and 4.3x earlier the
+same day.
 
-The same day's two changes, separated:
+The same day's three changes, separated:
 
 | | Go 25.5 MB |
 |---|---|
 | before | 5.60 s |
 | + caching the lexer's operator patterns and a compact `Bytes` source | 3.03 s |
 | + Almide's own byte-slice and ownership work on top | 2.74 s |
+| + eight byte-balanced slices of the file list in a `fan` block | **0.70 s** |
+
+The last one is worth its own note, because the obvious version of it is worth half as
+much. Cutting the file list into eight slices **by file count** gave 1.58 s: Go's tree
+put 12.9 MB of the 25.5 into one slice, and the slowest slice is the wall time. Cutting
+by bytes — one `fs.file_size` per file up front — gave 0.70 s. On a corpus whose files
+are all about the same size (662 Rust files) the count-based cut was already 5.4x, which
+is exactly why the bug was invisible until it met a real tree.
+
+`fan` runs sequentially on a compiler without native scoped threads, so the same source
+built with the released 0.62.0 produces identical output at the old speed. A `fan` arm
+also cannot close over a list built by mutation, so the eight boundaries are pulled out
+as scalars first.
 
 Against tree-sitter, which is the other reference worth having — `ctxgate-outline`, a C
 tree-sitter binary, against `gramide outline`, 120 Rust files, 2,951,900 bytes, process
@@ -361,12 +374,11 @@ nothing and removing both is worth 13%, because a record with any owned field gi
 whole list a per-element destructor. It is still true. It was simply the wrong 13% to be
 chasing while an 88.6% allocation reduction sat in the operator scanner.
 
-One more measurement, because it decides how much a second core would be worth:
-`fan { }` is specified as native threads, and it is not — eight CPU-bound arms take the
-same wall time as a `for` loop, and `user` never exceeds `real` (almide#2080). `gofmt`
-parallelises across its file arguments by default; the comparison above pins it to one
-core so that it is fair, but in ordinary use it keeps fourteen and gramide cannot ask
-for a second.
+One more measurement, because it decided how much a second core was worth: `fan { }` is
+specified as native threads and, at the time, was not — eight CPU-bound arms took the
+same wall time as a `for` loop and `user` never exceeded `real` (almide#2080). It was
+fixed the same day: the same eight arms now take 0.06 s against 0.44 s, and `check`
+takes eight slices of the file list in parallel. Both numbers are in "How fast" above.
 
 ## Error recovery
 
