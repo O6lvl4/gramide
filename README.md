@@ -36,9 +36,11 @@ written in, so a grammar can be read, patched and tested like any other module.
 
 ## Status
 
-Two languages: Almide (`.almd`) and Go (`.go`). Each is measured against a whole
-reference corpus, and the guarantee is the same for both and runs one way: **a file
-gramide rejects is broken for the reference parser too.** The reverse is not promised;
+Three languages: Almide (`.almd`), Go (`.go`) and Rust (`.rs`). The Almide and Go
+reference-corpus results below found no rejection of a reference-valid file; this
+is evidence on those corpora, not a proof for every program. Rust is also covered
+by unit tests and the three-language CLI smoke check in [CI](ci/README.md).
+Acceptance does not establish full compiler syntax validity;
 the grammars are more permissive than the compilers in a few known places listed in
 [docs/design.md](docs/design.md).
 
