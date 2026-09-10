@@ -146,3 +146,58 @@ A separate [Go comparison](../docs/evidence/go-tree-capacity.json) retains
 identical ranges at 100, 400 and 800 generated functions. Its timings are
 roughly unchanged (800 functions: 21.03 to 21.08 ms); this is not a claimed Go
 speed win. All raw samples and binary/source hashes are retained.
+
+## Python recovery comparison
+
+`python_recovery.py` compares declaration extraction from 20 known-edit inputs.
+Expected names, owners, inclusive line ranges and exclusive UTF-8 byte ranges
+are specified from intact source fragments, independently of either parser.
+This is a small corpus biased toward gramide's existing recovery tests, not a
+representative accuracy ranking. Invalid Python has no CPython AST oracle; the
+expected recovery policy is a product choice, not a Python language requirement.
+
+Build the tree-sitter adapter from the pinned checkouts recorded in the evidence:
+
+```sh
+refs=/path/to/almide-references
+cc -O2 -Wall -Wextra \
+  -I "$refs/tree-sitter/lib/include" -I "$refs/tree-sitter/lib/src" \
+  -I "$refs/tree-sitter-python/src" \
+  bench/tree_sitter_python.c "$refs/tree-sitter/lib/src/lib.c" \
+  "$refs/tree-sitter-python/src/parser.c" \
+  "$refs/tree-sitter-python/src/scanner.c" -o /tmp/tree-sitter-python
+python3 bench/python_recovery.py --gramide ./gramide \
+  --tree-sitter /tmp/tree-sitter-python --references "$refs" \
+  --output /tmp/python-recovery.json
+```
+
+The adapter's default mode still rejects error trees. Its explicit `--recover`
+mode skips ERROR subtrees and missing nodes. It omits declarations containing
+errors, but traverses bodies under intact headers to preserve nested lexical
+names. Broken headers and decorators cannot establish owners. These rules are
+implemented by our adapter, not a tree-sitter symbol API. A stronger consumer
+could use additional source analysis, changing the results. Gramide uses its
+production `symbols-recovered` interface. Both parse the full input from scratch;
+this experiment measures neither latency, memory nor incremental editing.
+
+The [initial evidence](../docs/evidence/python-recovery-comparison.json) records
+all inputs, expected and actual rows, failures, binary/source hashes and reference
+commits. Gramide matches 17/20 cases and cannot return a document for 3;
+tree-sitter with this adapter matches 16/20, returns documents for all 20,
+and has one missing declaration, two spurious declarations and one incorrect
+range. Missing/spurious/range counts cover **returned documents only**; an
+unavailable result is a failed case, never an empty successful document.
+
+Gramide's gaps are an unmatched bracket at EOF and unterminated f/t strings.
+Tree-sitter retains the expected declarations in both f/t string cases, so these
+are concrete losses to address. This adapter loses a nested helper, drops a
+decorator from a range, and exports declaration-looking text from an unclosed
+triple string or bracket. The latter expectations intentionally favor
+conservative lexical containment; another editor may prefer speculative symbols.
+
+Use `python_symbols.py` for the separate CPython-backed valid-input comparison
+and time/RSS measurement. Neither experiment establishes overall superiority.
+
+The runner also checks both tree-sitter modes against CPython declaration ranges
+for 12 complete stdlib files (634 declarations in Python 3.14.4). Run it with
+Python 3.14; it uses the existing AST oracle and records source hashes.
