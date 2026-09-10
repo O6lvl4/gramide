@@ -201,3 +201,10 @@ and time/RSS measurement. Neither experiment establishes overall superiority.
 The runner also checks both tree-sitter modes against CPython declaration ranges
 for 12 complete stdlib files (634 declarations in Python 3.14.4). Run it with
 Python 3.14; it uses the existing AST oracle and records source hashes.
+
+After atomic interpolation rollback, the same unchanged 20-case corpus gives
+[19 exact gramide cases and one unavailable result](../docs/evidence/python-interpolation-recovery.json).
+The f/t-string losses are resolved; the unmatched outer bracket remains
+unsupported. The tree-sitter adapter results are unchanged. The broader 239-case
+recovery gate also covers conservative tail omission for damaged replacements
+and nested strings; this is still not general recovery or incremental parity.

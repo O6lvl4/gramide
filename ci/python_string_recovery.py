@@ -36,8 +36,8 @@ with tempfile.TemporaryDirectory() as tmp:
  # A failed string in a nested suite must retain its parent and sibling owners.
  case('class Box:\n def method(self):\n  x = "bad\n def next(self): pass\ndef outside(): pass\n',
       'L1-4 class Box\n  L2-3 method Box.method\n  L4-4 method Box.next\nL5-5 function outside\n')
- # No repair for an interpolation frame, a missing bracket, NUL or a bad escape.
- for source in ['x = f"{value\ndef after(): pass\n','x = ("bad\ndef after(): pass\n',
+ # Missing brackets, NUL and bad escapes remain unsupported.
+ for source in ['x = ("bad\ndef after(): pass\n',
                 'x = "\\xZZ"\n','x = "\x00"\n']:
   p.write_bytes(source.encode());result=run('outline',p)
   assert result.returncode!=0 and not result.stdout,(source,result)

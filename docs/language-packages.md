@@ -611,7 +611,7 @@ ending. Inclusive outline end lines now count LF/CRLF/CR consistently and exclud
 the nonexistent line after that final terminator. This fixes a reproduced
 one-line overrun for an enclosing function with an unterminated triple string.
 
-`ci/python_string_recovery.py` checks 164 cases across ordinary prefixes, quote
+`ci/python_string_recovery.py` checks 163 cases across ordinary prefixes, quote
 widths, newline forms, escaped newlines, bytes literals, nested scopes and
 unsupported errors. Check, symbols and tokens must still reject these inputs.
 The existing ordinary-string lexical oracle and full grammar oracles remain in
@@ -619,9 +619,9 @@ CI. The boundary policy was reviewed against the cloned tree-sitter-python
 external scanner's single/triple delimiter and backslash handling; equivalent
 recovered-tree shape or performance is not claimed.
 
-Recovery inside interpolation frames, unmatched brackets, invalid escapes,
-invalid indentation and NUL remains unsupported. Partial-symbol consumption by
-hew and incremental edit reuse also remain unfinished.
+Interpolation recovery is described below. Unmatched outer brackets, invalid
+escapes, invalid indentation and NUL remain unsupported. Incremental edit reuse
+also remains unfinished; hew now consumes the recovered declaration contract.
 
 ## Recovered declaration contract for readers
 
@@ -648,3 +648,33 @@ ordinary-string failures, strict rejection and valid-input output parity.
 Hew can explicitly request this command after strict parsing fails, validate the
 policy and ranges, and label the selected engine `gramide-recovered`. It must
 never silently accept an arbitrary partial response from the strict command.
+
+
+## Interpolated-string recovery
+
+The comparison in `bench/python_recovery.py` exposed two concrete losses to
+our tree-sitter adapter: unterminated f/t strings prevented gramide from returning
+any declarations. The lexer now checkpoints the outermost interpolation and,
+after a lexical failure, replaces all of its emitted tokens with one error token.
+This removes replacement-field braces before layout runs, preserves earlier
+valid declarations, and prevents nested declaration-looking text from escaping
+its failed interpolation. Strict check, symbols and tokens retain rejection and
+the original error diagnostic.
+
+A failure in the outer literal mode of a single-quoted string can resume at the
+first unescaped LF, CRLF or CR. Completed replacement fields before that failure
+are rolled back too. Triple-quoted strings, failed replacement expressions,
+format states and nested strings conservatively consume the remaining source:
+these states do not establish a safe closing boundary. This may omit real later
+declarations; it deliberately does not claim full editor recovery. Unmatched
+brackets outside the interpolation and later escape-validation failures remain
+unsupported.
+
+This boundary decision follows the single/triple delimiter, escaped-newline and
+literal-versus-expression distinctions in the cloned tree-sitter-python external
+scanner (`26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64`); gramide's conservative tail
+policy is its own consumer contract, not equivalent tree-sitter recovery.
+`ci/python_interpolation_recovery.py` checks 239 invalid cases with CPython
+rejection, exact retained names and ranges, error exclusion, strict rejection,
+all prefix/quote/newline forms, completed fields, nested failures and scope
+containment. The existing normal-input token and grammar oracles still run.
