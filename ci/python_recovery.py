@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory() as tmp:
  assert result.returncode==0 and result.stdout=='L2001-2001 function after\n',result
  count+=1
  # Lexical failures are not supported by this recovery layer.
- for source in ['x = (\ndef after(): pass\n','x = "unterminated\ndef after(): pass\n','x = "\\xZZ"\n']:
+ for source in ['x = (\ndef after(): pass\n','x = "\\xZZ"\n']:
   p.write_text(source)
   for cmd in ['check','symbols','outline']:
    result=run(cmd,p);assert result.returncode!=0 and not result.stdout,(source,cmd,result)

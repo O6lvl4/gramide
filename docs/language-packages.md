@@ -552,8 +552,9 @@ comments and blank lines are excluded. The CPython symbol oracle checks 645
 names/kinds/owners/ranges across nested, decorated and async declarations, stubs,
 and 12 complete stdlib files. An optional suite-ending semicolon is retained.
 
-The Python scanner remains strict. Logical-line grammar recovery is described
-below; broken input must never produce a symbols document marked complete. Compiler-context checks,
+The Python scanner stays strict for checks and complete-symbol reads. Optional
+reader recovery is described below; broken input must never produce a symbols
+document marked complete. Compiler-context checks,
 Unicode-name escapes, NFKC identity, literal decoding, encoding cookies/BOM and
 Python reference extraction remain future work. `check` is a grammar check, not
 a promise that CPython compilation or execution succeeds. Historical checkpoints
@@ -582,10 +583,42 @@ handling and bracket-aware newline suppression. Gramide uses the strict lexer's
 logical layout stream here. This is a different, explicitly tested recovery
 policy, not a claim of matching tree-sitter's incomplete-tree shape.
 
-`ci/python_recovery.py` covers 56 cases: incomplete assignments, imports, raises,
+`ci/python_recovery.py` covers 55 cases: incomplete assignments, imports, raises,
 asserts, decorators and headers; nested scopes; skipped suites; EOF; blank lines;
 UTF-8 comments; physical newlines inside brackets; 2,000 consecutive malformed lines; and strict rejection. It also
-asserts that lexical errors (unterminated delimiters/strings and bad escapes)
-remain failures. Scanner recovery, preservation of incomplete declaration heads,
+asserts that unmatched delimiters and bad escapes remain failures. Ordinary
+string recovery is described below. Further scanner recovery, preservation of incomplete declaration heads,
 partial-symbol integration with hew, edit-sequence comparisons and incremental
 reuse remain unfinished.
+
+## Ordinary-string recovery
+
+The package now honors the lexer callback's recovery flag. Strict entry points
+continue to use `physical` / `scan_source`; readers can request
+`physical_with` / `scan_source_with`. When an ordinary-string scan fails outside
+an interpolation frame, recovery emits an `error` token over its lexical extent.
+The existing logical-line parser then records an `ERROR` range.
+
+Single-quoted literals stop at an unescaped physical line ending or EOF. Escaped
+newlines stay inside the token, including CRLF. Triple-quoted literals continue
+to their closing delimiter or EOF, so declaration-looking text inside an
+unterminated triple string is never exported as code. Invalid closed bytes
+literals retain their actual closing boundary. The original strict diagnostic
+is retained by the reader; recovery does not certify the literal as valid.
+
+Recovered scopes can end with a token consuming EOF immediately after a line
+ending. Inclusive outline end lines now count LF/CRLF/CR consistently and exclude
+the nonexistent line after that final terminator. This fixes a reproduced
+one-line overrun for an enclosing function with an unterminated triple string.
+
+`ci/python_string_recovery.py` checks 164 cases across ordinary prefixes, quote
+widths, newline forms, escaped newlines, bytes literals, nested scopes and
+unsupported errors. Check, symbols and tokens must still reject these inputs.
+The existing ordinary-string lexical oracle and full grammar oracles remain in
+CI. The boundary policy was reviewed against the cloned tree-sitter-python
+external scanner's single/triple delimiter and backslash handling; equivalent
+recovered-tree shape or performance is not claimed.
+
+Recovery inside interpolation frames, unmatched brackets, invalid escapes,
+invalid indentation and NUL remains unsupported. Partial-symbol consumption by
+hew and incremental edit reuse also remain unfinished.

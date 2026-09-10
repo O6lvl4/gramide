@@ -52,6 +52,25 @@ fn scan(buffer: Bytes, start: Int, line: Int, col: Int) -> Result[Int, lex.LexEr
   ok(end)
 }
 
+// On a known invalid literal, preserve its lexical extent without certifying
+// its contents. Escaped newlines stay inside the literal; an unclosed triple
+// literal owns the remaining source, including declaration-looking text.
+fn recovery_end(buffer: Bytes, start: Int) -> Int = {
+  let head = opening(buffer, start) ?? Opening { quote: bytes.get_or(buffer, start, -1), at: start, byte_literal: false }
+  let triple = bytes.get_or(buffer, head.at + 1, -1) == head.quote and bytes.get_or(buffer, head.at + 2, -1) == head.quote
+  let width = if triple then 3 else 1
+  var i = head.at + width
+  var end = -1
+  while end < 0 {
+    let b = bytes.get_or(buffer, i, -1)
+    if b < 0 or (not triple and (b == 10 or b == 13)) then end = int.min(i, bytes.len(buffer))
+    else if b == head.quote and (not triple or (bytes.get_or(buffer, i + 1, -1) == head.quote and bytes.get_or(buffer, i + 2, -1) == head.quote)) then end = i + width
+    else if b == 92 then i = i + (if bytes.get_or(buffer, i + 1, -1) == 13 and bytes.get_or(buffer, i + 2, -1) == 10 then 3 else 2)
+    else i = i + 1
+  }
+  end
+}
+
 test "ordinary prefixes exclude interpolation and obsolete combinations" {
   for prefix in ["", "r", "R", "u", "U", "b", "B", "br", "bR", "Br", "BR", "rb", "rB", "Rb", "RB"] {
     assert(option.is_some(opening(bytes.from_string(prefix + "\"x\""), 0)))

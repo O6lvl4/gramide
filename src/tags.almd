@@ -30,7 +30,14 @@ fn code_end(n: tree.Node, toks: List[tree.Token]) -> Int = {
   while end > n.start and (option.map(list.get(toks, end - 1), (t) => list.contains(["newline", "dedent", "indent"], t.kind)) ?? false) { end = end - 1 }
   end
 }
-fn end_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks, code_end(n, toks) - 1) { some(t) => t.line + string.count(t.text, "\n"), none => 0 }
+fn end_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks, code_end(n, toks) - 1) {
+  some(t) => {
+    let breaks = string.count(t.text, "\n") + string.count(t.text, "\r") - string.count(t.text, "\r\n")
+    // A recovery token can consume EOF immediately after a line terminator.
+    t.line + breaks - (if string.ends_with(t.text, "\n") or string.ends_with(t.text, "\r") then 1 else 0)
+  },
+  none => 0,
+}
 
 // A name of more than one token — `salsa::Database`, `Vec<u8>` — is joined
 // from the tokens, not cut out of the source. A token's offsets count bytes
