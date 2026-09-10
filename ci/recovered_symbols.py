@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory() as tmp:
  recovered=json.loads(subprocess.check_output([str(BIN),'symbols-recovered',str(p)]))
  assert recovered['complete'] is True and not recovered['errors'] and not recovered['diagnostic'],recovered
  assert strict['symbols']==recovered['symbols'],recovered
- p.write_text('x = (\n')
+ p.write_text('x = (]\n')
  r=subprocess.run([str(BIN),'symbols-recovered',str(p)],capture_output=True,text=True)
  assert r.returncode!=0 and not r.stdout,r
  other=Path(tmp)/'x.rs';other.write_text('fn valid() {}\n')

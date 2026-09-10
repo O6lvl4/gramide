@@ -208,3 +208,10 @@ The f/t-string losses are resolved; the unmatched outer bracket remains
 unsupported. The tree-sitter adapter results are unchanged. The broader 239-case
 recovery gate also covers conservative tail omission for damaged replacements
 and nested strings; this is still not general recovery or incremental parity.
+
+After EOF delimiter recovery, the same unchanged corpus gives
+[20 exact gramide cases, with no unavailable results](../docs/evidence/python-delimiter-recovery.json).
+The adapter remains at 16 exact cases. This only closes the gaps in these 20
+hand-selected inputs, not general recovery accuracy: mismatched closers, other
+lexical failures and ambiguous damaged replacement fields remain gaps, while
+incremental parsing and the measured speed/RSS deficit are unchanged.

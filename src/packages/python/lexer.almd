@@ -184,7 +184,7 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
   ok(tokens)
 }
 fn physical(source: String) -> Result[List[tree.Token], lex.LexError] = physical_with(source, false)
-fn scan_source_with(source: String, recovering: Bool) -> Result[List[tree.Token], lex.LexError] = layout.apply(source, physical_with(source, recovering)!)
+fn scan_source_with(source: String, recovering: Bool) -> Result[List[tree.Token], lex.LexError] = layout.apply_with(source, physical_with(source, recovering)!, recovering)
 fn scan_source(source: String) -> Result[List[tree.Token], lex.LexError] = scan_source_with(source, false)
 
 test "Python lexer joins lines and does not invent code inside strings" {

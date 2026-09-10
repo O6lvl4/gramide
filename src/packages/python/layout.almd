@@ -1,7 +1,7 @@
 // Python physical tokens -> logical NEWLINE / INDENT / DEDENT tokens.
 // The scanner must preserve physical newline, comment and continuation tokens,
 // and keep strings (including their embedded newlines) as single tokens.
-// Layout is strict; recovery will be an explicit, separately tested policy.
+// Strict layout remains the default; EOF delimiter recovery is explicit.
 import self.tree
 import self.lex
 
@@ -48,12 +48,13 @@ fn change_indent(mut levels: List[Indent], mut out: List[tree.Token], next: Inde
   ok(())
 }
 
-fn apply(source: String, physical: List[tree.Token]) -> Result[List[tree.Token], lex.LexError] = {
+fn apply_with(source: String, physical: List[tree.Token], recovering: Bool) -> Result[List[tree.Token], lex.LexError] = {
   guard (option.map(list.last(physical), (t) => t.kind) ?? "") == "eof" else err(lex.LexError { line: 1, col: 1, message: "physical token stream requires EOF" })
   let buffer = bytes.from_string(source)
   var out: List[tree.Token] = []
   var levels = [Indent { width: 0, alternate: 0 }]
   var brackets: List[tree.Token] = []
+  var bracket_start = 0
   var beginning = true
   var code = false
   var continuation: Option[tree.Token] = none
@@ -78,8 +79,15 @@ fn apply(source: String, physical: List[tree.Token]) -> Result[List[tree.Token],
       } else if list.is_empty(brackets) then { prefix = none } else ()
     }
     else if t.kind == "eof" then {
-      guard option.is_none(continuation) else err(fail(continuation ?? t, "unexpected EOF after line continuation"))
-      guard list.is_empty(brackets) else err(fail(list.last(brackets) ?? t, "unclosed delimiter"))
+      guard option.is_none(continuation) or (recovering and not list.is_empty(brackets)) else err(fail(continuation ?? t, "unexpected EOF after line continuation"))
+      if not list.is_empty(brackets) then {
+        guard recovering else err(fail(list.last(brackets) ?? t, "unclosed delimiter"))
+        // Every physical newline since this opening was inside brackets. Keep
+        // that entire tail opaque; never promote its apparent declarations.
+        let opening = list.get(brackets, 0) ?? t
+        while list.len(out) > bracket_start { let _ = list.pop(out) }
+        list.push(out, tree.Token { ...opening, kind: "error", text: bytes.to_string_lossy(bytes.slice(buffer, opening.start, t.start)), end: t.start })
+      } else ()
       if code then list.push(out, marker("newline", t)) else ()
       while list.len(levels) > 1 {
         let _ = list.pop(levels)
@@ -97,6 +105,7 @@ fn apply(source: String, physical: List[tree.Token]) -> Result[List[tree.Token],
       if t.kind == "punct" then {
         if list.contains(["(", "[", "{"], t.text) then {
           guard list.len(brackets) < 200 else err(fail(t, "too many nested delimiters"))
+          if list.is_empty(brackets) then bracket_start = list.len(out) else ()
           list.push(brackets, t)
         }
         else if list.contains([")", "]", "}"], t.text) then {
@@ -111,6 +120,8 @@ fn apply(source: String, physical: List[tree.Token]) -> Result[List[tree.Token],
   }
   ok(out)
 }
+
+fn apply(source: String, physical: List[tree.Token]) -> Result[List[tree.Token], lex.LexError] = apply_with(source, physical, false)
 
 test "indentation follows Python tab stops and formfeed resets" {
   assert_eq(indentation(bytes.from_string(" \tx"), 0), Indent { width: 8, alternate: 2 })

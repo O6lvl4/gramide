@@ -678,3 +678,32 @@ policy is its own consumer contract, not equivalent tree-sitter recovery.
 rejection, exact retained names and ranges, error exclusion, strict rejection,
 all prefix/quote/newline forms, completed fields, nested failures and scope
 containment. The existing normal-input token and grammar oracles still run.
+
+## Unclosed-delimiter recovery at EOF
+
+The final unavailable case in the initial 20-input comparison was an unclosed
+outer bracket. `layout.apply_with` now accepts an explicit recovery flag while
+`layout.apply` remains strict. At EOF, recovery replaces the output beginning at
+the outermost still-unclosed `(`, `[` or `{` with one error token through EOF.
+Earlier complete logical lines remain available. Newline and dedent markers
+close the damaged logical line and its enclosing scopes for the recovery parser;
+no synthetic closing delimiter certifies the expression as valid.
+
+This preserves the lexer/layout distinction from the reference scanner:
+physical newlines inside brackets do not establish new statements or scopes.
+The cloned tree-sitter-python external scanner gates dedent inference with its
+`within_brackets` state (`26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64`). Gramide's
+consumer policy conservatively keeps the unmatched tail opaque, even if text
+there resembles a declaration. Its recovered tree need not match tree-sitter's.
+
+A trailing line continuation inside the unmatched delimiter belongs to that
+same error range. A continuation outside brackets, mismatched or stray closing
+delimiters, invalid indentation and lexical failures that prevent tokenization
+remain unsupported. Recovery does not certify incomplete function/class headers.
+
+`ci/python_delimiter_recovery.py` covers 160 invalid inputs, three delimiter and
+newline forms, nested scopes, malformed headers, strings/interpolation, exact
+UTF-8 byte and inclusive line ranges, and 2,000 apparent declarations inside the
+damaged tail. Close/remove/close edit cycles verify that the suffix is hidden
+until the expression closes. These cycles perform full reparses, not incremental
+reuse. Strict check, tokens and symbols continue to reject unclosed input.
