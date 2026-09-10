@@ -258,3 +258,34 @@ This measures five invalid-line insertion families, not arbitrary character
 edits, representative editor traffic or all Python. The existing stdlib corpus
 also favors syntax already covered by gramide. Overall accuracy, performance,
 incremental editing and language breadth remain separate unfinished goals.
+
+## Python operator lookup without candidate copies
+
+With pinned Almide `dff9a458f2e581631bb6537c856a7974036e4153`, the Python
+lexer lowered `list.find(ops, ...)` to `(ops.clone()).into_iter().find(...)`,
+cloned each candidate inside the predicate, and captured the mutable cursor.
+The lexer now scans the unchanged longest-first table in place and retains only
+the matching byte width. Generated Rust uses `for op in ops.iter()` and a plain
+integer cursor. A helper taking the list by value still cloned the whole table
+at its call site, so that intermediate approach was not retained.
+
+The [paired evidence](../docs/evidence/python-operator-lookup.json) compares the
+merged isolated-error recovery binary with this change. All three binaries
+match CPython declaration names, owners and ranges on all 15 inputs before
+measurement. Five shuffled wall-time samples include startup/read/full parse/
+JSON output; two separate RSS samples per binary retain the original method.
+
+| Input | Before ms | After ms | tree-sitter ms |
+| --- | ---: | ---: | ---: |
+| 800 generated functions | 52.16 | 45.31 | 8.24 |
+| inspect.py | 73.73 | 64.62 | 11.41 |
+| typing.py | 72.46 | 64.11 | 11.27 |
+| dataclasses.py | 37.09 | 33.20 | 8.13 |
+
+All 15 median times decrease by 3.6–13.1% in this run. Peak RSS does **not** show
+consistent improvement: most samples are identical, while the after binary has
+higher individual samples for textwrap (4.36 vs 3.94 MiB), inspect (16.42 vs
+14.77 MiB) and dataclasses (10.08 vs 8.03 MiB). Both original samples are retained;
+this change makes no memory-reduction claim. Tree-sitter remains faster and uses
+less peak memory on every input, and no incremental reuse is measured. The
+full token/grammar/recovery gates and real hew integration also pass.
