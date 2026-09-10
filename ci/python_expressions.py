@@ -8,6 +8,14 @@ VALID += ['-a ** b','a ** -b','a ** b ** c','not a == b','not not a','~a ** +b',
 INVALID=['a +','a **','a ** * b','a if b','a else b','a not b','a is not','if + x','for','f(a,,b)','a[]','a.','a + * b','not','a < < b']
 VALID += ['-a ** -b ** c','a - (b - c)','a ** (b ** c)','(a ** b) ** c'] + [name+' + a' for name in keyword.softkwlist]
 INVALID += [name for name in keyword.kwlist if name not in ('True','False','None')]
+# Container displays, unpacking and slices preserve structure, not just acceptance.
+VALID += ['()', '(*a,)', 'a,', 'a[()]', '(a,)', 'a,b', '(a,b,)', '[a,*b,c]', '{a,*b}', '{}', '{a:b, **c}', 'a[:]', 'a[::]', 'a[1::2]', 'a[:,b,...]', 'a[*b]', 'a[1,]', 'a[(1,)]', '{(a,b): [c, d]}']
+for lower,upper,step in itertools.product(['','a','a + b'],repeat=3):
+    VALID.append(f'items[{lower}:{upper}:{step}]')
+for item in ['a','a + b','a if b else c','f(a)','[a,b]','{a:b}']:
+    for template in ['[{}, x]','({}, x)','{{{}, x}}','{{x: {}, **y}}']:
+        VALID.append(template.format(item))
+INVALID += ['*a,', '[*]', '[**x]', '{*}', '{**}', '{a:}', '{:a}', '{a:b,c}', '{a,b:c}', '(*a)', 'a[:::]', 'a[1,,2]', 'a[**x]', '[a,,b]', '(a,,b)']
 OP={ast.Add:'+',ast.Sub:'-',ast.Mult:'*',ast.Div:'/',ast.FloorDiv:'//',ast.Mod:'%',ast.MatMult:'@',ast.Pow:'**',ast.LShift:'<<',ast.RShift:'>>',ast.BitAnd:'&',ast.BitXor:'^',ast.BitOr:'|',ast.And:'and',ast.Or:'or',ast.Eq:'==',ast.NotEq:'!=',ast.Lt:'<',ast.LtE:'<=',ast.Gt:'>',ast.GtE:'>=',ast.In:'in',ast.NotIn:'not in',ast.Is:'is',ast.IsNot:'is not',ast.USub:'-',ast.UAdd:'+',ast.Invert:'~',ast.Not:'not'}
 def reference(n,source):
     if isinstance(n,(ast.Name,ast.Constant)):return ['atom',ast.get_source_segment(source,n)]
@@ -19,12 +27,25 @@ def reference(n,source):
         return out
     if isinstance(n,ast.Compare):return ['compare',reference(n.left,source),[[OP[type(op)],reference(v,source)] for op,v in zip(n.ops,n.comparators)]]
     if isinstance(n,ast.IfExp):return ['if',reference(n.test,source),reference(n.body,source),reference(n.orelse,source)]
+    if isinstance(n,(ast.List,ast.Tuple,ast.Set)):return [type(n).__name__.lower(),[reference(v,source) for v in n.elts]]
+    if isinstance(n,ast.Starred):return ['starred',reference(n.value,source)]
+    if isinstance(n,ast.Dict):return ['dict',[[reference(k,source) if k else None,reference(v,source)] for k,v in zip(n.keys,n.values)]]
+    if isinstance(n,ast.Slice):return ['slice',*[reference(v,source) if v else None for v in (n.lower,n.upper,n.step)]]
     if isinstance(n,ast.Attribute):return ['attr',reference(n.value,source),n.attr]
     if isinstance(n,ast.Call):return ['call',reference(n.func,source),[reference(v,source) for v in n.args]]
     if isinstance(n,ast.Subscript):return ['sub',reference(n.value,source),reference(n.slice,source)]
     raise AssertionError(ast.dump(n))
 def actual(n):
     kids=n['kids'];kind=n['kind']
+    if kind in ('list','tuple','set'):return [kind,[actual(k) for k in kids]]
+    if kind=='starred':return ['starred',actual(kids[0])]
+    if kind=='dict':return ['dict',[[None,actual(k['kids'][0])] if k['kind']=='dict_unpack' else [actual(k['kids'][0]),actual(k['kids'][1])] for k in kids]]
+    if kind=='slice':
+        parts=[None,None,None];index=0
+        for k in kids:
+            if k['text']==':' and not k['kids']:index+=1
+            else:parts[index]=actual(k)
+        return ['slice',*parts]
     if not kids:return ['atom',n['text']]
     if kind in ('binary','boolean'):return ['bin' if kind=='binary' else 'bool',kids[1]['text'],actual(kids[0]),actual(kids[2])]
     if kind=='unary':return ['unary',kids[0]['text'],actual(kids[1])]
@@ -63,6 +84,6 @@ with tempfile.TemporaryDirectory() as tmp:
     for source,got in zip(INVALID,results[len(VALID):]):assert not got['ok'],(source,got)
 report=dict(python=platform.python_version(),matching_expression_trees=len(VALID),rejected_expressions=len(INVALID),
             expressions_sha256=hashlib.sha256(json.dumps(VALID+INVALID,ensure_ascii=False).encode()).hexdigest(),
-            scope='normalized operator trees, conditional order, comparisons, simple call/attribute/subscript structure; not a complete Python grammar')
+            scope='normalized operator trees, conditional order, comparisons, call/attribute/subscript structure, displays, unpacking and slices; not a complete Python grammar')
 if len(sys.argv)>1:Path(sys.argv[1]).write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report))

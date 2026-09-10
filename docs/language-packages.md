@@ -235,3 +235,24 @@ This is not the complete expression grammar. Containers, comprehensions, slices,
 lambdas, assignment/yield/await forms, full call arguments and interpolation grammar
 still require implementation and oracle coverage. Statements, declarations, escape
 validation, recovery and hew integration remain unfinished; Python stays unregistered.
+
+## Python implementation progress: displays and slices
+
+`containers.almd` extends the reusable expression rules with list, tuple, set and
+dictionary displays, starred display items, dictionary unpacking, slices and
+multi-item/starred subscripts. Empty braces produce a dictionary; a tuple display
+requires a comma unless empty. The evaluation entry uses ordinary expressions for
+unparenthesized tuples, preserving CPython's distinction between valid `(*a,)`
+and invalid `*a,` in eval mode. These rules follow the display/slice sections of
+the pinned CPython grammar.
+
+The expanded AST oracle now matches 718 accepted expressions and rejects 62
+malformed expressions. It compares container kinds, nesting, unpacking structure,
+dictionary key/value pairing and omitted slice bounds/steps in addition to the
+previous precedence checks. [Evidence](evidence/python-containers.json) records
+this cumulative corpus and its hash. No values are evaluated.
+
+Comprehensions, lambdas, assignment/yield/await expressions, complete call
+arguments and interpolation grammar still remain, along with statements,
+declarations, contextual syntax checks, recovery and hew integration. Python
+is not registered by this checkpoint.

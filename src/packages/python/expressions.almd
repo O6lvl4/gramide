@@ -1,5 +1,6 @@
 // Python 3.14 expression precedence. This reusable rule set is not a complete
 // Python grammar; statements and remaining expression forms are added separately.
+import self.packages.python.containers
 import self.parser
 import self.parser.{ seq, nott, lits, tok, wrap, r, opt, keep, leftf, alt, rep, keeps, lit, grammar }
 
@@ -25,11 +26,12 @@ fn rules() -> List[(String, parser.Rule)] = [
   ("primary", wrap("primary", seq([r("atom"), rep(alt([
     wrap("attribute", seq([lit("."), r("name")])),
     wrap("call", seq([lit("("), opt(seq([r("expression"), rep(seq([lit(","), r("expression")])), opt(lit(","))])), lit(")")])),
-    wrap("subscript", seq([lit("["), r("expression"), lit("]")]))
+    wrap("subscript", seq([lit("["), r("slices"), lit("]")]))
   ]))]))),
-  ("atom", alt([tok("number"), tok("string"), keeps(["True", "False", "None", "..."]), r("name"), seq([lit("("), r("expression"), lit(")")])])),
-]
+  ("atom", alt([tok("number"), tok("string"), keeps(["True", "False", "None", "..."]), r("name"), r("tuple_display"), r("list_display"), r("dict_display"), r("set_display"), seq([lit("("), r("expression"), lit(")")])])),
+] + containers.rules()
 
 fn expression_grammar() -> parser.Grammar = grammar("evaluation", [
-  ("evaluation", seq([r("expression"), opt(tok("newline"))]))
+  ("evaluation", seq([alt([r("evaluation_tuple"), r("expression")]), opt(tok("newline"))])),
+  ("evaluation_tuple", wrap("tuple", seq([r("expression"), lit(","), opt(containers.separated(r("expression")))])))
 ] + rules())
