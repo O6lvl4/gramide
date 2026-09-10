@@ -131,3 +131,27 @@ UTF-8 byte offsets. Another 32 malformed numeric spellings must be rejected by
 both implementations. Local oracle: CPython 3.14.4; CI reports its actual version.
 The complete lexer, identifier validation, interpolated strings and grammar
 remain unfinished; these component checks do not register Python support.
+
+## Python implementation progress: Unicode identifiers
+
+`src/packages/python/identifiers.almd` scans Python identifiers using explicit
+Unicode 16 tables generated from CPython 3.14. ASCII uses direct comparisons;
+non-ASCII classes use binary searches over compact inclusive ranges prepared
+once per lexer. This avoids depending on the Unicode version bundled with a host
+Rust regex library. The generator is `scripts/gen_python_identifiers.py`; CI
+regenerates in check mode, and pins the Python oracle to 3.14.
+
+`ci/python_identifiers.py` compares both classes for every one of the 1,114,112
+code points, including surrogate values, against `str.isidentifier` and the
+continuation check on `"a" + character`. It also compares 38 UTF-8 identifier scans
+with CPython, including combining marks, compatibility letters, non-Latin names,
+Unicode 15/16 additions, emoji, invalid starts and nonzero byte offsets. Original
+source spelling and byte endpoints are preserved. The scanner consumes the same
+potential identifier run described by CPython's `verify_identifier` and rejects
+invalid non-ASCII characters inside that run.
+
+This targets Python 3.14 / Unicode 16. Other Python Unicode versions require an
+explicit version policy rather than silently adopting host character classes.
+Keyword classification, NFKC name identity, interpolated strings, lexer integration,
+grammar, recovery and hew's end-to-end Python reading remain pending. Python is
+still not registered as a supported grammar.
