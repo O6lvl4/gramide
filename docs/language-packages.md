@@ -83,3 +83,27 @@ This module is not a registered Python package. Python string/f-string, number
 and identifier scanning, grammar rules, semantic ranges, recovery, real-source
 corpora and hew integration remain unfinished. Python's `check` capability stays
 unavailable until that end-to-end implementation is independently verified.
+
+## Python implementation progress: ordinary string boundaries
+
+`src/packages/python/strings.almd` recognizes ordinary, raw, Unicode and bytes
+prefixes (including mixed-case `br` / `rb`) and scans single/triple-quoted strings.
+It follows `_PyLexer_scan_string` in the pinned CPython `Parser/lexer/string.c`:
+raw strings still escape quote characters lexically, escaped physical newlines
+continue a string, and unescaped physical newlines cannot end a short string.
+The scanner returns an exclusive byte offset in the original UTF-8 source.
+It rejects unclosed strings, literal NUL bytes and non-ASCII bytes-literal content.
+
+`ci/python_strings.py` validates 2,020 token boundaries and 12 rejected strings
+against local CPython 3.14.4. The matrix varies prefix case/order, quote width,
+escapes, quote runs, multiline content, Unicode, and nonzero UTF-8 start offsets.
+The reference applies Python file-reading universal-newline conversion, then maps
+its token boundary back to original bytes; passing raw CR directly to `tokenize`
+would differ from the compiler's actual source-reading behavior. CI prints its
+host oracle version rather than assuming a fixed installed Python release.
+
+This stage locates ordinary string tokens. Escape decoding/validation (for example,
+malformed `\\x` escapes), f-string and t-string expression parsing, identifier and
+number scanning, recovery, and integration with layout/grammar are still pending.
+Interpolated prefixes are not accepted by this component and must be dispatched
+to an expression-aware scanner. Python remains unregistered.
