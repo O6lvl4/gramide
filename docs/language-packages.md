@@ -282,3 +282,37 @@ Generator arguments and assignment expressions still require their expression
 rules, as do comprehensions, lambdas, yield/await and interpolation. Statements,
 declarations, recovery and hew integration are unfinished; Python stays
 unregistered.
+
+## Python implementation progress: named expressions and comprehensions
+
+This checkpoint uses the matching CPython **v3.14.4** grammar at commit
+`23116f998f6789d8c2fbe5ed5b8146854c8c2a4f`, fetched into the reference clone.
+The original development-branch reference now includes newer comprehension
+forms; those are not part of the Python 3.14 target.
+
+`comprehensions.almd` adds list/set/dict comprehensions, generator expressions,
+generator call arguments, repeated `for`/`if` clauses and `async for` markers.
+Its reusable assignment-target rules support attribute/subscript receivers and
+nested tuple/list destructuring. Calls may occur inside a receiver chain but
+cannot be the final assignment target. Shared primary suffix rules keep these
+receiver chains consistent with ordinary expressions.
+
+Named expressions (`:=`) are admitted only in the positions allowed by the
+Python grammar, including parenthesized groups, display items, call arguments,
+subscripts and comprehension elements. Unparenthesized slice bounds and keyword
+values still require ordinary expressions. Starred subscript items were also
+corrected to accept full expressions, including conditional expressions.
+
+The cumulative AST oracle matches **1,465** expression structures and rejects
+**1,043** malformed expressions. Coverage includes products of display types,
+assignment targets and iterable expressions; async/sync clauses and filters;
+invalid targets; and generator argument delimiters. Target boundary cases are
+classified independently by CPython. [Evidence](evidence/python-comprehensions.json)
+records the corpus hash. This comparison checks structure, clause order and
+async markers, not execution or AST Load/Store context annotations.
+
+Compiler/symbol-table restrictions (such as a walrus rebinding a comprehension
+iteration variable or appearing in an iterable) are not checked by `ast.parse`
+and remain pending contextual validation. Lambdas, yield/await, interpolation
+syntax, statements, declarations, escape validation, recovery and hew integration
+remain unfinished. Python stays unregistered.

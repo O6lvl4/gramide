@@ -5,7 +5,7 @@ import self.parser.{ seq, nott, tok, wrap, r, opt, keep, alt, rep, lit }
 fn separated(item: parser.Rule) -> parser.Rule = seq([item, rep(seq([lit(","), item])), opt(lit(","))])
 fn rules() -> List[(String, parser.Rule)] = [
   ("starred", wrap("starred", seq([lit("*"), r("bit_or")]))),
-  ("star_expression", alt([r("starred"), r("expression")])),
+  ("star_expression", alt([r("starred"), r("named_expression")])),
   ("star_tuple", wrap("tuple", seq([r("star_expression"), lit(","), opt(separated(r("star_expression")))]))),
   ("tuple_display", seq([lit("("), alt([r("star_tuple"), wrap("tuple", seq([]))]), lit(")")])),
   ("list_display", wrap("list", seq([lit("["), opt(separated(r("star_expression"))), lit("]")]))),
@@ -17,10 +17,10 @@ fn rules() -> List[(String, parser.Rule)] = [
   ])),
   ("slices", alt([
     seq([r("slice"), nott(lit(","))]),
-    wrap("tuple", separated(alt([r("slice"), r("starred")])))
+    wrap("tuple", separated(alt([r("slice"), r("call_starred")])))
   ])),
   ("slice", alt([
     wrap("slice", seq([opt(r("expression")), keep(":"), opt(r("expression")), opt(seq([keep(":"), opt(r("expression"))]))])),
-    r("expression")
+    r("named_expression")
   ])),
 ]

@@ -10,7 +10,7 @@ fn rules() -> List[(String, parser.Rule)] = [
   ("call_starred", wrap("starred", seq([lit("*"), r("expression")]))),
   ("call_mapping", wrap("mapping", seq([lit("**"), r("expression")]))),
   ("call_arguments", seq([alt([
-    seq([comma_list(alt([r("call_starred"), seq([r("expression"), nott(lit("="))])])), opt(seq([lit(","), r("call_keywords")]))]),
+    seq([comma_list(alt([r("call_starred"), seq([r("named_expression"), nott(lit("="))])])), opt(seq([lit(","), r("call_keywords")]))]),
     r("call_keywords")
   ]), opt(lit(","))])),
   ("call_keywords", alt([

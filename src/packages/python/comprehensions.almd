@@ -1,0 +1,42 @@
+// Python 3.14 comprehensions and their assignment-target grammar.
+import self.parser
+import self.packages.python.containers
+import self.parser.{ seq, nott, lits, wrap, r, opt, keep, alt, rep, lit }
+
+fn ahead(rule: parser.Rule) -> parser.Rule = nott(nott(rule))
+fn rules() -> List[(String, parser.Rule)] = [
+  ("comprehension", alt([
+    wrap("listcomp", seq([lit("["), r("named_expression"), r("for_clauses"), lit("]")])),
+    wrap("dictcomp", seq([lit("{"), r("expression"), lit(":"), r("expression"), r("for_clauses"), lit("}")])),
+    wrap("setcomp", seq([lit("{"), r("named_expression"), r("for_clauses"), lit("}")])),
+    r("generator")
+  ])),
+  ("generator", seq([lit("("), r("generator_body"), lit(")")])),
+  ("generator_body", wrap("generator", seq([r("named_expression"), r("for_clauses")]))),
+  ("generator_call", wrap("call", r("generator"))),
+  ("for_clauses", seq([r("for_clause"), rep(r("for_clause"))])),
+  ("for_clause", wrap("for", seq([opt(keep("async")), lit("for"), r("targets"), lit("in"), r("disjunction"), rep(wrap("filter", seq([lit("if"), r("disjunction")])))]))),
+  ("targets", alt([
+    seq([r("star_target"), nott(lit(","))]),
+    wrap("tuple", containers.separated(r("star_target")))
+  ])),
+  ("star_target", alt([
+    wrap("starred", seq([lit("*"), nott(lit("*")), r("star_target")])),
+    r("target_atom")
+  ])),
+  ("target_atom", alt([
+    r("target_primary"),
+    r("name"),
+    seq([lit("("), r("target_atom"), lit(")")]),
+    wrap("tuple", seq([lit("("), opt(seq([r("star_target"), lit(","), opt(containers.separated(r("star_target")))])), lit(")")])),
+    wrap("list", seq([lit("["), opt(containers.separated(r("star_target"))), lit("]")]))
+  ])),
+  ("target_lookahead", lits(["(", "[", "."])),
+  // Leave the final suffix for an attribute/subscript store. Calls may occur
+  // earlier in the receiver chain but cannot themselves be assignment targets.
+  ("target_primary", wrap("primary", seq([
+    r("atom"), ahead(r("target_lookahead")),
+    rep(seq([r("primary_suffix"), ahead(r("target_lookahead"))])),
+    alt([r("attribute_suffix"), r("subscript_suffix")]), nott(r("target_lookahead"))
+  ]))),
+]
