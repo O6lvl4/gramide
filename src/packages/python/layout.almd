@@ -96,6 +96,7 @@ fn apply_with(source: String, physical: List[tree.Token], recovering: Bool) -> R
       list.push(out, t)
     }
     else {
+      var stray_closer = false
       if beginning then {
         let next = prefix ?? indentation(buffer, t.start - t.col + 1)
         change_indent(levels, out, next, t)!
@@ -110,10 +111,13 @@ fn apply_with(source: String, physical: List[tree.Token], recovering: Bool) -> R
         }
         else if list.contains([")", "]", "}"], t.text) then {
           let expected = if t.text == ")" then "(" else if t.text == "]" then "[" else "{"
-          guard option.map(list.pop(brackets), (opening) => opening.text) == some(expected) else err(fail(t, "mismatched closing delimiter"))
+          if recovering and list.is_empty(brackets) then stray_closer = true
+          else {
+            guard option.map(list.pop(brackets), (opening) => opening.text) == some(expected) else err(fail(t, "mismatched closing delimiter"))
+          }
         } else ()
       } else ()
-      list.push(out, t)
+      list.push(out, if stray_closer then tree.Token { ...t, kind: "error" } else t)
       code = true
       continuation = none
     }
