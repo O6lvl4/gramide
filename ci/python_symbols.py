@@ -43,9 +43,10 @@ def check(path):
         assert {k:v for k,v in a.items() if k!='end_byte'}=={k:v for k,v in b.items() if k!='end_byte'},(path,a,b)
     return len(want)
 
-with tempfile.TemporaryDirectory() as tmp:
-    p=Path(tmp)/'sample.py'
-    p.write_text('''# 日本語 tests byte offsets.
+def main():
+    with tempfile.TemporaryDirectory() as tmp:
+        p=Path(tmp)/'sample.py'
+        p.write_text('''# 日本語 tests byte offsets.
 @decorate(
     "class")
 class Outer:
@@ -59,22 +60,26 @@ class Outer:
     # Between declarations should not extend method ranges.
     class Inner:
         def method(self):
-            text = """\ndef phantom(): pass\n"""
+            text = """
+def phantom(): pass
+"""
             return text
 
 async def method(): return 0
 
 type Alias[T] = list[T]
 ''')
-    total=check(p)
-    stub=Path(tmp)/'sample.pyi';stub.write_text('class C:\n def m(self) -> int: ...\n');total+=check(stub)
-    for source in ['def broken(:\n pass\n','x = "\\xZ1"\n','x = b"a" "b"\n','match x:\n case 1+2: pass\n']:
-        p.write_text(source)
-        for command in ['check','symbols']:
-            result=subprocess.run([str(BIN),command,str(p)],capture_output=True,text=True)
-            assert result.returncode!=0,(command,source,result.stdout)
-            if command=='symbols':assert not result.stdout,(source,result.stdout)
-stdlib=Path(sysconfig.get_path('stdlib'))
-files=['keyword.py','token.py','stat.py','copyreg.py','genericpath.py','reprlib.py','textwrap.py','inspect.py','tokenize.py','ast.py','dataclasses.py','typing.py']
-for name in files:total+=check(stdlib/name)
-print(f'Python symbols: {total} declarations match CPython names/owners/ranges; 12 complete stdlib files, nested/decorated/async declarations, stubs, invalid input')
+        total=check(p)
+        stub=Path(tmp)/'sample.pyi';stub.write_text('class C:\n def m(self) -> int: ...\n');total+=check(stub)
+        for source in ['def broken(:\n pass\n','x = "\\xZ1"\n','x = b"a" "b"\n','match x:\n case 1+2: pass\n']:
+            p.write_text(source)
+            for command in ['check','symbols']:
+                result=subprocess.run([str(BIN),command,str(p)],capture_output=True,text=True)
+                assert result.returncode!=0,(command,source,result.stdout)
+                if command=='symbols':assert not result.stdout,(source,result.stdout)
+    stdlib=Path(sysconfig.get_path('stdlib'))
+    files=['keyword.py','token.py','stat.py','copyreg.py','genericpath.py','reprlib.py','textwrap.py','inspect.py','tokenize.py','ast.py','dataclasses.py','typing.py']
+    for name in files:total+=check(stdlib/name)
+    print(f'Python symbols: {total} declarations match CPython names/owners/ranges; 12 complete stdlib files, nested/decorated/async declarations, stubs, invalid input')
+
+if __name__=='__main__':main()
