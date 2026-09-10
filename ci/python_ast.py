@@ -121,3 +121,14 @@ def actual(n):
         return out
     assert len(kids)==1,n
     return actual(kids[0])
+
+
+def decode_tree(result):
+    """Rejoin token text once in Python; the native tree walk carries no tokens."""
+    tokens=result['tokens']
+    def visit(n):
+        start=n.pop('start')
+        n['text']=tokens[start] if not n['kids'] and start<len(tokens) else ''
+        for k in n['kids']:visit(k)
+        return n
+    return visit(result['tree'])

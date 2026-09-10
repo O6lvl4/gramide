@@ -1,7 +1,7 @@
 """Compare statement structure and syntax rejection with CPython."""
 from pathlib import Path
 import ast,hashlib,itertools,json,os,platform,shutil,subprocess,sys,sysconfig,tempfile,warnings
-from python_ast import reference,actual,OP
+from python_ast import reference,actual,OP,decode_tree
 warnings.simplefilter('ignore',SyntaxWarning)
 ROOT=Path(__file__).resolve().parents[1]
 VALID=['', '# comment\n', 'pass\nbreak\ncontinue\n', 'a=1; b=2; a+b;\n', 'return\n', 'return a,b\n', 'yield\n', 'yield from xs\n', 'raise\n', 'raise E(x) from cause\n', 'assert a, message\n', 'global a,b\n', 'nonlocal a,b\n', 'del a,b[0],c.x\n', 'import a.b as c,d\n', 'from ..a.b import (x as y,z,)\n', 'from ... import *\n', 'a=b=c=1\n', 'a,b = c,*xs\n', 'x: list[int]\n', '(x): int = 1\n', 'x.y: int = yield 1\n', 'type = 1\n', 'f"{value}"\n']
@@ -228,6 +228,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert len(results)==len(VALID)+len(INVALID)
     for source,want,got in zip(VALID,expected,results):
         assert got['ok'],(source,got)
+        decode_tree(got)
         result=[act_stmt(n) for n in got['tree']['kids'] if n['kind']!='newline']
         assert result==want,(source,want,result)
     for source,got in zip(INVALID,results[len(VALID):]):assert not got['ok'],(source,got)

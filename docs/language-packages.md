@@ -490,3 +490,12 @@ Dataclasses/typing full-file fixtures are still pending their match syntax;
 previous simple-statement segments from those modules remain covered. The ten
 full files do not establish support for the entire standard library or a
 performance/memory win over tree-sitter.
+
+The declaration corpus exposed quadratic copying in the **test probe's output
+walk**, causing the initial CI run to exceed its 60-second process deadline.
+The probe now emits node token indices and one separate token-text array;
+`ci/python_ast.py` rejoins them for exactly the same structural assertions. No
+fixtures were removed and the deadline is unchanged. A local diagnostic on the
+same inspect.py observed approximately 42.84 seconds for the old output path,
+0.07 seconds with tree output omitted, and 0.35 seconds for the indexed output.
+These are single-run harness diagnostics, not a production/tree-sitter benchmark.

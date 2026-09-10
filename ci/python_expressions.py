@@ -118,7 +118,7 @@ for source in [r'f"\x{x}"',r'f"{x:>\x}"',r't"{x:>\U00110000}"',r'fr"{x:>\x}"',
     try:ast.parse(source,mode='eval')
     except (SyntaxError,UnicodeError):INVALID.append(source)
     else:VALID.append(source)
-from python_ast import reference,actual
+from python_ast import reference,actual,decode_tree
 with tempfile.TemporaryDirectory() as tmp:
     project=Path(tmp);(project/'src/packages').mkdir(parents=True)
     shutil.copytree(ROOT/'src/packages/python',project/'src/packages/python')
@@ -137,6 +137,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert len(results)==len(VALID)+len(INVALID)
     for source,want,got in zip(VALID,expected,results):
         assert got['ok'],(source,got)
+        decode_tree(got)
         assert actual(got['tree'])==want,(source,want,actual(got['tree']))
     for source,got in zip(INVALID,results[len(VALID):]):assert not got['ok'],(source,got)
 report=dict(python=platform.python_version(),matching_expression_trees=len(VALID),rejected_expressions=len(INVALID),
