@@ -283,4 +283,3 @@ test "a function written inside a method body is not a method of the type" {
   let p = parser.parse(lang_rust.rust(), toks) |> result.map_err((f) => parser.format_failure(f))!
   assert_eq(outline(p.root, toks, "::"), ["L1-1 impl S", "  L1-1 method S::m", "    L1-1 function helper"])
 }
-
