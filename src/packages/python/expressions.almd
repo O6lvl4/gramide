@@ -3,6 +3,7 @@
 import self.packages.python.containers
 import self.packages.python.arguments
 import self.packages.python.comprehensions
+import self.packages.python.lambdas
 import self.parser
 import self.parser.{ seq, nott, lits, tok, wrap, r, opt, keep, leftf, alt, rep, keeps, lit, grammar }
 
@@ -10,7 +11,8 @@ let HARD_KEYWORDS = ["False", "None", "True", "and", "as", "assert", "async", "a
 
 fn rules() -> List[(String, parser.Rule)] = [
   ("name", seq([nott(lits(HARD_KEYWORDS)), tok("identifier")])),
-  ("expression", wrap("conditional", seq([r("disjunction"), opt(seq([keep("if"), r("disjunction"), keep("else"), r("expression")]))]))),
+  ("expression", alt([r("lambda"), r("conditional")])),
+  ("conditional", wrap("conditional", seq([r("disjunction"), opt(seq([keep("if"), r("disjunction"), keep("else"), r("expression")]))]))),
   ("assignment_expression", wrap("named", seq([r("name"), lit(":="), r("expression")]))),
   ("named_expression", alt([r("assignment_expression"), seq([r("expression"), nott(lit(":="))])])),
   ("disjunction", leftf("boolean", r("conjunction"), keep("or"))),
@@ -26,14 +28,24 @@ fn rules() -> List[(String, parser.Rule)] = [
   ("term", leftf("binary", r("factor"), keeps(["*", "@", "/", "//", "%"]))),
   ("factor", alt([wrap("unary", seq([keeps(["+", "-", "~"]), r("factor")])), r("power")])),
   // Power binds less tightly than unary on its right, more tightly on its left.
-  ("power", wrap("power", seq([r("primary"), opt(seq([keep("**"), r("factor")]))]))),
+  ("power", wrap("power", seq([r("await_primary"), opt(seq([keep("**"), r("factor")]))]))),
+  ("await_primary", alt([wrap("await", seq([lit("await"), r("primary")])), r("primary")])),
   ("primary", wrap("primary", seq([r("atom"), rep(r("primary_suffix"))]))),
   ("primary_suffix", alt([r("attribute_suffix"), r("generator_call"), r("call_suffix"), r("subscript_suffix")])),
   ("attribute_suffix", wrap("attribute", seq([lit("."), r("name")]))),
   ("call_suffix", wrap("call", seq([lit("("), opt(r("call_arguments")), lit(")")]))),
   ("subscript_suffix", wrap("subscript", seq([lit("["), r("slices"), lit("]")]))),
-  ("atom", alt([tok("number"), tok("string"), keeps(["True", "False", "None", "..."]), r("name"), r("comprehension"), r("tuple_display"), r("list_display"), r("dict_display"), r("set_display"), seq([lit("("), r("named_expression"), lit(")")])])),
-] + containers.rules() + arguments.rules() + comprehensions.rules()
+  ("atom", alt([tok("number"), tok("string"), keeps(["True", "False", "None", "..."]), r("name"), r("comprehension"), r("tuple_display"), r("list_display"), r("dict_display"), r("set_display"), seq([lit("("), alt([r("yield_expression"), r("named_expression")]), lit(")")])])),
+  ("yield_expression", alt([
+    wrap("yield_from", seq([lit("yield"), lit("from"), r("expression")])),
+    wrap("yield", seq([lit("yield"), opt(r("yield_values"))]))
+  ])),
+  ("yield_item", alt([r("starred"), r("expression")])),
+  ("yield_values", alt([
+    wrap("tuple", seq([r("yield_item"), lit(","), opt(containers.separated(r("yield_item")))])),
+    r("yield_item")
+  ])),
+] + containers.rules() + arguments.rules() + comprehensions.rules() + lambdas.rules()
 
 fn expression_grammar() -> parser.Grammar = grammar("evaluation", [
   ("evaluation", seq([alt([r("evaluation_tuple"), r("expression")]), opt(tok("newline"))])),

@@ -51,9 +51,51 @@ for target in ['*x','(*x)','(*x,)','*x,y','(x)','((x))','[x,y.z]','x,','(x,)','[
     else:VALID.append(source)
 for async_a,async_b,filter_a,filter_b in itertools.product(['','async '],['','async '],['',' if x'],['',' if y if z']):
     VALID.append(f'[x+y {async_a}for x in xs{filter_a} {async_b}for y in ys{filter_b}]')
+# Parameter category order, defaults across '/', and keyword-only phases.
+for length in range(1,5):
+    for categories in itertools.product(range(6),repeat=length):
+        params=[['p'+str(i), 'p'+str(i)+'=x', '/', '*', '*p'+str(i), '**p'+str(i)][category] for i,category in enumerate(categories)]
+        source='lambda '+','.join(params)+': x'
+        try:ast.parse(source,mode='eval')
+        except SyntaxError:INVALID.append(source)
+        else:VALID.append(source)
+VALID += ['lambda: x', 'lambda x,/: x', 'lambda a,b=1,/,c=2,*args,d,e=3,**kw: a',
+          'lambda a,/,b,c=1,*,d,e=2,**kw: c', 'lambda a=1,/: a', 'lambda a=1,/,**kw: a',
+          'lambda a=lambda b: b: a', 'lambda a=(x:=1): a', 'lambda x: lambda y: x+y',
+          'lambda x: a if b else c', '(lambda x:x)(1)', 'f(lambda: x)', '[lambda x:x for x in xs]',
+          'lambda x, y=1,: x', 'lambda *args,: args', 'lambda **kw,: kw',
+          'await f().x[y] ** -z', '-await f() ** x', 'await (await f())', 'f(await g())',
+          '[await f(x) async for x in xs]', '(yield)', '(yield x)', '(yield x,)', '(yield x,y)',
+          '(yield *xs, y)', '(yield from f())', '(yield from a if b else c)',
+          'lambda: (yield x)', '(yield (x:=1))', 'f((yield x))']
+INVALID += ['lambda /:x', 'lambda *:x', 'lambda *,**kw:x', 'lambda a=1,b:x',
+            'lambda a=1,/,b:x', 'lambda *a=1:x', 'lambda **a=1:x', 'lambda (a,b):x',
+            'lambda x:int: x', 'lambda a,,b:x', 'lambda a:','lambda a -> b: x',
+            'await -x','await await f()', 'yield x', '(yield from)', '(yield from *xs)',
+            '(yield x := 1)', 'f(yield x)']
+for op in OPS:
+    VALID += [f'await f() {op} x', f'x {op} await f()']
+VALID += ['a if b else lambda x: x', 'lambda: a if b else lambda: c',
+          '(lambda x: x) if flag else other', 'lambda x=lambda: a if b else c: x',
+          'lambda x=(lambda y=1,/:y):x', 'lambda a,/,*args,b=1,**kw: (yield from args)',
+          '(yield *xs)', '(yield x,*ys,z,)', '(yield (a,b))', '(await f()).x',
+          '(await f())()', 'await f(x for x in xs)', '[x for (lambda: x)().y in xs]']
+INVALID += ['a if lambda: b else c', 'a or lambda: b', 'lambda x: y := z',
+            '(yield from a,b)', '(yield *a if b else c)', 'await lambda: x',
+            'lambda **kw,*args:x', 'lambda *,x,/:x']
 OP={ast.Add:'+',ast.Sub:'-',ast.Mult:'*',ast.Div:'/',ast.FloorDiv:'//',ast.Mod:'%',ast.MatMult:'@',ast.Pow:'**',ast.LShift:'<<',ast.RShift:'>>',ast.BitAnd:'&',ast.BitXor:'^',ast.BitOr:'|',ast.And:'and',ast.Or:'or',ast.Eq:'==',ast.NotEq:'!=',ast.Lt:'<',ast.LtE:'<=',ast.Gt:'>',ast.GtE:'>=',ast.In:'in',ast.NotIn:'not in',ast.Is:'is',ast.IsNot:'is not',ast.USub:'-',ast.UAdd:'+',ast.Invert:'~',ast.Not:'not'}
 def reference(n,source):
     if isinstance(n,(ast.Name,ast.Constant)):return ['atom',ast.get_source_segment(source,n)]
+    if isinstance(n,ast.Lambda):
+        a=n.args;pos=a.posonlyargs+a.args
+        defaults=[None]*(len(pos)-len(a.defaults))+[reference(v,source) for v in a.defaults]
+        pairs=[[v.arg,d] for v,d in zip(pos,defaults)];split=len(a.posonlyargs)
+        params=dict(posonly=pairs[:split],positional=pairs[split:],vararg=a.vararg.arg if a.vararg else None,
+                    keywordonly=[[v.arg,reference(d,source) if d else None] for v,d in zip(a.kwonlyargs,a.kw_defaults)],kwarg=a.kwarg.arg if a.kwarg else None)
+        return ['lambda',params,reference(n.body,source)]
+    if isinstance(n,(ast.Await,ast.Yield,ast.YieldFrom)):
+        kind={ast.Await:'await',ast.Yield:'yield',ast.YieldFrom:'yield_from'}[type(n)]
+        return [kind,reference(n.value,source) if n.value else None]
     if isinstance(n,ast.NamedExpr):return ['named',reference(n.target,source),reference(n.value,source)]
     if isinstance(n,(ast.ListComp,ast.SetComp,ast.DictComp,ast.GeneratorExp)):
         kind={ast.ListComp:'listcomp',ast.SetComp:'setcomp',ast.DictComp:'dictcomp',ast.GeneratorExp:'generator'}[type(n)]
@@ -78,6 +120,20 @@ def reference(n,source):
     raise AssertionError(ast.dump(n))
 def actual(n):
     kids=n['kids'];kind=n['kind']
+    if kind=='lambda':
+        params=dict(posonly=[],positional=[],vararg=None,keywordonly=[],kwarg=None)
+        keywordonly=False
+        for p in kids[0]['kids']:
+            if p['text']=='/' and not p['kids']:
+                params['posonly']=params['positional'];params['positional']=[]
+            elif p['text']=='*' and not p['kids']:keywordonly=True
+            elif p['kind'] in ('vararg','kwarg'):
+                params[p['kind']]=p['kids'][0]['kids'][0]['text'];keywordonly=True
+            else:
+                pair=[p['kids'][0]['text'],actual(p['kids'][1]) if len(p['kids'])>1 else None]
+                params['keywordonly' if keywordonly else 'positional'].append(pair)
+        return ['lambda',params,actual(kids[1])]
+    if kind in ('await','yield','yield_from'):return [kind,actual(kids[0]) if kids else None]
     if kind=='named':return ['named',actual(kids[0]),actual(kids[1])]
     if kind in ('listcomp','setcomp','dictcomp','generator'):
         count=2 if kind=='dictcomp' else 1
@@ -139,6 +195,6 @@ with tempfile.TemporaryDirectory() as tmp:
     for source,got in zip(INVALID,results[len(VALID):]):assert not got['ok'],(source,got)
 report=dict(python=platform.python_version(),matching_expression_trees=len(VALID),rejected_expressions=len(INVALID),
             expressions_sha256=hashlib.sha256(json.dumps(VALID+INVALID,ensure_ascii=False).encode()).hexdigest(),
-            scope='normalized operator trees, conditional order, comparisons, call/attribute/subscript structure, displays, unpacking, slices, call argument ordering, named expressions and comprehensions; not a complete Python grammar')
+            scope='normalized operator trees, conditional order, comparisons, call/attribute/subscript structure, displays, unpacking, slices, call argument ordering, named expressions, comprehensions, lambdas and yield/await; not a complete Python grammar')
 if len(sys.argv)>1:Path(sys.argv[1]).write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report))
