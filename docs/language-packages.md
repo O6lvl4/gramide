@@ -622,3 +622,29 @@ recovered-tree shape or performance is not claimed.
 Recovery inside interpolation frames, unmatched brackets, invalid escapes,
 invalid indentation and NUL remains unsupported. Partial-symbol consumption by
 hew and incremental edit reuse also remain unfinished.
+
+## Recovered declaration contract for readers
+
+Python advertises `symbols-recovered`, a separate command from strict `symbols`.
+It returns schema version 1 plus `recovery_policy: "error-free-declarations-v1"`,
+`complete`, a `diagnostic`, ordered `errors` (inclusive line ranges and exclusive
+end byte offsets), and `symbols`. Valid input has `complete: true` and no errors;
+recovered input has `complete: false` and nonempty bounded errors. Unsupported
+lexical failures still return failure without JSON. Other language packages do
+not advertise this policy yet because their recovery may retain partial heads.
+
+Only declarations whose byte ranges do not intersect any ERROR range are
+returned. An enclosing class/function covering an error is omitted; an intact
+nested method/function can remain with its original lexical name and owner.
+This does not certify compiler semantics or recover a malformed header. The
+normal symbols command and its complete-only contract remain unchanged.
+
+Error ranges are collected in source order; a binary search tests overlap, so
+filtering D declarations against E disjoint errors costs O(D log E), rather than
+scanning every error for every declaration. The regression includes 500
+alternating errors/functions, malformed headers with hidden nested declarations,
+ordinary-string failures, strict rejection and valid-input output parity.
+
+Hew can explicitly request this command after strict parsing fails, validate the
+policy and ranges, and label the selected engine `gramide-recovered`. It must
+never silently accept an arbitrary partial response from the strict command.

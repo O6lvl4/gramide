@@ -18,3 +18,4 @@ python3 ci/python_statements.py
 python3 ci/python_symbols.py
 python3 ci/python_recovery.py
 python3 ci/python_string_recovery.py
+python3 ci/recovered_symbols.py
