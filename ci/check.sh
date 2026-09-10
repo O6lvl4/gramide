@@ -15,3 +15,4 @@ python3 ci/python_identifiers.py
 python3 ci/python_lexer.py
 python3 ci/python_expressions.py
 python3 ci/python_statements.py
+python3 ci/python_symbols.py

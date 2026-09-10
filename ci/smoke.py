@@ -13,6 +13,7 @@ def run(*args, code=0):
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
     for ext, text in {
+        "py": "def real(): return 1\n",
         "rs": "fn real() { let value = 1; }\n",
         "go": "package main\nfunc real() {}\n",
         "almd": "fn real() -> Int = 1\n",
@@ -24,4 +25,4 @@ with tempfile.TemporaryDirectory() as tmp:
         broken = root / ("broken." + ext)
         broken.write_text(text + "}\n")
         run("check", broken, code=1)
-print("CLI smoke passed: three language outlines and syntax rejection")
+print("CLI smoke passed: four language outlines and syntax rejection")
