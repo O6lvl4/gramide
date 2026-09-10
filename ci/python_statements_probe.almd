@@ -7,16 +7,17 @@ import env
 import fs
 import json
 
-fn node(n: tree.Node, tokens: List[tree.Token]) -> Value = value.object([
+// Send token indices; carrying the complete token list per node copies it.
+fn node(n: tree.Node) -> Value = value.object([
   ("kind", value.str(n.kind)),
-  ("text", value.str(if list.is_empty(n.kids) then (option.map(list.get(tokens, n.start), (t) => t.text) ?? "") else "")),
-  ("kids", value.array(list.map(n.kids, (k) => node(k, tokens))))
+  ("start", value.int(n.start)),
+  ("kids", value.array(list.map(n.kids, (k) => node(k))))
 ])
 fn check(source: String, grammar: parser.Compiled) -> Value = match lexer.scan_source(source) {
   err(_) => value.object([("ok", value.bool(false))]),
   ok(tokens) => match expressions.parse_with(grammar, tokens) {
     err(f) => value.object([("ok", value.bool(false)), ("message", value.str(parser.format_failure(f)))]),
-    ok(parsed) => value.object([("ok", value.bool(true)), ("tree", node(parsed.root, parsed.toks))]),
+    ok(parsed) => value.object([("ok", value.bool(true)), ("tree", node(parsed.root)), ("tokens", value.array(list.map(parsed.toks, (t) => value.str(t.text))))]),
   },
 }
 effect fn main() -> Unit = {

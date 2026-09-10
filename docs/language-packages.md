@@ -460,3 +460,42 @@ a file was accepted.
 Function/class declarations, match patterns, type aliases, contextual compiler
 checks, type comments, Unicode-name escape validation, recovery and hew
 integration remain unfinished. Python is still unregistered.
+
+## Python implementation progress: functions, classes and generic declarations
+
+`parameters.almd` follows CPython v3.14.4's function parameter grammar, including
+positional-only and keyword-only parameters, annotations, defaults and variadic
+parameters. Starred annotations are admitted for `*args`, not ordinary parameters
+or `**kwargs`. The separate lambda grammar keeps its unannotated signature rules.
+
+`declarations.almd` adds sync/async functions, classes, decorators, return
+annotations, type aliases and type parameters (bounds, defaults, TypeVarTuple and
+ParamSpec). Declarations reuse the existing suite and expression grammars. Their
+names use the shared tree `name` field, and decorator spans belong to the owning
+declaration for future symbol-range integration.
+
+The statement oracle matches **683** structures and rejects **1,543** malformed
+inputs. It includes 1,554 annotated-parameter category combinations, longer mixed
+signatures, nested declarations, class arguments, decorator order and generic
+parameter structure. It now also compares **ten complete standard-library files**:
+keyword.py, token.py, stat.py, copyreg.py, genericpath.py, reprlib.py, textwrap.py,
+inspect.py, tokenize.py and ast.py. Bodies are compared recursively, not only
+function/class names. [Evidence](evidence/python-declarations.json) records the
+corpus and the full-file list. Literal decoding and compiler-context checks are
+still outside this oracle.
+
+Match patterns, contextual checks, type-comment handling, Unicode-name escape
+validation, recovery, package registration and hew integration remain unfinished.
+Dataclasses/typing full-file fixtures are still pending their match syntax;
+previous simple-statement segments from those modules remain covered. The ten
+full files do not establish support for the entire standard library or a
+performance/memory win over tree-sitter.
+
+The declaration corpus exposed quadratic copying in the **test probe's output
+walk**, causing the initial CI run to exceed its 60-second process deadline.
+The probe now emits node token indices and one separate token-text array;
+`ci/python_ast.py` rejoins them for exactly the same structural assertions. No
+fixtures were removed and the deadline is unchanged. A local diagnostic on the
+same inspect.py observed approximately 42.84 seconds for the old output path,
+0.07 seconds with tree output omitted, and 0.35 seconds for the indexed output.
+These are single-run harness diagnostics, not a production/tree-sitter benchmark.
