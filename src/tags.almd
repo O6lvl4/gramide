@@ -65,12 +65,29 @@ fn render(t: Tag) -> String =
 //
 // This is the whole vocabulary. A grammar that invents a kind still parses; it
 // is simply invisible to `outline`, `tags` and `map`.
-fn decl_kind(k: String, rules: package_api.SymbolRules) -> String =
-  option.map(list.find(rules.declarations, (d) => d.0 == k), (d) => d.1) ?? ""
+fn decl_kind(k: String, rules: package_api.SymbolRules) -> String = {
+  var found = -1
+  var index = 0
+  for d in rules.declarations {
+    if found < 0 and d.0 == k then found = index else ()
+    index = index + 1
+  }
+  option.map(list.get(rules.declarations, found), (d) => d.1) ?? ""
+}
 fn is_scope(k: String, rules: package_api.SymbolRules) -> Bool = list.contains(rules.scopes, k)
 fn is_callable(k: String, rules: package_api.SymbolRules) -> Bool = list.contains(rules.callables, k)
 
-fn child(n: tree.Node, field: String) -> Option[tree.Node] = list.find(n.kids, (k) => k.field == field)
+// The native list.find lowering currently clones its complete input and each
+// candidate. Borrow the scan and copy only the matching field, never its siblings.
+fn child(n: tree.Node, field: String) -> Option[tree.Node] = {
+  var found = -1
+  var index = 0
+  for k in n.kids {
+    if found < 0 and k.field == field then found = index else ()
+    index = index + 1
+  }
+  list.get(n.kids, found)
+}
 
 fn bare_name(n: tree.Node, toks: List[tree.Token]) -> String = match child(n, "name") {
   some(m) => if list.is_empty(m.kids) then leaf_text(m, toks) else span_text(m, toks),
