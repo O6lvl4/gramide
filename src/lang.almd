@@ -137,9 +137,18 @@ fn parse_lang(l: Language, path: String, src: String) -> Result[parser.Parsed, S
   parser.parse_with(l.grammar, toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
 }
 
+// The gate's own path: the verdict and nothing else, so the engine builds no
+// tree. `check` is what an agent runs on every write, and it never looks at
+// one.
+fn verify_lang(l: Language, path: String, src: String) -> Result[Unit, String] = {
+  let toks = lex.tokenize(src, l.lex) |> result.map_err((e) => lex_error(path, e))!
+  parser.verify(l.grammar, toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
+}
+
 // One file, compiling its grammar for this call alone.
 fn read_source(path: String, src: String) -> Result[Reading, String] = read_lang(language_of(path)!, path, src)
 fn parse_source(path: String, src: String) -> Result[parser.Parsed, String] = parse_lang(language_of(path)!, path, src)
+fn verify_source(path: String, src: String) -> Result[Unit, String] = verify_lang(language_of(path)!, path, src)
 
 // Many files, against grammars compiled once.
 // per language
@@ -154,4 +163,11 @@ fn parse_with(e: Engines, path: String, src: String) -> Result[parser.Parsed, St
   if string.ends_with(path, ".go") then parse_lang(e.go, path, src)
   else if string.ends_with(path, ".rs") then parse_lang(e.rs, path, src)
   else if string.ends_with(path, ".almd") then parse_lang(e.almd, path, src)
+  else err(unknown_ext(path))
+
+// per language
+fn verify_with(e: Engines, path: String, src: String) -> Result[Unit, String] =
+  if string.ends_with(path, ".go") then verify_lang(e.go, path, src)
+  else if string.ends_with(path, ".rs") then verify_lang(e.rs, path, src)
+  else if string.ends_with(path, ".almd") then verify_lang(e.almd, path, src)
   else err(unknown_ext(path))

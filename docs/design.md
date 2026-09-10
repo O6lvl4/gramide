@@ -265,6 +265,64 @@ why `check` takes many files at a time. And the remaining gap to `gofmt` is not 
 missing trick: it is that every value the engine touches is copied, which is the cost
 of the property that makes the grammar editable at runtime.
 
+## Where the remaining 4x is, and where it is not
+
+Measured 2026-09-10 with `sample` on a release build, one 3.95 MB Go file, so that the
+per-file costs above do not dominate. `check` splits:
+
+| | |
+|---|---|
+| lexing | 0.52 s (70%) |
+| numbering the token stream | 0.06 s (8%) |
+| parsing | 0.16 s (22%) |
+
+**The parser is not the bottleneck; the lexer is.** And 84% of the lexer's time is in
+`malloc` / `free` / `memmove` rather than in the lexer:
+
+```
+_xzm_free                 1008        <- top of stack
+_xzm_xzone_malloc          380
+_malloc_zone_malloc        276
+lex::tokenize_with         228        <- the actual lexer
+almide_rt_string_to_bytes  153
+String::clone              132
+```
+
+Two things cause it, and neither is in this repository. `string.to_bytes` returns
+`List[Int]`, which is `Vec<i64>`, so reading a 3.95 MB source allocates 31.6 MB — and it
+is the only byte-accurate accessor a string has, because `string.slice` counts
+characters. And a `Token` owns two `String`s, which gives the whole token list a
+per-element destructor. Both are filed: almide#2077, almide#2078.
+
+The negative results are worth as much as the positive one, because each looked
+obviously right:
+
+| change | effect on `check` |
+|---|---|
+| interning the tree's `kind` and `field` strings | **0%** |
+| pre-sizing the per-node child vectors | **0%** |
+| pre-sizing the token vector | **0%** |
+| dropping `Token.text` alone | **0%** |
+| making `Token.kind` scalar alone | 4% of lexing |
+| **both at once — no heap in the record** | **13% of lexing** |
+| rebuilding against the fixed almide#2066–#2070 | **0%** |
+
+The last row is the one to remember. Every clone those issues describe was fixed
+upstream, and gramide got nothing, because the engine had already been written around
+each of them — see "What the native backend taught the engine". A workaround does not
+stop costing once the bug is fixed; it stops being needed.
+
+The row above it is the shape of the problem: removing one of a record's two owned
+fields is worth nothing, and removing both is worth 13%. There is no incremental path,
+which is why this is a language question rather than a tuning question.
+
+One more measurement, because it decides how much a second core would be worth:
+`fan { }` is specified as native threads, and it is not — eight CPU-bound arms take the
+same wall time as a `for` loop, and `user` never exceeds `real` (almide#2080). `gofmt`
+parallelises across its file arguments by default; the comparison above pins it to one
+core so that it is fair, but in ordinary use it keeps fourteen and gramide cannot ask
+for a second.
+
 ## Error recovery
 
 A file an agent is halfway through editing usually does not parse, and it is the file
@@ -300,9 +358,17 @@ before the first thing that fails. Recovery costs about 14 ms on a 130 KB file t
 fails, and nothing at all on a file that parses.
 
 `check` never recovers. It is the gate, its exit code is a verdict, and its output on
-all 11,364 corpus files is byte-identical to the engine before recovery existed.
+all 39,021 corpus files is byte-identical to the engine before recovery existed.
 `parse`, `outline`, `tags` and `map` all recover, and say so: the reason goes to stderr
 and, for `map`, into the notes under the map.
+
+`check` also builds no tree. Whether a rule matches never depended on the nodes it made
+— the tree is output — so `parser.verify` runs the same engine with `build: false` and
+every `Wrap`, `Field` and leaf becomes a no-op. That is the whole difference between the
+gate and a reader. On the 25.5 MB Go corpus, alternating runs: 5.805 s against 5.563 s,
+4.2%, and `check` output stays byte-identical on all 39,021 files. It matters more than
+the number: `check` is what an agent runs on every write, and it was building and
+throwing away a syntax tree each time.
 
 ## Next
 

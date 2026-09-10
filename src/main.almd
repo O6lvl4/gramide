@@ -55,7 +55,7 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
     "outline" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.outline(d.parsed.root, d.parsed.toks, d.sep) { println(l) }; ok(()) },
     "tags" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.tags(d.parsed.root, d.parsed.toks, d.sep) { println(l) }; ok(()) },
     // the gate. strict, and the only command whose exit code is a verdict
-    "check" => { let _ = lang.parse_source(path, src)!; println(path + ": ok"); ok(()) },
+    "check" => { let _ = lang.verify_source(path, src)!; println(path + ": ok"); ok(()) },
     // no grammar needed, and no false rejection possible: valid code balances
     "balance" => match balance.check(src) {
       none => { println(path + ": balanced"); ok(()) },
@@ -84,7 +84,7 @@ effect fn run_many(cmd: String, paths: List[String]) -> Unit = {
           eprintln(p + ":" + int.to_string(f.line) + ":" + int.to_string(f.col) + ": " + f.message)
           failed = true
         },
-      } else match lang.parse_with(engines, p, src) {
+      } else match lang.verify_with(engines, p, src) {
         err(e) => {
           eprintln(e)
           failed = true
