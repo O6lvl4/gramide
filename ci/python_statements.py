@@ -45,6 +45,27 @@ INVALID += ['if x:\npass\n','if x:\n','if x: if y: pass\n','else: pass\n','elif 
             'try: pass\nexcept A: pass\nexcept* B: pass\n','try: pass\nexcept A,B as e: pass\n',
             'try: pass\nfinally: pass\nexcept A: pass\n']
 
+# Full signatures, decorators, generic declarations and type aliases.
+for length in range(1,5):
+    for categories in itertools.product(range(6),repeat=length):
+        params=[['p'+str(i)+': T', 'p'+str(i)+': T=x', '/', '*', '*p'+str(i)+': T', '**p'+str(i)+': T'][c] for i,c in enumerate(categories)]
+        source='def f('+','.join(params)+') -> R: pass\n'
+        try:ast.parse(source)
+        except SyntaxError:INVALID.append(source)
+        else:VALID.append(source)
+VALID += ['def f(): pass\n','async def f(x): return await x\n',
+          '@first\n@second(x)\ndef f(a: T,/,b: U=1,*args: *Ts,c,**kw: V) -> R:\n return a\n',
+          'class C(Base, *bases, metaclass=Meta, **kw):\n @property\n def value(self): return 1\n',
+          'def outer():\n class Inner:\n  async def method(self): pass\n return Inner\n',
+          'type Alias = int | str\n','type Alias[T, *Ts, **P] = tuple[T, *Ts]\n',
+          'class C[T: (int,str)=int, *Ts=*tuple[int], **P=[int]](Base[T]): pass\n',
+          'def f[T: Bound=Default](x:T) -> T: return x\n',
+          'def f(*args: *tuple[int,...]): pass\n','type = 1\n','type(x)\n']
+INVALID += ['def f(a=1,b): pass\n','def f(a: *T): pass\n','def f(**kw: *T): pass\n',
+            'def f():\n','def f(x) ->: pass\n','async class C: pass\n','@decorator\nx=1\n',
+            'class C[]: pass\n','def f[](): pass\n','type A[] = int\n','type A =\n',
+            'type A[*Ts: Bound] = T\n','class C(x=1,Base): pass\n']
+
 # Exercise real top-level simple statements without inventing replacements for
 # compound suites. Each exact AST source segment becomes a standalone fixture.
 stdlib=Path(sysconfig.get_path('stdlib'));stdlib_count=0;stdlib_compound_count=0
@@ -65,9 +86,27 @@ for name in ['tokenize.py','dataclasses.py','inspect.py','ast.py','typing.py']:
 for outer,inner in itertools.product(['if outer','while outer','for outer in xs'],['if inner','while inner','for inner in ys']):
     VALID.append(f'{outer}:\n    {inner}:\n        x=1\n    else:\n        x=2\nelse:\n    x=3\nx=4\n')
 
+# Complete source files, now that declarations compose with control-flow suites.
+full_files=['keyword.py','token.py','stat.py','copyreg.py','genericpath.py','reprlib.py','textwrap.py','inspect.py','tokenize.py','ast.py']
+for name in full_files:VALID.append((stdlib/name).read_text())
+
+def ref_signature(a,source):
+    pos=a.posonlyargs+a.args;defaults=[None]*(len(pos)-len(a.defaults))+list(a.defaults)
+    ref=lambda v:reference(v,source) if v is not None else None
+    param=lambda v,d:[v.arg,ref(v.annotation),ref(d)]
+    pairs=[param(v,d) for v,d in zip(pos,defaults)];split=len(a.posonlyargs)
+    return dict(posonly=pairs[:split],positional=pairs[split:],vararg=param(a.vararg,None) if a.vararg else None,
+                keywordonly=[param(v,d) for v,d in zip(a.kwonlyargs,a.kw_defaults)],kwarg=param(a.kwarg,None) if a.kwarg else None)
+def ref_types(params,source):
+    ref=lambda v:reference(v,source) if v is not None else None
+    return [[{ast.TypeVar:'type_var',ast.TypeVarTuple:'type_var_tuple',ast.ParamSpec:'param_spec'}[type(p)],p.name,ref(getattr(p,'bound',None)),ref(p.default_value)] for p in params]
+
 def ref_stmt(n,source):
     ref=lambda v:reference(v,source) if v is not None else None
     body=lambda nodes:[ref_stmt(v,source) for v in nodes]
+    if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)):return ['function',n.name,int(isinstance(n,ast.AsyncFunctionDef)),ref_signature(n.args,source),ref(n.returns),[ref(v) for v in n.decorator_list],ref_types(n.type_params,source),body(n.body)]
+    if isinstance(n,ast.ClassDef):return ['class',n.name,[ref(v) for v in n.bases],[[v.arg,ref(v.value)] for v in n.keywords],[ref(v) for v in n.decorator_list],ref_types(n.type_params,source),body(n.body)]
+    if isinstance(n,ast.TypeAlias):return ['type_alias',n.name.id,ref_types(n.type_params,source),ref(n.value)]
     if isinstance(n,(ast.If,ast.While)):return [type(n).__name__.lower(),ref(n.test),body(n.body),body(n.orelse)]
     if isinstance(n,(ast.For,ast.AsyncFor)):return ['for',int(isinstance(n,ast.AsyncFor)),ref(n.target),ref(n.iter),body(n.body),body(n.orelse)]
     if isinstance(n,(ast.With,ast.AsyncWith)):return ['with',int(isinstance(n,ast.AsyncWith)),[[ref(v.context_expr),ref(v.optional_vars)] for v in n.items],body(n.body)]
@@ -96,8 +135,45 @@ def act_else(nodes):
     n=nodes[0]
     return [act_stmt(n)] if n['kind']=='if_stmt' else act_block(n['kids'][0])
 
+def maybe_node(n):return actual(n['kids'][0]) if n['kids'] else None
+def act_types(n):
+    out=[]
+    for p in n['kids']:
+        parts=p['kids'];bound=None;default=None
+        for v in parts[1:]:
+            if v['kind']=='bound':bound=maybe_node(v)
+            elif v['kind']=='default':default=maybe_node(v)
+        out.append([p['kind'],parts[0]['text'],bound,default])
+    return out
+def act_signature(n):
+    out=dict(posonly=[],positional=[],vararg=None,keywordonly=[],kwarg=None);keywordonly=False
+    def param(p):
+        parts=p['kids'];annotation=None;default=None
+        for v in parts[1:]:
+            if v['kind']=='annotation':annotation=maybe_node(v)
+            elif v['kind']=='default':default=maybe_node(v)
+        return [parts[0]['text'],annotation,default]
+    for p in n['kids']:
+        if p['text']=='/' and not p['kids']:out['posonly']=out['positional'];out['positional']=[]
+        elif p['text']=='*' and not p['kids']:keywordonly=True
+        elif p['kind'] in ('vararg','kwarg'):out[p['kind']]=param(p['kids'][0]);keywordonly=True
+        else:out['keywordonly' if keywordonly else 'positional'].append(param(p))
+    return out
+
 def act_stmt(n):
     k=n['kind'];kids=n['kids'];at=lambda i:actual(kids[i]) if i<len(kids) else None
+    if k=='function_declaration':
+        offset=int(kids[1]['text']=='async')
+        decorators=[actual(v) for v in kids[0]['kids'] if v['kind']!='newline']
+        return ['function',kids[1+offset]['text'],offset,act_signature(kids[3+offset]),maybe_node(kids[4+offset]),decorators,act_types(kids[2+offset]),act_block(kids[5+offset])]
+    if k=='class_declaration':
+        bases=[];keywords=[]
+        for v in kids[3]['kids']:
+            if v['kind']=='keyword':keywords.append([v['kids'][0]['text'],actual(v['kids'][1])])
+            elif v['kind']=='mapping':keywords.append([None,actual(v['kids'][0])])
+            else:bases.append(actual(v))
+        return ['class',kids[1]['text'],bases,keywords,[actual(v) for v in kids[0]['kids'] if v['kind']!='newline'],act_types(kids[2]),act_block(kids[4])]
+    if k=='type_alias':return [k,kids[0]['text'],act_types(kids[1]),at(2)]
     if k in ('if_stmt','while_stmt'):return [k.removesuffix('_stmt'),at(0),act_block(kids[1]),act_else(kids[2:])]
     if k=='for_stmt':
         offset=int(kids[0]['text']=='async')
@@ -155,6 +231,6 @@ with tempfile.TemporaryDirectory() as tmp:
         result=[act_stmt(n) for n in got['tree']['kids'] if n['kind']!='newline']
         assert result==want,(source,want,result)
     for source,got in zip(INVALID,results[len(VALID):]):assert not got['ok'],(source,got)
-report=dict(python=platform.python_version(),matching_statement_trees=len(VALID),stdlib_simple_statements=stdlib_count,stdlib_compound_statements=stdlib_compound_count,rejected_statements=len(INVALID),source_sha256=hashlib.sha256(json.dumps(VALID+INVALID,ensure_ascii=False).encode()).hexdigest(),scope='simple/control-flow statement structure; no functions, classes, match, type aliases, contextual compiler checks or literal decoding')
+report=dict(python=platform.python_version(),matching_statement_trees=len(VALID),stdlib_simple_statements=stdlib_count,stdlib_compound_statements=stdlib_compound_count,full_stdlib_files=full_files,rejected_statements=len(INVALID),source_sha256=hashlib.sha256(json.dumps(VALID+INVALID,ensure_ascii=False).encode()).hexdigest(),scope='statement/declaration structure; no match, contextual compiler checks or literal decoding')
 if len(sys.argv)>1:Path(sys.argv[1]).write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report))

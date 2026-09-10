@@ -2,6 +2,7 @@
 import self.parser
 import self.packages.python.expressions
 import self.packages.python.compounds
+import self.packages.python.declarations
 import self.packages.python.containers
 import self.packages.python.arguments
 import self.parser.{ seq, nott, wrap, r, opt, keep, keeps, alt, rep, tok, lit, grammar }
@@ -9,7 +10,7 @@ import self.parser.{ seq, nott, wrap, r, opt, keep, keeps, alt, rep, tok, lit, g
 fn rules() -> List[(String, parser.Rule)] = [
   ("simple_stmts", seq([r("simple_stmt"), rep(seq([lit(";"), r("simple_stmt")])), opt(lit(";")), tok("newline")])),
   ("simple_stmt", alt([
-    r("assignment"), r("import_stmt"),
+    r("assignment"), r("type_alias"), r("import_stmt"),
     wrap("return", seq([lit("return"), opt(r("yield_values"))])),
     wrap("raise", seq([lit("raise"), opt(seq([r("expression"), opt(seq([lit("from"), r("expression")]))]))])),
     wrap("assert", seq([lit("assert"), r("expression"), opt(seq([lit(","), r("expression")]))])),
@@ -50,4 +51,4 @@ fn rules() -> List[(String, parser.Rule)] = [
 ]
 fn file_grammar() -> parser.Grammar = grammar("file", [
   ("file", wrap("module", rep(r("statement"))))
-] + rules() + compounds.rules() + expressions.rules())
+] + rules() + declarations.rules() + compounds.rules() + expressions.rules())
