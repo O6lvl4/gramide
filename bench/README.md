@@ -215,3 +215,46 @@ The adapter remains at 16 exact cases. This only closes the gaps in these 20
 hand-selected inputs, not general recovery accuracy: mismatched closers, other
 lexical failures and ambiguous damaged replacement fields remain gaps, while
 incremental parsing and the measured speed/RSS deficit are unchanged.
+
+## Generated stdlib edit corpus
+
+`python_edit_corpus.py` expands recovery comparison beyond the original 20
+fixtures. It inserts five kinds of invalid line at module start and up to four
+evenly sampled function/class body starts in each of the same 12 stdlib files.
+Anchors are chosen before invoking either parser, including nested/decorated
+bodies; inline suites are excluded. Python 3.14.4 gives 55 anchors and 275 edits.
+
+The oracle starts from the unedited CPython AST, omits declarations containing
+the insertion, and shifts every other declaration's name/owner/range unchanged.
+Both unedited parsers must match that AST. A `pass` insertion control verifies
+the range transformation against a new CPython AST, and every actual damaged
+input must be rejected by `ast.parse`. These controls do not make the desired
+invalid-input recovery policy a Python language requirement. In particular,
+keeping lexical owners and treating the inserted line as isolated damage are
+consumer choices. The tree-sitter adapter may group errors differently.
+
+```sh
+python3 bench/python_edit_corpus.py --gramide ./gramide \
+  --tree-sitter /tmp/tree-sitter-python --references /path/to/almide-references \
+  --output /tmp/python-edit-corpus.json
+```
+
+Evidence records source and binary hashes, insertion offsets/text, all
+missing/spurious/incorrect rows, unavailable results and per-edit totals.
+Original files are identified by stdlib filename and hash; use the recorded
+Python version to reproduce. Every edit is a fresh full-file parse, without
+incremental reuse, timing or memory measurements. Missing/spurious counts apply
+only to returned documents; unavailability is a failed case.
+
+Before isolated-error recovery, gramide matched 165/275 and could not return 110
+documents, while the tree-sitter adapter matched 217/275 and returned all 275.
+After recovering unknown ASCII characters and unmatched closing delimiters with
+an empty bracket stack, gramide matches 275/275. Tree-sitter adapter results
+remain unchanged (227 missing and 49 spurious declarations under this policy).
+See [before](../docs/evidence/python-edit-corpus-before.json) and
+[after](../docs/evidence/python-edit-corpus.json).
+
+This measures five invalid-line insertion families, not arbitrary character
+edits, representative editor traffic or all Python. The existing stdlib corpus
+also favors syntax already covered by gramide. Overall accuracy, performance,
+incremental editing and language breadth remain separate unfinished goals.

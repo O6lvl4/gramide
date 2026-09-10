@@ -61,11 +61,15 @@ def expected(source, specs):
 def compare(actual, want):
     # Multisets retain duplicate exports as spurious declarations.
     unmatched = list(actual)
-    missing, incorrect = [], []
+    missing, incorrect, pending = [], [], []
     for row in want:
         if row in unmatched:
             unmatched.remove(row)
-            continue
+        else:
+            pending.append(row)
+    # Preserve exact later overloads before pairing unmatched names as range
+    # errors; a missing earlier overload must not steal a later exact match.
+    for row in pending:
         candidate = next((r for r in unmatched if r['name'] == row['name']), None)
         if candidate is None:
             missing.append(row)

@@ -707,3 +707,27 @@ UTF-8 byte and inclusive line ranges, and 2,000 apparent declarations inside the
 damaged tail. Close/remove/close edit cycles verify that the suffix is hidden
 until the expression closes. These cycles perform full reparses, not incremental
 reuse. Strict check, tokens and symbols continue to reject unclosed input.
+
+## Isolated lexical errors and stray closing delimiters
+
+The generated stdlib edit corpus exposed 110 failures from inserted `$` and `)`
+lines. The lexer now emits a one-byte error token for an unknown ASCII character
+outside interpolation after all recognized lexical modes (quotes, comments,
+continuations, numbers and identifiers) have been checked. It does not guess the
+extent of a malformed number, Unicode identifier, escape or continuation.
+
+Layout similarly marks a closing delimiter as an error token only when the
+bracket stack is empty. A mismatched closer for an existing opening still fails;
+recovery does not pop a real opening or invent a closing boundary. The shared
+logical-line recovery consumes the damaged line and retains lexical ownership
+for surrounding declarations. Quotes/comments protect their contents, and
+unclosed brackets still keep their entire logical tail opaque. This preserves
+the mode and bracket-state separation reviewed in the pinned tree-sitter-python
+external scanner; equivalent recovered trees are not claimed.
+
+`ci/python_isolated_errors.py` adds 102 recovery cases across ASCII errors,
+closers, LF/CRLF/CR, nested owners, malformed headers, literals and strict
+rejection. The 275-edit benchmark additionally verifies all names, owners and
+ranges against a transformed original CPython AST, with valid-insertion controls.
+Hew's real integration selects intact methods on both sides of the error and
+rejects apparent nested declarations beneath a broken header.

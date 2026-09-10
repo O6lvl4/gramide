@@ -20,4 +20,6 @@ python3 ci/python_recovery.py
 python3 ci/python_string_recovery.py
 python3 ci/python_interpolation_recovery.py
 python3 ci/python_delimiter_recovery.py
+python3 ci/python_isolated_errors.py
 python3 ci/recovered_symbols.py
+python3 ci/recovery_comparison.py

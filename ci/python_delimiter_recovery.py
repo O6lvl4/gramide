@@ -78,8 +78,8 @@ with tempfile.TemporaryDirectory() as tmp:
     recovered=json.loads(subprocess.check_output([str(BIN),'symbols-recovered',str(path)]))
     assert recovered['complete'] and recovered['symbols']==strict['symbols'],recovered
     assert [s['name'] for s in recovered['symbols']]==['before','after'],recovered
- # Mismatches, stray closers and invalid indentation remain strict failures.
- for source in ['x = (]\n','x = ]\n','if True:\n  x = 1\n y = (\n']:
+ # Mismatches and invalid indentation remain failures even in recovery.
+ for source in ['x = (]\n','if True:\n  x = 1\n y = (\n']:
   path.write_text(source)
   result=run('symbols-recovered',path)
   assert result.returncode!=0 and not result.stdout,(source,result)
