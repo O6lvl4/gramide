@@ -1,0 +1,46 @@
+// Versioned parser output for source readers. Never export a recovered tree
+// as complete: readers must choose an explicit fallback instead.
+import json
+import self.tree
+import self.tags
+import self.lang
+
+fn document(path: String, source: String) -> Result[String, String] = {
+  let d = lang.read_source(path, source)!
+  match d.error { some(e) => err(e), none => {
+    let language = if string.ends_with(path, ".almd") then "almide" else if string.ends_with(path, ".go") then "go" else "rust"
+    ok(json.stringify(value.object([
+      ("schema_version", value.int(1)), ("complete", value.bool(true)),
+      ("lang", value.str(language)), ("total_lines", value.int(list.len(string.lines(source)))),
+      ("symbols", value.array(collect(d.parsed.root, d.parsed.toks, "", d.sep)))
+    ])))
+  } }
+}
+
+// Stable machine-readable declaration ranges: byte offsets are zero-based,
+// end-exclusive; line ranges are one-based and inclusive.
+fn collect(n: tree.Node, toks: List[tree.Token], scope: String, sep: String) -> List[Value] = {
+  var out: List[Value] = []
+  let kind = tags.decl_kind(n.kind)
+  let name = if kind == "" then "" else tags.name_of(n, toks)
+  if name != "" then {
+    let own = tags.owner_for(n, scope, toks)
+    match (list.get(toks, n.start), list.get(toks, n.end - 1)) {
+      (some(first), some(last)) => list.push(out, value.object([
+        ("kind", value.str(if own == "" then kind else "method")),
+        ("name", value.str(if own == "" then name else own + sep + name)),
+        ("owner", value.str(own)), ("syntax_kind", value.str(n.kind)),
+        ("start", value.int(first.line)), ("end", value.int(tags.end_line(n, toks))),
+        ("start_byte", value.int(first.start)), ("end_byte", value.int(last.end))
+      ])),
+      _ => (),
+    }
+  } else ()
+  let inner = tags.scope_under(n, scope, toks)
+  for k in n.kids {
+    let envelope = n.kind == "item_envelope" or (sep == "::" and n.kind == "type_declaration" and name == "")
+    let decl = if envelope and tags.decl_kind(k.kind) != "" then tree.Node { ...k, start: n.start } else k
+    for sym in collect(decl, toks, inner, sep) { list.push(out, sym) }
+  }
+  out
+}
