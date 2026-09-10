@@ -134,15 +134,19 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
       i = i + 1
     }
     else {
-      match list.find(ops, (op) => matches(buffer, i, op.data)) {
-        some(op) => { kind = "punct"; i = i + bytes.len(op.data) },
-        none => {
-          // Quotes, comments, continuations and non-ASCII characters have
-          // dedicated branches above. This unknown ASCII byte has no extent
-          // beyond itself and cannot establish a new lexical mode.
-          if recovering and list.is_empty(frames) then { kind = "error"; i = i + 1 }
-          else failure = some(error)
-        },
+      // Longest match first. Keep the scan here: passing the operator list
+      // by value to a helper would still copy it in the pinned native compiler.
+      var width = 0
+      for op in ops {
+        if width == 0 and matches(buffer, i, op.data) then width = bytes.len(op.data) else ()
+      }
+      if width > 0 then { kind = "punct"; i = i + width }
+      else {
+        // Quotes, comments, continuations and non-ASCII characters have
+        // dedicated branches above. This unknown ASCII byte has no extent
+        // beyond itself and cannot establish a new lexical mode.
+        if recovering and list.is_empty(frames) then { kind = "error"; i = i + 1 }
+        else failure = some(error)
       }
     }
     match failure {
