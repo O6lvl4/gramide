@@ -552,9 +552,40 @@ comments and blank lines are excluded. The CPython symbol oracle checks 645
 names/kinds/owners/ranges across nested, decorated and async declarations, stubs,
 and 12 complete stdlib files. An optional suite-ending semicolon is retained.
 
-Recovery is still unsupported by the Python scanner/grammar; broken input must
-fail rather than produce a document marked complete. Compiler-context checks,
+The Python scanner remains strict. Logical-line grammar recovery is described
+below; broken input must never produce a symbols document marked complete. Compiler-context checks,
 Unicode-name escapes, NFKC identity, literal decoding, encoding cookies/BOM and
 Python reference extraction remain future work. `check` is a grammar check, not
 a promise that CPython compilation or execution succeeds. Historical checkpoints
 above describe their then-unregistered state. No tree-sitter victory is claimed.
+
+## Python logical-line recovery
+
+`RecoverLines(rule)` / `parser.recover_lines(rule)` is an opt-in shared engine
+rule for grammars with `newline`, `indent` and `dedent` tokens. In strict mode it
+has exactly the wrapped rule's acceptance. In recovery mode a failed statement
+skips to another logical line at the same indentation, or stops before the
+current scope's closing dedent/EOF. It never resumes midway through an expression
+or hoists declarations from a skipped nested suite. The skipped range becomes
+an `ERROR` node; consecutive invalid lines can share one such range.
+
+Python statement lists now use this rule. `parse` and `outline` preserve readable
+statements around errors, including valid outer functions/classes whose suites
+contain a bad statement. A malformed header and its nested suite are skipped as
+a unit. Diagnostics explicitly mark the result as recovered. `check` remains
+strict, and `symbols` still refuses incomplete trees; consequently hew does not
+yet consume these partial trees as authoritative ranges.
+
+The design was checked against the cloned tree-sitter-python grammar and external
+scanner at `26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64`, especially comment/dedent
+handling and bracket-aware newline suppression. Gramide uses the strict lexer's
+logical layout stream here. This is a different, explicitly tested recovery
+policy, not a claim of matching tree-sitter's incomplete-tree shape.
+
+`ci/python_recovery.py` covers 56 cases: incomplete assignments, imports, raises,
+asserts, decorators and headers; nested scopes; skipped suites; EOF; blank lines;
+UTF-8 comments; physical newlines inside brackets; 2,000 consecutive malformed lines; and strict rejection. It also
+asserts that lexical errors (unterminated delimiters/strings and bad escapes)
+remain failures. Scanner recovery, preservation of incomplete declaration heads,
+partial-symbol integration with hew, edit-sequence comparisons and incremental
+reuse remain unfinished.

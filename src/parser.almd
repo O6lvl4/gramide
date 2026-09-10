@@ -37,6 +37,7 @@ type Rule =
   | Recover(Rule, Rule)         // on a recovering parse: skip to where the first matches
   | RecoverAll(Rule, Rule)      //   again, keeping what the second reads of the failed item
                                 //   and leaving an ERROR node over the rest
+  | RecoverLines(Rule)         // resume at a logical line in the same indent scope
   | Eps
 
 type Grammar = { start: String, rules: Map[String, Rule] }
@@ -72,7 +73,9 @@ let A_RBRACK = 7
 let A_LBRACE = 8
 let A_RBRACE = 9
 let A_SEMI = 10
-let SEEDS = ["newline", "eof", "string", "neg", "(", ")", "[", "]", "{", "}", ";"]
+let A_INDENT = 11
+let A_DEDENT = 12
+let SEEDS = ["newline", "eof", "string", "neg", "(", ")", "[", "]", "{", "}", ";", "indent", "dedent"]
 
 let K_EPS = 0
 let K_TOK = 1
@@ -92,6 +95,7 @@ let K_LEFT = 14
 let K_ANY = 15
 let K_RECOVER = 16
 let K_RECOVER_ALL = 17
+let K_RECOVER_LINES = 18
 
 // Append a rule's subtree to the arena and answer where its own node landed.
 // The three lists are the arena itself, handed down rather than returned:
@@ -118,6 +122,7 @@ fn emit(r: Rule, mut ops: List[Op], mut texts: List[String], mut kids: List[Int]
     Any => (K_ANY, "", []),
     Recover(x, h) => (K_RECOVER, "", [x, h]),
     RecoverAll(x, h) => (K_RECOVER_ALL, "", [x, h]),
+    RecoverLines(x) => (K_RECOVER_LINES, "", [x]),
   }
   var ids: List[Int] = []
   for s in subs {
@@ -492,6 +497,53 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
       Out { ok: false, pos: pos, st: o.st }
     }
   }
+  else if op.kind == K_RECOVER_LINES then {
+    let mark = list.len(out)
+    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    if o.ok then o
+    else {
+      rollback(out, mark)
+      if not st0.recover then Out { ok: false, pos: pos, st: o.st }
+      else {
+        // Only a logical line at the original indentation may resume. Never
+        // lift a declaration from a skipped nested suite into its parent.
+        var q = pos
+        var depth = 0
+        var line_start = false
+        var resume = -1
+        var limit = -1
+        var st = o.st
+        while resume < 0 and limit < 0 {
+          let k = list.get(tk, q) ?? A_EOF
+          if k == A_EOF or (k == A_DEDENT and depth == 0) then limit = q
+          else {
+            if k == A_INDENT then { depth = depth + 1; line_start = false }
+            else if k == A_DEDENT then { depth = depth - 1; line_start = true }
+            else if k == A_NEWLINE then line_start = true
+            else {
+              if line_start and depth == 0 and q > pos then {
+                let a = parse_rule(c, tk, tt, out, exp, st, op.a, q)
+                st = a.st
+                rollback(out, mark)
+                if a.ok and a.pos > q then resume = q else ()
+              } else ()
+              line_start = false
+            }
+            if resume < 0 then q = q + 1 else ()
+          }
+        }
+        let stop = if resume >= 0 then resume else limit
+        if not real_between(tk, tt, pos, stop) then Out { ok: false, pos: pos, st: st }
+        else {
+          list.push(out, tree.node("ERROR", [], pos, stop))
+          if resume >= 0 then {
+            let a = parse_rule(c, tk, tt, out, exp, st, op.a, resume)
+            if a.ok then a else { rollback(out, mark); Out { ok: false, pos: pos, st: a.st } }
+          } else good(st, stop)
+        }
+      }
+    }
+  }
   else if op.kind == K_RECOVER or op.kind == K_RECOVER_ALL then {
     let mark = list.len(out)
     let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
@@ -725,6 +777,7 @@ fn leftf(kind: String, operand: Rule, op: Rule) -> Rule = Left(kind, operand, op
 // declaration whose signature is half-typed still has a name, and an outline
 // that names it is the whole point of reading a file mid-edit.
 fn nothing() -> Rule = Alt([])
+fn recover_lines(x: Rule) -> Rule = RecoverLines(x)
 fn recover(x: Rule) -> Rule = Recover(x, nothing())
 fn recover_all(x: Rule) -> Rule = RecoverAll(x, nothing())
 fn recover_keeping(x: Rule, head: Rule) -> Rule = Recover(x, head)
