@@ -73,3 +73,29 @@ about 18.2 MB versus 3.7 MB. Inspect.py takes about 122 ms versus 10.5 ms and
 21.7 MB versus 4.8 MB. These are measured gaps to address, not a general claim
 about all Python syntax. Recovery, edit sequences, incremental parsing and
 broader corpora require separate evaluation.
+
+## Borrowing symbol subtrees
+
+The native output walk previously cloned each child subtree twice when deciding
+whether to include a declaration envelope (for example Rust attributes). It now
+passes only the effective start-token index separately and borrows the original
+child. Leaves cannot have the required declaration-name child, so the walk skips
+them. Names, owners, envelopes and end positions retain the same contract.
+
+Pass `--before /path/to/previous/gramide` to include the old binary in the same
+shuffled sample sequence. The [paired evidence](../docs/evidence/python-symbols-subtree-borrow.json)
+compares the final change with the pre-change binary and tree-sitter on the same
+15 sources, after the full test suite finished. All three outputs match CPython.
+
+| Input | Before | After | tree-sitter |
+| --- | ---: | ---: | ---: |
+| 800 functions | 82.23 ms | 65.90 ms | 7.61 ms |
+| inspect.py | 129.81 ms | 95.26 ms | 10.55 ms |
+| typing.py | 128.18 ms | 94.85 ms | 10.63 ms |
+
+Every case improved in this local run (1.12–1.36×), but tree-sitter remains faster
+and uses less peak RSS throughout. Memory gains are modest: generated-file RSS
+is effectively unchanged; typing.py drops from about 20.7 MB to 20.3 MB. The
+report retains both RSS samples, including observed variation, and all raw time
+samples. This is a full-file structured-read improvement, not an incremental
+parsing result or a claim that grammar parsing itself is faster.
