@@ -1,0 +1,25 @@
+import self.packages.python.expressions
+import self.packages.python.lexer
+import self.parser
+import self.tree
+import env
+import fs
+import json
+
+fn node(n: tree.Node, tokens: List[tree.Token]) -> Value = value.object([
+  ("kind", value.str(n.kind)),
+  ("text", value.str(if list.is_empty(n.kids) then (option.map(list.get(tokens, n.start), (t) => t.text) ?? "") else "")),
+  ("kids", value.array(list.map(n.kids, (k) => node(k, tokens))))
+])
+fn check(source: String, grammar: parser.Compiled) -> Value = match lexer.scan_source(source) {
+  err(_) => value.object([("ok", value.bool(false))]),
+  ok(tokens) => match parser.parse_with(grammar, tokens) {
+    err(f) => value.object([("ok", value.bool(false)), ("message", value.str(parser.format_failure(f)))]),
+    ok(parsed) => value.object([("ok", value.bool(true)), ("tree", node(parsed.root, parsed.toks))]),
+  },
+}
+effect fn main() -> Unit = {
+  let input = json.parse(fs.read_text(list.first(env.args())!)!)!
+  let grammar = parser.compile(expressions.expression_grammar())
+  println(json.stringify(value.array(list.map(json.get_array(input, "cases") ?? [], (v) => check(value.as_string(v) ?? "", grammar)))))
+}

@@ -1,0 +1,35 @@
+// Python 3.14 expression precedence. This reusable rule set is not a complete
+// Python grammar; statements and remaining expression forms are added separately.
+import self.parser
+import self.parser.{ seq, nott, lits, tok, wrap, r, opt, keep, leftf, alt, rep, keeps, lit, grammar }
+
+let HARD_KEYWORDS = ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"]
+
+fn rules() -> List[(String, parser.Rule)] = [
+  ("name", seq([nott(lits(HARD_KEYWORDS)), tok("identifier")])),
+  ("expression", wrap("conditional", seq([r("disjunction"), opt(seq([keep("if"), r("disjunction"), keep("else"), r("expression")]))]))),
+  ("disjunction", leftf("boolean", r("conjunction"), keep("or"))),
+  ("conjunction", leftf("boolean", r("inversion"), keep("and"))),
+  ("inversion", alt([wrap("unary", seq([keep("not"), r("inversion")])), r("comparison")])),
+  ("comparison", wrap("comparison", seq([r("bit_or"), rep(seq([r("comparison_op"), r("bit_or")]))]))),
+  ("comparison_op", wrap("comparison_operator", alt([seq([keep("not"), keep("in")]), seq([keep("is"), keep("not")]), keeps(["==", "!=", "<=", "<", ">=", ">", "in", "is"])]))),
+  ("bit_or", leftf("binary", r("bit_xor"), keep("|"))),
+  ("bit_xor", leftf("binary", r("bit_and"), keep("^"))),
+  ("bit_and", leftf("binary", r("shift"), keep("&"))),
+  ("shift", leftf("binary", r("sum"), keeps(["<<", ">>"]))),
+  ("sum", leftf("binary", r("term"), keeps(["+", "-"]))),
+  ("term", leftf("binary", r("factor"), keeps(["*", "@", "/", "//", "%"]))),
+  ("factor", alt([wrap("unary", seq([keeps(["+", "-", "~"]), r("factor")])), r("power")])),
+  // Power binds less tightly than unary on its right, more tightly on its left.
+  ("power", wrap("power", seq([r("primary"), opt(seq([keep("**"), r("factor")]))]))),
+  ("primary", wrap("primary", seq([r("atom"), rep(alt([
+    wrap("attribute", seq([lit("."), r("name")])),
+    wrap("call", seq([lit("("), opt(seq([r("expression"), rep(seq([lit(","), r("expression")])), opt(lit(","))])), lit(")")])),
+    wrap("subscript", seq([lit("["), r("expression"), lit("]")]))
+  ]))]))),
+  ("atom", alt([tok("number"), tok("string"), keeps(["True", "False", "None", "..."]), r("name"), seq([lit("("), r("expression"), lit(")")])])),
+]
+
+fn expression_grammar() -> parser.Grammar = grammar("evaluation", [
+  ("evaluation", seq([r("expression"), opt(tok("newline"))]))
+] + rules())
