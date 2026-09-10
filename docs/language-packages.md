@@ -374,3 +374,27 @@ Escape decoding/validation and contextual compiler checks remain unfinished,
 as do statements, declarations, recovery and hew integration. Python remains
 unregistered; these expression milestones do not establish complete Python
 support or a performance win over tree-sitter.
+
+## Python implementation progress: numeric escape validation
+
+The expression entry point now rejects truncated/non-hex `\x`, `\u` and `\U`
+escapes, and `\U` values above U+10FFFF. `escapes.almd` follows CPython v3.14.4
+`Objects/unicodeobject.c` and `Objects/bytesobject.c`, fetched into the reference
+clone. Bytes literals only interpret `\x` among these forms. Raw literals skip
+numeric escape interpretation; nested f/t-string frames preserve their own raw
+modes, including format-specification chunks and ordinary strings inside fields.
+The lexical scanner continues to report source boundaries independently.
+
+The oracle adds 469 cases across raw/ordinary/bytes/interpolated modes, quote
+widths, truncated escapes, invalid digits, range boundaries, escaped backslashes
+and nested raw-mode transitions. The cumulative suite matches **2,993** structures
+and rejects **3,037** inputs. [Evidence](evidence/python-numeric-escapes.json)
+records this corpus. CPython sometimes raises `UnicodeDecodeError` rather than
+`SyntaxError` for malformed interpolation escapes; both count as rejection.
+Diagnostics currently point to the containing literal token, not the exact
+escape byte. Warning-only unknown/octal escapes remain accepted without warning
+emission, matching default CPython acceptance.
+
+Unicode-name escapes (`\N{...}`), decoded values and contextual compiler checks
+remain unfinished. This does not complete string validation or Python support;
+statements, declarations, recovery and hew integration are still required.

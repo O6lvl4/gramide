@@ -1,0 +1,53 @@
+// Numeric escape validation, without evaluating or decoding literal values.
+import self.parser
+import self.tree
+import self.packages.python.strings
+
+fn hex(b: Int) -> Int = if b >= 48 and b <= 57 then b - 48 else if b >= 65 and b <= 70 then b - 55 else if b >= 97 and b <= 102 then b - 87 else -1
+fn numeric(start: Int, end: Int, raw: Bool, byte_literal: Bool, token: tree.Token) -> Result[Unit, parser.Failure] = {
+  let data = bytes.from_string(token.text)
+  var i = start
+  while i < end and not raw {
+    if bytes.get_or(data, i, -1) == 92 then {
+      let code = bytes.get_or(data, i + 1, -1)
+      let width = if code == 120 then 2 else if not byte_literal and code == 117 then 4 else if not byte_literal and code == 85 then 8 else 0
+      if width > 0 then {
+        let error = parser.Failure { line: token.line, col: token.col, found: token.text, expected: ["complete numeric escape within Unicode range"] }
+        guard i + 2 + width <= end else err(error)
+        var value = 0
+        for offset in 0..<width {
+          let digit = hex(bytes.get_or(data, i + 2 + offset, -1))
+          guard digit >= 0 else err(error)
+          value = value * 16 + digit
+        }
+        guard value <= 1114111 else err(error)
+        i = i + 2 + width
+      } else i = i + 2
+    } else i = i + 1
+  }
+  ok(())
+}
+fn validate(tokens: List[tree.Token]) -> Result[Unit, parser.Failure] = {
+  var raw_frames: List[Bool] = []
+  for token in tokens {
+    if token.kind == "string" then {
+      let data = bytes.from_string(token.text)
+      let opening = strings.opening(data, 0)
+      match opening {
+        some(head) => {
+          let width = if bytes.get_or(data, head.at + 1, -1) == head.quote and bytes.get_or(data, head.at + 2, -1) == head.quote then 3 else 1
+          let prefix = string.to_lower(bytes.to_string_lossy(bytes.slice(data, 0, head.at)))
+          numeric(head.at + width, bytes.len(data) - width, string.contains(prefix, "r"), head.byte_literal, token)!
+        },
+        none => (),
+      }
+    } else if token.kind == "fstring_start" or token.kind == "tstring_start" then {
+      list.push(raw_frames, string.contains(string.to_lower(token.text), "r"))
+    } else if token.kind == "fstring_end" or token.kind == "tstring_end" then {
+      let _ = list.pop(raw_frames)
+    } else if token.kind == "fstring_middle" or token.kind == "tstring_middle" then {
+      numeric(0, bytes.len(bytes.from_string(token.text)), list.last(raw_frames) ?? false, false, token)!
+    } else ()
+  }
+  ok(())
+}
