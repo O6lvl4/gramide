@@ -238,18 +238,44 @@ rejects. No false rejection.
 
 ## How fast, against something honest
 
-109 Go files, 1,338,916 bytes, on one core, with process startup taken out of both.
+1,500 Go files, 25,549,317 bytes, one core, one process each, alternating runs.
 `gofmt -e` is the fair comparison: it is a hand-written recursive descent parser for
 the same language, and `-e` makes it report every syntax error rather than the first.
+`GOMAXPROCS=1` because gofmt parallelises across its file arguments by default and
+gramide cannot yet ask for a second core (almide#2080).
 
-| | work | rate |
+| | 2026-09-10 | rate |
 |---|---|---|
-| `gofmt -e`, `GOMAXPROCS=1` | 0.047 s | 28 MB/s |
-| `gramide check`, all files in one process | 0.195 s | 6.9 MB/s |
+| `gofmt -e -l`, `GOMAXPROCS=1` | 1.30 s | 19.6 MB/s |
+| `gramide check` | 2.74 s | 9.3 MB/s |
 
-So about four times slower than the reference parser for the language, interpreting a
-grammar value rather than running code generated from one. It was twenty-seven times
-slower before the work described above.
+**About twice as slow as the reference parser for the language**, interpreting a grammar
+value rather than running code generated from one. It was 27x slower when this work
+started and 4.3x slower earlier the same day.
+
+The same day's two changes, separated:
+
+| | Go 25.5 MB |
+|---|---|
+| before | 5.60 s |
+| + caching the lexer's operator patterns and a compact `Bytes` source | 3.03 s |
+| + Almide's own byte-slice and ownership work on top | 2.74 s |
+
+Against tree-sitter, which is the other reference worth having — `ctxgate-outline`, a C
+tree-sitter binary, against `gramide outline`, 120 Rust files, 2,951,900 bytes, process
+startup (0.33 s for 120 processes, the same for both) subtracted:
+
+| | |
+|---|---|
+| tree-sitter | 0.155 s |
+| gramide, before | 0.73 s |
+| gramide, now | 0.333 s |
+
+Also about 2x, from 4.7x. Peak RSS on a 3.95 MB file went 180.8 MiB to 160.1 MiB.
+
+What none of this changes: tree-sitter has 371 languages to gramide's three, and
+incremental parsing, which gramide does not have at all. Speed was never the gap that
+mattered most.
 
 Where a run of `gramide check` spends its time, same corpus, one process per file:
 
@@ -265,19 +291,13 @@ why `check` takes many files at a time. And the remaining gap to `gofmt` is not 
 missing trick: it is that every value the engine touches is copied, which is the cost
 of the property that makes the grammar editable at runtime.
 
-## Where the remaining 4x is, and where it is not
+## Where the time went, and what the profile got wrong
 
 Measured 2026-09-10 with `sample` on a release build, one 3.95 MB Go file, so that the
-per-file costs above do not dominate. `check` splits:
-
-| | |
-|---|---|
-| lexing | 0.52 s (70%) |
-| numbering the token stream | 0.06 s (8%) |
-| parsing | 0.16 s (22%) |
-
-**The parser is not the bottleneck; the lexer is.** And 84% of the lexer's time is in
-`malloc` / `free` / `memmove` rather than in the lexer:
+per-file costs above do not dominate. The first profile said `check` splits 70% lexing,
+8% numbering the token stream, 22% parsing — **the parser was not the bottleneck, the
+lexer was** — and that 84% of the lexer's time was `malloc` / `free` / `memmove` rather
+than the lexer:
 
 ```
 _xzm_free                 1008        <- top of stack
@@ -288,7 +308,31 @@ almide_rt_string_to_bytes  153
 String::clone              132
 ```
 
-Two things cause it, and neither is in this repository. `string.to_bytes` returns
+The conclusion drawn from that was wrong, and it is worth writing down why. The reading
+was "the allocations are the `Token` record and the byte list, so the representation has
+to change and this is a language problem". The actual cause was **the lexer rebuilding
+its operator byte patterns on every token**: an allocation probe counted 22,961,527
+allocation requests for this file, and caching the patterns once per tokenization and
+storing the source in a compact `Bytes` took that to 2,612,801 — 88.6% fewer — without
+touching `Token` or `String` at all. Lexing this file went from 0.52 s to 0.105 s, five
+times faster, and the split is now roughly a third lexing to two thirds numbering and
+parsing.
+
+The lesson is not "profile first" — the profile was right about *where*. It is that
+"84% of the time is in malloc" says nothing about *which* allocations, and the four
+representation changes tried before finding the real one measured 0%, 0%, 0% and 0%
+(below). A profile that names the allocator names the symptom; the count of allocations
+per input, attributed to a call site, names the cause.
+
+What is left on the same file: the allocator is still the largest single item but no
+longer dominant, and `AlmideMap::position` now shows up — that is the two map lookups
+per token in `kind_ids` and `text_ids`, which the lexer could hand over for free because
+it already knows which keyword or operator it matched.
+
+The two representation costs below are real and still filed; they are simply not what
+this input was spending its time on.
+
+`string.to_bytes` returns
 `List[Int]`, which is `Vec<i64>`, so reading a 3.95 MB source allocates 31.6 MB — and it
 is the only byte-accurate accessor a string has, because `string.slice` counts
 characters. And a `Token` owns two `String`s, which gives the whole token list a
@@ -312,9 +356,10 @@ upstream, and gramide got nothing, because the engine had already been written a
 each of them — see "What the native backend taught the engine". A workaround does not
 stop costing once the bug is fixed; it stops being needed.
 
-The row above it is the shape of the problem: removing one of a record's two owned
-fields is worth nothing, and removing both is worth 13%. There is no incremental path,
-which is why this is a language question rather than a tuning question.
+The row above it is a real shape: removing one of a record's two owned fields is worth
+nothing and removing both is worth 13%, because a record with any owned field gives its
+whole list a per-element destructor. It is still true. It was simply the wrong 13% to be
+chasing while an 88.6% allocation reduction sat in the operator scanner.
 
 One more measurement, because it decides how much a second core would be worth:
 `fan { }` is specified as native threads, and it is not — eight CPU-bound arms take the
