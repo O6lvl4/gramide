@@ -26,7 +26,7 @@ fn make(source: Bytes, kind: String, start: Int, end: Int, line: Int, line_start
   tree.Token { kind: kind, text: bytes.to_string_lossy(bytes.slice(source, start, end)), start: start, end: end, line: line, col: start - line_start + 1 }
 fn newline_end(source: Bytes, at: Int) -> Int = at + (if bytes.get_or(source, at, -1) == 13 and bytes.get_or(source, at + 1, -1) == 10 then 2 else 1)
 
-fn physical(source: String) -> Result[List[tree.Token], lex.LexError] = {
+fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], lex.LexError] = {
   guard not string.contains(source, "\u{0000}") else err(lex.LexError { line: 1, col: 1, message: "source code cannot contain null bytes" })
   let buffer = bytes.from_string(source)
   let classes = identifiers.prepare()
@@ -77,7 +77,14 @@ fn physical(source: String) -> Result[List[tree.Token], lex.LexError] = {
     }
     else if option.is_some(strings.opening(buffer, i)) then {
       kind = "string"
-      i = strings.scan(buffer, i, line, i - line_start + 1)!
+      match strings.scan(buffer, i, line, i - line_start + 1) {
+        ok(end) => { i = end },
+        err(e) => {
+          guard recovering and list.is_empty(frames) else err(e)
+          kind = "error"
+          i = strings.recovery_end(buffer, i)
+        },
+      }
     }
     else if numbers.starts(buffer, i) then {
       kind = "number"
@@ -134,7 +141,9 @@ fn physical(source: String) -> Result[List[tree.Token], lex.LexError] = {
   list.push(tokens, make(buffer, "eof", i, i, line, line_start))
   ok(tokens)
 }
-fn scan_source(source: String) -> Result[List[tree.Token], lex.LexError] = layout.apply(source, physical(source)!)
+fn physical(source: String) -> Result[List[tree.Token], lex.LexError] = physical_with(source, false)
+fn scan_source_with(source: String, recovering: Bool) -> Result[List[tree.Token], lex.LexError] = layout.apply(source, physical_with(source, recovering)!)
+fn scan_source(source: String) -> Result[List[tree.Token], lex.LexError] = scan_source_with(source, false)
 
 test "Python lexer joins lines and does not invent code inside strings" {
   let ts = scan_source("if True:\n    日本語 = (1 +\n        2)\n    text = \"\"\"\nnot code\n\"\"\"\n")!

@@ -7,14 +7,14 @@ import self.packages.python.lexer
 import self.packages.python.string_expressions
 import self.packages.python.statements
 
-fn scan(source: String) -> Result[List[tree.Token], lex.LexError] = {
-  let tokens = lexer.scan_source(source)!
+fn scan(source: String, recovering: Bool) -> Result[List[tree.Token], lex.LexError] = {
+  let tokens = lexer.scan_source_with(source, recovering)!
   string_expressions.prepare(tokens) |> result.map_err((f) => lex.LexError {
     line: f.line, col: f.col, message: parser.format_failure(f)
   })
 }
 
-fn prepare_lexer() -> package_api.Tokenizer = (source, _recovering) => scan(source)
+fn prepare_lexer() -> package_api.Tokenizer = (source, recovering) => scan(source, recovering)
 
 fn symbol_rules() -> package_api.SymbolRules = package_api.SymbolRules {
   declarations: [("function_declaration", "function"), ("class_declaration", "class"), ("type_alias", "type")],
