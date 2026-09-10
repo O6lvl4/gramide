@@ -11,6 +11,7 @@
 // nothing. Which languages write which separator is not known here; it
 // arrives as `sep`, from lang.almd.
 
+import json
 import self.tree
 import self.package_api
 import self.lex
@@ -354,4 +355,41 @@ test "flat Rust names preserve nested modules and trait display without changing
   assert_eq(list.map(defs, (t) => t.name), ["outer", "outer::inner", "PartialEq<S> for outer::inner::S", "outer::inner::S::eq", "outer::inner::free"])
   assert_eq(list.map(defs, (t) => t.base), ["outer", "inner", "S", "eq", "free"])
   assert_eq(list.map(defs, (t) => t.kind), ["mod", "mod", "impl", "method", "function"])
+}
+
+// Recovery ranges are in source order and disjoint: ERROR nodes have no children.
+type ErrorRange = { start: Int, end: Int, start_byte: Int, end_byte: Int }
+fn append_errors(n: tree.Node, toks: List[tree.Token], mut ranges: List[ErrorRange]) -> Unit = {
+  if n.kind == "ERROR" then {
+    match (list.get(toks, n.start), list.get(toks, code_end(n, toks) - 1)) {
+      (some(first), some(last)) => list.push(ranges, ErrorRange { start: first.line, end: end_line(n, toks), start_byte: first.start, end_byte: last.end }),
+      _ => (),
+    }
+  } else for k in n.kids { append_errors(k, toks, ranges) }
+}
+fn error_ranges(n: tree.Node, toks: List[tree.Token]) -> List[ErrorRange] = {
+  var ranges: List[ErrorRange] = []
+  append_errors(n, toks, ranges)
+  ranges
+}
+fn overlaps(ranges: List[ErrorRange], start: Int, end: Int) -> Bool = {
+  var lo = 0
+  var hi = list.len(ranges)
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    match list.get(ranges, mid) {
+      some(r) => { if r.end_byte <= start then lo = mid + 1 else hi = mid },
+      none => { hi = mid },
+    }
+  }
+  match list.get(ranges, lo) { some(r) => r.start_byte < end, none => false }
+}
+fn error_free_rows(rows: List[Value], ranges: List[ErrorRange]) -> List[Value] = {
+  var kept: List[Value] = []
+  for row in rows {
+    let start = json.get_int(row, "start_byte") ?? -1
+    let end = json.get_int(row, "end_byte") ?? -1
+    if start >= 0 and end > start and not overlaps(ranges, start, end) then list.push(kept, row) else ()
+  }
+  kept
 }

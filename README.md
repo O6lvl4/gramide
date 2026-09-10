@@ -129,3 +129,8 @@ a custom lexer for indentation-sensitive syntax.
 These are statically composed modules in this repository; separate package
 installation and dynamic loading are not implemented. Python is not yet a
 registered language. See [the package contract and Python design checkpoint](docs/language-packages.md).
+
+Python editing support also exposes `gramide symbols-recovered file.py`. It
+returns only declarations disjoint from reported error ranges and explicitly
+marks recovered files incomplete; `symbols` stays strict. See the
+[reader contract](docs/language-packages.md#recovered-declaration-contract-for-readers).
