@@ -380,7 +380,7 @@ test "line and column are 1-based and survive a heredoc" {
 fn symbol_rules() -> package_api.SymbolRules = package_api.SymbolRules {
   declarations: [("function_declaration", "function"), ("type_declaration", "type"), ("let_declaration", "let"), ("test_declaration", "test"), ("protocol_declaration", "protocol"), ("variant", "variant"), ("field", "field")],
   scopes: ["type_declaration", "protocol_declaration"], namespaces: [], callables: ["function_declaration", "method_declaration", "method_signature"],
-  envelopes: [], unnamed_envelopes: []
+  lexical_owners: false, envelopes: [], unnamed_envelopes: []
 }
 
 fn prepare_lexer() -> package_api.Tokenizer = {

@@ -5,7 +5,7 @@ binary = Path(__file__).resolve().parents[1] / 'gramide'
 manifest = json.loads(subprocess.check_output([str(binary), 'languages'], text=True))
 assert manifest['schema_version'] == 1
 packages = manifest['packages']
-assert {p['id'] for p in packages} == {'almide', 'go', 'rust'}
+assert {p['id'] for p in packages} == {'almide', 'go', 'rust', 'python'}
 assert len({p['name'] for p in packages}) == len(packages)
 extensions = [ext for p in packages for ext in p['extensions']]
 assert len(set(extensions)) == len(extensions)

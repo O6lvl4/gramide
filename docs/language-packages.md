@@ -1,7 +1,7 @@
 # Language package contract
 
 The production composition root is `src/registry.almd`. It registers static
-`Definition` values from `src/packages/gramide_{almide,go,rust}.almd`.
+`Definition` values from `src/packages/gramide_{almide,go,rust,python}.almd`.
 `src/package_api.almd` defines the interface; `src/lang.almd` is the generic host.
 This establishes package boundaries without requiring separate repositories,
 dynamic loading or independently installable Almide packages. Those are future
@@ -31,8 +31,9 @@ contract addition does not change the JSON schema version or capability names.
 entry has `id`, `name`, `version`, `extensions` and `capabilities`. Consumers must
 check the relevant capability: hew needs `symbols`, while cairn requires `check`
 for a grammar-backed write gate. A reader-only grammar must not advertise check.
-The built-in packages currently expose check, tokens, parse, outline, symbols,
-tags and map. Balance is a separate generic fallback.
+All built-in packages expose check, tokens, parse, outline and symbols. Almide,
+Go and Rust additionally advertise tags and map; Python reference extraction is
+not yet covered by that contract. Balance is a separate generic fallback.
 
 ## Python design checkpoint
 
@@ -527,3 +528,33 @@ bindings or unreachable cases), type comments, Unicode-name escape validation,
 recovery, package registration and hew integration remain unfinished. Python is
 still unregistered at this checkpoint; the next integration stage must preserve
 the literal-preparation path and document remaining validation limits.
+
+## Python package registration and reader integration
+
+`gramide-python` now registers `.py` and `.pyi` for Python 3.14 through the same
+static package API as the other languages. Its lexer callback always performs
+literal validation and grammar token preparation, including bytes/imaginary
+refinement. Strict checks and symbol extraction therefore use the same path as
+the CPython grammar oracles. The public `tokens` command exposes these prepared
+tokens; the independent lexical oracle still checks the underlying lexer stream.
+
+`SymbolRules.lexical_owners` is a required boolean: false for existing packages,
+true for Python. In Python, class/function namespaces already contain the method
+owner, so flat names append the declaration once (`Outer.Inner.method`). Nested
+functions retain lexical paths but are functions, not methods of the outer class.
+Structured method owners use the complete enclosing class path. Outline expresses
+nesting through indentation as before. This is lexical qualification, not runtime
+name resolution or Python's `__qualname__` format with `<locals>` markers.
+
+Declaration ranges trim trailing newline/indent/dedent markers, which otherwise
+can point at the next declaration. Decorators are included; unrelated following
+comments and blank lines are excluded. The CPython symbol oracle checks 645
+names/kinds/owners/ranges across nested, decorated and async declarations, stubs,
+and 12 complete stdlib files. An optional suite-ending semicolon is retained.
+
+Recovery is still unsupported by the Python scanner/grammar; broken input must
+fail rather than produce a document marked complete. Compiler-context checks,
+Unicode-name escapes, NFKC identity, literal decoding, encoding cookies/BOM and
+Python reference extraction remain future work. `check` is a grammar check, not
+a promise that CPython compilation or execution succeeds. Historical checkpoints
+above describe their then-unregistered state. No tree-sitter victory is claimed.

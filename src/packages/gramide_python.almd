@@ -1,0 +1,29 @@
+// Python 3.14: layout-aware lexing and grammar preparation are one package boundary.
+import self.package_api
+import self.tree
+import self.lex
+import self.parser
+import self.packages.python.lexer
+import self.packages.python.string_expressions
+import self.packages.python.statements
+
+fn scan(source: String) -> Result[List[tree.Token], lex.LexError] = {
+  let tokens = lexer.scan_source(source)!
+  string_expressions.prepare(tokens) |> result.map_err((f) => lex.LexError {
+    line: f.line, col: f.col, message: parser.format_failure(f)
+  })
+}
+
+fn prepare_lexer() -> package_api.Tokenizer = (source, _recovering) => scan(source)
+
+fn symbol_rules() -> package_api.SymbolRules = package_api.SymbolRules {
+  declarations: [("function_declaration", "function"), ("class_declaration", "class"), ("type_alias", "type")],
+  scopes: ["class_declaration"], namespaces: ["class_declaration", "function_declaration"],
+  callables: ["function_declaration"], lexical_owners: true, envelopes: [], unnamed_envelopes: []
+}
+
+fn definition() -> package_api.Definition = package_api.Definition {
+  id: "python", package_name: "gramide-python", version: "0.1.0", extensions: [".py", ".pyi"],
+  capabilities: ["check", "tokens", "parse", "outline", "symbols"],
+  lexer: () => prepare_lexer(), grammar: () => statements.file_grammar(), sep: ".", symbols: symbol_rules()
+}

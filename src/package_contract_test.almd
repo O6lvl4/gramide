@@ -27,7 +27,7 @@ fn demo() -> package_api.Definition = package_api.Definition {
   lexer: () => (source, recovering) => demo_scan(source, recovering), grammar: () => demo_grammar(), sep: ".",
   symbols: package_api.SymbolRules {
     declarations: [("custom_owner", "class"), ("custom_action", "function")], scopes: ["custom_owner"], namespaces: [], callables: ["custom_action"],
-    envelopes: [], unnamed_envelopes: []
+    lexical_owners: false, envelopes: [], unnamed_envelopes: []
   }
 }
 

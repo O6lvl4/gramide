@@ -24,7 +24,13 @@ import self.parser
 // node.
 fn leaf_text(n: tree.Node, toks: List[tree.Token]) -> String = match list.get(toks, n.start) { some(t) => t.text, none => "" }
 fn start_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks, n.start) { some(t) => t.line, none => 0 }
-fn end_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks, n.end - 1) { some(t) => t.line + string.count(t.text, "\n"), none => 0 }
+// Layout markers can point at the next declaration. Ranges end at source code.
+fn code_end(n: tree.Node, toks: List[tree.Token]) -> Int = {
+  var end = n.end
+  while end > n.start and (option.map(list.get(toks, end - 1), (t) => list.contains(["newline", "dedent", "indent"], t.kind)) ?? false) { end = end - 1 }
+  end
+}
+fn end_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks, code_end(n, toks) - 1) { some(t) => t.line + string.count(t.text, "\n"), none => 0 }
 
 // A name of more than one token — `salsa::Database`, `Vec<u8>` — is joined
 // from the tokens, not cut out of the source. A token's offsets count bytes
@@ -78,9 +84,9 @@ fn name_of(n: tree.Node, toks: List[tree.Token]) -> String = {
   }
 }
 fn qualified(prefix: String, name: String, sep: String) -> String = if prefix == "" then name else prefix + sep + name
-fn flat_name(n: tree.Node, name: String, own: String, namespace: String, toks: List[tree.Token], sep: String) -> String = match child(n, "trait") {
+fn flat_name(n: tree.Node, name: String, own: String, namespace: String, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> String = match child(n, "trait") {
   some(trait_node) => span_text(trait_node, toks) + " for " + qualified(namespace, bare_name(n, toks), sep),
-  none => qualified(namespace, qualified(own, name, sep), sep),
+  none => qualified(namespace, if rules.lexical_owners then name else qualified(own, name, sep), sep),
 }
 fn namespace_under(n: tree.Node, namespace: String, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> String =
   if list.contains(rules.namespaces, n.kind) then qualified(namespace, bare_name(n, toks), sep) else namespace
@@ -129,7 +135,7 @@ fn walk(n: tree.Node, toks: List[tree.Token], scope: String, namespace: String, 
     list.push(out, Tag {
       role: "def",
       kind: if own == "" then kind else "method",
-      name: flat_name(n, name, own, namespace, toks, sep),
+      name: flat_name(n, name, own, namespace, toks, sep, rules),
       base: bare_name(n, toks),
       line: start_line(n, toks), end_line: end_line(n, toks) })
   }
@@ -287,11 +293,11 @@ fn symbol_rows_in(n: tree.Node, toks: List[tree.Token], scope: String, namespace
   let name = if kind == "" then "" else name_of(n, toks)
   if name != "" then {
     let own = owner_for(n, scope, toks, rules)
-    match (list.get(toks, n.start), list.get(toks, n.end - 1)) {
+    match (list.get(toks, n.start), list.get(toks, code_end(n, toks) - 1)) {
       (some(first), some(last)) => list.push(out, value.object([
         ("kind", value.str(if own == "" then kind else "method")),
-        ("name", value.str(flat_name(n, name, own, namespace, toks, sep))),
-        ("owner", value.str(own)), ("syntax_kind", value.str(n.kind)),
+        ("name", value.str(flat_name(n, name, own, namespace, toks, sep, rules))),
+        ("owner", value.str(if rules.lexical_owners and own != "" then namespace else own)), ("syntax_kind", value.str(n.kind)),
         ("start", value.int(first.line)), ("end", value.int(end_line(n, toks))),
         ("start_byte", value.int(first.start)), ("end_byte", value.int(last.end))
       ])),
