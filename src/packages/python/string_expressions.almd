@@ -3,6 +3,7 @@
 import self.parser
 import self.tree
 import self.packages.python.strings
+import self.packages.python.escapes
 import self.parser.{ seq, wrap, r, opt, keep, keeps, alt, rep, tok, lit }
 
 fn repeated(rule: parser.Rule) -> parser.Rule = seq([rule, rep(rule)])
@@ -26,6 +27,7 @@ fn rules() -> List[(String, parser.Rule)] = [
 // Keep CPython-compatible lexical STRING tokens and refine bytes only for the
 // grammar. Conversion adjacency is source-sensitive and cannot be a PEG Lit.
 fn prepare(tokens: List[tree.Token]) -> Result[List[tree.Token], parser.Failure] = {
+  escapes.validate(tokens)!
   for i in 0..<list.len(tokens) {
     let token = tokens[i]
     if token.kind == "punct" and token.text == "!" then {

@@ -1,5 +1,7 @@
 """Compare precedence/associativity with CPython AST, never by evaluating code."""
 from pathlib import Path
+import warnings
+warnings.simplefilter("ignore", SyntaxWarning)
 import ast,itertools,json,os,platform,shutil,subprocess,tempfile,keyword,hashlib,sys
 ROOT=Path(__file__).resolve().parents[1]
 OPS=['+','-','*','/','//','%','@','**','<<','>>','&','^','|','and','or','==','!=','<','<=','>','>=','in','not in','is','is not']
@@ -23,7 +25,7 @@ for length in range(1,6):
         items=[['x', f'k{i}=x', '*xs', '**kw'][category] for i,category in enumerate(categories)]
         source='f('+','.join(items)+(',' if length%2 else '')+')'
         try:ast.parse(source,mode='eval')
-        except SyntaxError:INVALID.append(source)
+        except (SyntaxError,UnicodeError):INVALID.append(source)
         else:VALID.append(source)
 VALID += ['f(*a if b else c)', 'f(**a if b else c)', 'f(x=1,*a,**b,y=2)', 'f(*a,b,*c)', 'f(x=g(y=1), **h(z=2))']
 VALID += ['f('+','.join('x' for _ in range(2000))+')', 'f('+','.join(f'k{i}=x' for i in range(2000))+')']
@@ -47,7 +49,7 @@ for target in ['*x','(*x)','(*x,)','*x,y','(x)','((x))','[x,y.z]','x,','(x,)','[
                'f(x for x in xs).y','f(x for x in xs)[y]','True','None','...']:
     source=f'[x for {target} in xs]'
     try:ast.parse(source,mode='eval')
-    except SyntaxError:INVALID.append(source)
+    except (SyntaxError,UnicodeError):INVALID.append(source)
     else:VALID.append(source)
 for async_a,async_b,filter_a,filter_b in itertools.product(['','async '],['','async '],['',' if x'],['',' if y if z']):
     VALID.append(f'[x+y {async_a}for x in xs{filter_a} {async_b}for y in ys{filter_b}]')
@@ -57,7 +59,7 @@ for length in range(1,5):
         params=[['p'+str(i), 'p'+str(i)+'=x', '/', '*', '*p'+str(i), '**p'+str(i)][category] for i,category in enumerate(categories)]
         source='lambda '+','.join(params)+': x'
         try:ast.parse(source,mode='eval')
-        except SyntaxError:INVALID.append(source)
+        except (SyntaxError,UnicodeError):INVALID.append(source)
         else:VALID.append(source)
 VALID += ['lambda: x', 'lambda x,/: x', 'lambda a,b=1,/,c=2,*args,d,e=3,**kw: a',
           'lambda a,/,b,c=1,*,d,e=2,**kw: c', 'lambda a=1,/: a', 'lambda a=1,/,**kw: a',
@@ -88,7 +90,7 @@ for length in range(1,5):
     for pieces in itertools.product(['"text"', 'b"data"', 'f"{x}"', 't"{x}"'],repeat=length):
         source=' '.join(pieces)
         try:ast.parse(source,mode='eval')
-        except SyntaxError:INVALID.append(source)
+        except (SyntaxError,UnicodeError):INVALID.append(source)
         else:VALID.append(source)
 for prefix,quote,body in itertools.product(['f','F','fr','RF','t','T','tr','RT'],[chr(34),chr(39),chr(34)*3,chr(39)*3],
         ['', 'plain', '{{x}}', '{x}', '{x=}', '{ x = }', '{x!r}', '{x!s}', '{x!a}', '{x!q}', '{x! r}', '{x !r }',
@@ -97,11 +99,25 @@ for prefix,quote,body in itertools.product(['f','F','fr','RF','t','T','tr','RT']
          '{[x for x in xs]}', '{ {"key": value} }', '日本語 {name}']):
     source=prefix+quote+body+quote
     try:ast.parse(source,mode='eval')
-    except SyntaxError:INVALID.append(source)
+    except (SyntaxError,UnicodeError):INVALID.append(source)
     else:VALID.append(source)
 VALID += ['"a" "b"', 'b"a" BR"b"', 'f"a{x}" "tail" f"{y}"', 't"{x}" t"{y}"',
           'f"{x!r:>{width}}"', 'f"{x=:.2f}"', 'f"{await f()}"', 'f"{x # comment\n}"']
 INVALID += ['f"{x!\tr}"', 'f"{x!\nr}"', 'f"{x!rr}"', 'f"{x!R}"', 'f"{x!1}"', 'f"{x!r!s}"']
+# Numeric escape rejection must respect raw/bytes modes and interpolation nesting.
+for prefix,quote,body in itertools.product(['','u','r','b','br','rb','f','fr','t','tr'],[chr(34),chr(39)*3],
+        [r'\x',r'\x0',r'\xGG',r'\x00',r'\xff',r'\x001',r'\u',r'\u123',r'\u1234',r'\uD800',
+         r'\U00000000',r'\U0010ffff',r'\U00110000',r'\Uffffffff',r'\U1234567',r'\U0000GGGG',
+         r'\\x',r'\\u',r'\123',r'\777',r'\q',r'\X',r'\\\x00']):
+    source=prefix+quote+body+quote
+    try:ast.parse(source,mode='eval')
+    except (SyntaxError,UnicodeError):INVALID.append(source)
+    else:VALID.append(source)
+for source in [r'f"\x{x}"',r'f"{x:>\x}"',r't"{x:>\U00110000}"',r'fr"{x:>\x}"',
+               'f"{r\'\\x\'}"', 'fr"{\'\\x\'}"', 'f"{fr\'\\x{x}\'}"', 'fr"{f\'\\x{x}\'}"', 'f"\\{x}"']:
+    try:ast.parse(source,mode='eval')
+    except (SyntaxError,UnicodeError):INVALID.append(source)
+    else:VALID.append(source)
 OP={ast.Add:'+',ast.Sub:'-',ast.Mult:'*',ast.Div:'/',ast.FloorDiv:'//',ast.Mod:'%',ast.MatMult:'@',ast.Pow:'**',ast.LShift:'<<',ast.RShift:'>>',ast.BitAnd:'&',ast.BitXor:'^',ast.BitOr:'|',ast.And:'and',ast.Or:'or',ast.Eq:'==',ast.NotEq:'!=',ast.Lt:'<',ast.LtE:'<=',ast.Gt:'>',ast.GtE:'>=',ast.In:'in',ast.NotIn:'not in',ast.Is:'is',ast.IsNot:'is not',ast.USub:'-',ast.UAdd:'+',ast.Invert:'~',ast.Not:'not'}
 def reference_fields(n,source):
     fields=[]
@@ -233,7 +249,7 @@ with tempfile.TemporaryDirectory() as tmp:
     expected=[reference(ast.parse(s,mode='eval').body,s) for s in VALID]
     for s in INVALID:
         try:ast.parse(s,mode='eval')
-        except SyntaxError:pass
+        except (SyntaxError,UnicodeError):pass
         else:raise AssertionError(('reference accepts malformed fixture',s))
     data.write_text(json.dumps(dict(cases=VALID+INVALID),ensure_ascii=False))
     results=json.loads(subprocess.check_output([str(binary),str(data)],text=True,timeout=60))
@@ -244,6 +260,6 @@ with tempfile.TemporaryDirectory() as tmp:
     for source,got in zip(INVALID,results[len(VALID):]):assert not got['ok'],(source,got)
 report=dict(python=platform.python_version(),matching_expression_trees=len(VALID),rejected_expressions=len(INVALID),
             expressions_sha256=hashlib.sha256(json.dumps(VALID+INVALID,ensure_ascii=False).encode()).hexdigest(),
-            scope='normalized operator trees, conditional order, comparisons, call/attribute/subscript structure, displays, unpacking, slices, call argument ordering, named expressions, comprehensions, lambdas, yield/await, string families and interpolation fields (literal decoding excluded); not a complete Python grammar')
+            scope='normalized operator trees, conditional order, comparisons, call/attribute/subscript structure, displays, unpacking, slices, call argument ordering, named expressions, comprehensions, lambdas, yield/await, string families, interpolation fields and numeric escape validation (literal decoding excluded); not a complete Python grammar')
 if len(sys.argv)>1:Path(sys.argv[1]).write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report))
