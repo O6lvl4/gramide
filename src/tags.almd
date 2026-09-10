@@ -12,10 +12,11 @@
 // arrives as `sep`, from lang.almd.
 
 import self.tree
+import self.package_api
 import self.lex
-import self.lang_almide
-import self.lang_go
-import self.lang_rust
+import self.packages.gramide_almide as lang_almide
+import self.packages.gramide_go as lang_go
+import self.packages.gramide_rust as lang_rust
 import self.parser
 
 // Local copies of the tree helpers that take the token list: a list handed to
@@ -58,34 +59,10 @@ fn render(t: Tag) -> String =
 //
 // This is the whole vocabulary. A grammar that invents a kind still parses; it
 // is simply invisible to `outline`, `tags` and `map`.
-fn decl_kind(k: String) -> String = match k {
-  "function_declaration" => "function",
-  "method_declaration" => "method",
-  "method_signature" => "method",
-  "type_declaration" => "type",
-  "type_spec" => "type",
-  "let_declaration" => "let",
-  "test_declaration" => "test",
-  "protocol_declaration" => "protocol",
-  "variant" => "variant",
-  "var_spec" => "var",
-  "const_spec" => "const",
-  "field" => "field",
-  "impl" => "impl",
-  "mod" => "mod",
-  "macro_definition" => "macro",
-  _ => "",
-}
-
-// A declaration whose name qualifies the functions written inside it. A `mod`
-// is deliberately not one: a module is a path, not an owner, and prefixing
-// every function in a file with it would say nothing.
-fn is_scope(k: String) -> Bool =
-  k == "impl" or k == "type_spec" or k == "type_declaration" or k == "protocol_declaration"
-
-// A declaration that is a function, and so takes the qualifier.
-fn is_callable(k: String) -> Bool =
-  k == "function_declaration" or k == "method_declaration" or k == "method_signature"
+fn decl_kind(k: String, rules: package_api.SymbolRules) -> String =
+  option.map(list.find(rules.declarations, (d) => d.0 == k), (d) => d.1) ?? ""
+fn is_scope(k: String, rules: package_api.SymbolRules) -> Bool = list.contains(rules.scopes, k)
+fn is_callable(k: String, rules: package_api.SymbolRules) -> Bool = list.contains(rules.callables, k)
 
 fn child(n: tree.Node, field: String) -> Option[tree.Node] = list.find(n.kids, (k) => k.field == field)
 
@@ -112,16 +89,16 @@ fn type_name_in(n: tree.Node, toks: List[tree.Token]) -> String =
 
 // Go names the owner in a receiver instead of by nesting, so a method there is
 // found at the top level with its type one field away.
-fn owner_for(n: tree.Node, owner: String, toks: List[tree.Token]) -> String =
-  if not is_callable(n.kind) then ""
+fn owner_for(n: tree.Node, owner: String, toks: List[tree.Token], rules: package_api.SymbolRules) -> String =
+  if not is_callable(n.kind, rules) then ""
   else match child(n, "receiver") {
     some(p) => type_name_in(p, toks),
     none => owner,
   }
 
-fn scope_under(n: tree.Node, owner: String, toks: List[tree.Token]) -> String =
-  if is_callable(n.kind) then ""            // a function body holds no methods
-  else if is_scope(n.kind) then scope_of(n, toks)
+fn scope_under(n: tree.Node, owner: String, toks: List[tree.Token], rules: package_api.SymbolRules) -> String =
+  if is_callable(n.kind, rules) then ""            // a function body holds no methods
+  else if is_scope(n.kind, rules) then scope_of(n, toks)
   else owner
 
 // Walk the tree. Calls are recognised on the flat postfix chain the grammar
@@ -129,12 +106,12 @@ fn scope_under(n: tree.Node, owner: String, toks: List[tree.Token]) -> String =
 // The chain is read with one step of memory (what the previous two kids
 // were) rather than by looking ahead, because reading a kid with list.get
 // copies its whole subtree — a look-ahead would copy every subtree twice.
-fn walk(n: tree.Node, toks: List[tree.Token], scope: String, sep: String) -> List[Tag] = {
+fn walk(n: tree.Node, toks: List[tree.Token], scope: String, sep: String, rules: package_api.SymbolRules) -> List[Tag] = {
   var out: List[Tag] = []
-  let kind = decl_kind(n.kind)
+  let kind = decl_kind(n.kind, rules)
   let name = if kind != "" then name_of(n, toks) else ""
   if name != "" then {
-    let own = owner_for(n, scope, toks)
+    let own = owner_for(n, scope, toks, rules)
     list.push(out, Tag {
       role: "def",
       kind: if own == "" then kind else "method",
@@ -151,7 +128,7 @@ fn walk(n: tree.Node, toks: List[tree.Token], scope: String, sep: String) -> Lis
     }
   }
   else ()
-  let inner = scope_under(n, scope, toks)
+  let inner = scope_under(n, scope, toks, rules)
   var prev_kind = ""          // the kid before this one
   var prev_name = ""          // its leaf text (identifier) or field name (field_access)
   var prev_line = 0
@@ -177,7 +154,7 @@ fn walk(n: tree.Node, toks: List[tree.Token], scope: String, sep: String) -> Lis
         prev_name = if k.kind == "identifier" then leaf_text(k, toks)
           else if k.kind == "field_access" then (match child(k, "field") { some(m) => leaf_text(m, toks), none => "" })
           else ""
-        for t in walk(k, toks, inner, sep) { list.push(out, t) }
+        for t in walk(k, toks, inner, sep, rules) { list.push(out, t) }
       },
     }
     i = i + 1
@@ -185,43 +162,43 @@ fn walk(n: tree.Node, toks: List[tree.Token], scope: String, sep: String) -> Lis
   out
 }
 
-fn of_tree(root: tree.Node, toks: List[tree.Token], sep: String) -> List[Tag] = walk(root, toks, "", sep)
+fn of_tree(root: tree.Node, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> List[Tag] = walk(root, toks, "", sep, rules)
 
-fn tags(root: tree.Node, toks: List[tree.Token], sep: String) -> List[String] =
-  list.map(of_tree(root, toks, sep), (t) => render(t))
+fn tags(root: tree.Node, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> List[String] =
+  list.map(of_tree(root, toks, sep, rules), (t) => render(t))
 
 test "definitions, calls and type mentions" {
   let src = "type P = { x: Int }\nfn area(p: P) -> Int = int.abs(p.x) * sq(2)\n"
   let toks = lex.tokenize(src, lang_almide.spec()) |> result.map_err((e) => e.message)!
   let p = parser.parse(lang_almide.almide(), toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert_eq(tags(p.root, toks, "."), ["def type P L1-1", "def field x L1-1", "ref type Int L1", "def function area L2-2", "ref type P L2", "ref type Int L2", "ref call int.abs L2", "ref call sq L2"])
+  assert_eq(tags(p.root, toks, ".", lang_almide.symbol_rules()), ["def type P L1-1", "def field x L1-1", "ref type Int L1", "def function area L2-2", "ref type P L2", "ref type Int L2", "ref call int.abs L2", "ref call sq L2"])
 }
 
 // `outline`: the definitions only, one per line, nested ones indented by
 // how many definitions enclose them. The name is qualified here too, even
 // though the indentation already shows what encloses what, so that one line
 // cut out of the output still says what it is.
-fn outline(root: tree.Node, toks: List[tree.Token], sep: String) -> List[String] =
-  outline_walk(root, toks, "", "", sep)
+fn outline(root: tree.Node, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> List[String] =
+  outline_walk(root, toks, "", "", sep, rules)
 
-fn outline_walk(n: tree.Node, toks: List[tree.Token], indent: String, scope: String, sep: String) -> List[String] = {
-  let kind = decl_kind(n.kind)
+fn outline_walk(n: tree.Node, toks: List[tree.Token], indent: String, scope: String, sep: String, rules: package_api.SymbolRules) -> List[String] = {
+  let kind = decl_kind(n.kind, rules)
   let name = if kind != "" then name_of(n, toks) else ""
   var out: List[String] = []
   if name != "" then {
-    let own = owner_for(n, scope, toks)
+    let own = owner_for(n, scope, toks, rules)
     list.push(out, indent + "L" + int.to_string(start_line(n, toks)) + "-" + int.to_string(end_line(n, toks))
       + " " + (if own == "" then kind else "method")
       + " " + (if own == "" then name else own + sep + name))
   }
   else ()
   let deeper = if name == "" then indent else indent + "  "
-  let inner = scope_under(n, scope, toks)
+  let inner = scope_under(n, scope, toks, rules)
   var i = 0
   let count = list.len(n.kids)
   while i < count {
     match list.get(n.kids, i) {
-      some(k) => for l in outline_walk(k, toks, deeper, inner, sep) { list.push(out, l) },
+      some(k) => for l in outline_walk(k, toks, deeper, inner, sep, rules) { list.push(out, l) },
       none => (),
     }
     i = i + 1
@@ -239,7 +216,7 @@ test "a Rust method is named with the type it is implemented on" {
 """
   let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
   let p = parser.parse(lang_rust.rust(), toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert_eq(outline(p.root, toks, "::"), [
+  assert_eq(outline(p.root, toks, "::", lang_rust.symbol_rules()), [
     "L1-6 mod inner",
     "  L2-2 type S",
     "    L2-2 field a",
@@ -257,14 +234,14 @@ test "a Go method is named with its receiver, which is not where it is written" 
   let src = "package p\n\ntype Shape struct{ w int }\n\nfunc (s *Shape) Area() int { return s.w }\n"
   let toks = lex.tokenize(src, lang_go.spec()) |> result.map_err((e) => e.message)!
   let p = parser.parse(lang_go.go(), toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert(list.contains(outline(p.root, toks, "."), "L5-5 method Shape.Area"))
+  assert(list.contains(outline(p.root, toks, ".", lang_go.symbol_rules()), "L5-5 method Shape.Area"))
 }
 
 test "a function in a plain module keeps its own name" {
   let src = "mod inner { pub fn free() -> u8 { 0 } }\n"
   let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
   let p = parser.parse(lang_rust.rust(), toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert_eq(outline(p.root, toks, "::"), ["L1-1 mod inner", "  L1-1 function free"])
+  assert_eq(outline(p.root, toks, "::", lang_rust.symbol_rules()), ["L1-1 mod inner", "  L1-1 function free"])
 }
 
 test "a multi-byte character above a name does not shift the name" {
@@ -274,12 +251,12 @@ test "a multi-byte character above a name does not shift the name" {
   let src = "//! ≥ and — and §\nimpl salsa::Database for SpineDb {}\n"
   let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
   let p = parser.parse(lang_rust.rust(), toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert_eq(outline(p.root, toks, "::"), ["L2-2 impl SpineDb"])
+  assert_eq(outline(p.root, toks, "::", lang_rust.symbol_rules()), ["L2-2 impl SpineDb"])
 }
 
 test "a function written inside a method body is not a method of the type" {
   let src = "impl S { fn m() { fn helper() -> u8 { 0 } } }\n"
   let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
   let p = parser.parse(lang_rust.rust(), toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert_eq(outline(p.root, toks, "::"), ["L1-1 impl S", "  L1-1 method S::m", "    L1-1 function helper"])
+  assert_eq(outline(p.root, toks, "::", lang_rust.symbol_rules()), ["L1-1 impl S", "  L1-1 method S::m", "    L1-1 function helper"])
 }

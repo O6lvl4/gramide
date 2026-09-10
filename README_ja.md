@@ -59,14 +59,14 @@ gramide map . --budget 1024 --task "fix parse_rule"
 source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶ check / outline / parse
 ```
 
-- **`src/lex.almd`** — 全言語で 1 本のバイト列字句解析。言語が渡すのは `Spec` です。キーワード、
+- **`src/lex.almd`** — 同梱言語で共用するバイト列字句解析。言語が渡すのは `Spec` です。キーワード、
   演算子、コメント記号、改行の意味、そして表では書けない 2 つ（数値の書き方と文字列リテラルの終わり方）
   に対する族の指定。Go の字句解析はこの spec 32 行です。
 - **`src/parser.almd`** — エンジン。文法は `Grammar { start, rules }` で、規則は `Rule` 値
   （`Tok`, `Lit`, `Seq`, `Alt`, `Rep`, `Opt`, `Wrap`, `Field`, `Left`, 先読み）。順序付き選択、
   貪欲な繰り返し、左再帰なし。二項演算子は `Left(kind, operand, op)` で、マッチ後に左畳み込み。
   パーサは失敗した最遠のトークンとそこで期待していたものを覚えていて、それが `check` の出すエラー。
-- **`src/lang_almide.almd`**, **`src/lang_go.almd`**, **`src/lang_rust.almd`** — 1 ファイルで 1 言語。字句解析の spec と文法を
+- **`src/packages/gramide_almide.almd`**, **`src/packages/gramide_go.almd`**, **`src/packages/gramide_rust.almd`** — 1 ファイルで 1 言語。字句解析の spec と文法を
   どちらも値として持ちます。Go 文法は式の梯子を一つの関数から 2 回（末尾の複合リテラルあり・なし）生成し、
   `if x == T{…} {` の曖昧さを避けています。セミコロン挿入は spec の `NL_SEMI` 指定だけで、
   文法は Go が区切りと見る場所にしか区切りを見ません。
@@ -85,7 +85,7 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
 
 ```
 almide build            # → ./gramide
-almide test             # 9 モジュール 22 テスト
+almide test             # 言語パッケージ契約のテストを含む
 ```
 
 Almide 0.61 以降が必要です。
@@ -93,3 +93,14 @@ Almide 0.61 以降が必要です。
 ## ライセンス
 
 MIT または Apache-2.0、お好みで。
+
+## 言語パッケージ
+
+`gramide languages` は登録済みパッケージ・拡張子・機能をバージョン付き JSON で返します。
+`gramide-almide`・`gramide-go`・`gramide-rust` が字句解析ファクトリ・文法・シンボル規則を持ち、
+ホストは対象ファイルに必要なパッケージだけをロードします。独自の字句解析器も渡せるため、
+インデントに意味のある言語を共通 lexer の制約に押し込めずに追加できます。
+
+現在は同一リポジトリ内の静的モジュールです。個別インストールと動的ロードは未実装で、
+Python もまだ対応言語には登録していません。
+[契約と Python の設計チェックポイント](docs/language-packages.md) を参照してください。

@@ -47,7 +47,7 @@ effect fn scan(root: String) -> Result[Scan, String] = {
   let engines = lang.engines_for(all)
   for p in list.sort(all) {
     let rel = if string.starts_with(p, root + "/") then string.slice(p, string.len(root) + 1, string.len(p)) else p
-    if lang.known(p) and not skipped(rel) then {
+    if lang.supports(p, "map") and not skipped(rel) then {
       let size = fs.file_size(p) ?? 0
       if size > MAX_FILE_BYTES then list.push(errors, rel + ": skipped, larger than 512 KB")
       else match fs.read_text(p) {
@@ -58,7 +58,7 @@ effect fn scan(root: String) -> Result[Scan, String] = {
           err(e) => list.push(errors, e + " [skipped]"),
           ok(d) => {
             match d.error { some(e) => list.push(errors, e + " [recovered]"), none => () }
-            list.push(files, FileTags { path: rel, tags: tags.of_tree(d.parsed.root, d.parsed.toks, d.sep) })
+            list.push(files, FileTags { path: rel, tags: tags.of_tree(d.parsed.root, d.parsed.toks, d.sep, d.symbols) })
           },
         },
       }

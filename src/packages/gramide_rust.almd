@@ -14,6 +14,7 @@
 // (suffix `_nc`) not, and the headers of `if`, `while`, `for` and `match` use
 // the second.
 
+import self.package_api
 import self.parser
 import self.lex
 import self.parser.{ tok, lit, keep, r, seq, alt, rep, rep1, opt, wrap, field, ahead, nott, leftf, lits, keeps, any, grammar, recover, recover_all_keeping }
@@ -435,3 +436,20 @@ test "a half-typed signature keeps its name" {
   assert_eq(recovered_kinds(src), ["function_declaration", "function_declaration", "ERROR", "function_declaration"])
 }
 
+
+fn symbol_rules() -> package_api.SymbolRules = package_api.SymbolRules {
+  declarations: [("function_declaration", "function"), ("method_declaration", "method"), ("method_signature", "method"), ("type_declaration", "type"), ("type_spec", "type"), ("let_declaration", "let"), ("variant", "variant"), ("field", "field"), ("impl", "impl"), ("mod", "mod"), ("macro_definition", "macro")],
+  scopes: ["impl", "type_spec", "type_declaration"], callables: ["function_declaration", "method_declaration", "method_signature"],
+  envelopes: ["item_envelope"], unnamed_envelopes: ["type_declaration"]
+}
+
+fn prepare_lexer() -> package_api.Tokenizer = {
+  let config = spec()
+  (source, recovering) => lex.tokenize_with(source, config, recovering)
+}
+
+fn definition() -> package_api.Definition = package_api.Definition {
+  id: "rust", package_name: "gramide-rust", version: "0.1.0", extensions: [".rs"],
+  capabilities: ["check", "tokens", "parse", "outline", "symbols", "tags", "map"],
+  lexer: () => prepare_lexer(), grammar: () => rust(), sep: "::", symbols: symbol_rules()
+}

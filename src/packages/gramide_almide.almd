@@ -21,6 +21,7 @@
 
 import self.lex
 import self.tree
+import self.package_api
 import self.parser
 import self.parser.{ tok, lit, keep, r, seq, alt, rep, rep1, opt, wrap, field, ahead, leftf, lits, keeps, grammar, recover, recover_all, recover_all_keeping }
 
@@ -374,4 +375,21 @@ test "line and column are 1-based and survive a heredoc" {
   let b = list.find(toks, (t) => t.text == "b")
   assert_eq(option.map(b, (t) => t.line), some(5))
   assert_eq(option.map(b, (t) => t.col), some(1))
+}
+
+fn symbol_rules() -> package_api.SymbolRules = package_api.SymbolRules {
+  declarations: [("function_declaration", "function"), ("type_declaration", "type"), ("let_declaration", "let"), ("test_declaration", "test"), ("protocol_declaration", "protocol"), ("variant", "variant"), ("field", "field")],
+  scopes: ["type_declaration", "protocol_declaration"], callables: ["function_declaration", "method_declaration", "method_signature"],
+  envelopes: [], unnamed_envelopes: []
+}
+
+fn prepare_lexer() -> package_api.Tokenizer = {
+  let config = spec()
+  (source, recovering) => lex.tokenize_with(source, config, recovering)
+}
+
+fn definition() -> package_api.Definition = package_api.Definition {
+  id: "almide", package_name: "gramide-almide", version: "0.1.0", extensions: [".almd"],
+  capabilities: ["check", "tokens", "parse", "outline", "symbols", "tags", "map"],
+  lexer: () => prepare_lexer(), grammar: () => almide(), sep: ".", symbols: symbol_rules()
 }

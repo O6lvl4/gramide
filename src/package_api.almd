@@ -1,0 +1,19 @@
+// Static language package contract. Lexer factories may implement layout,
+// interpolation or other language-specific scanning outside the shared engine.
+import self.lex
+import self.tree
+import self.parser
+
+type LexError = lex.LexError
+type Token = tree.Token
+
+type Tokenizer = (String, Bool) -> Result[List[tree.Token], lex.LexError]
+type SymbolRules = {
+  declarations: List[(String, String)], scopes: List[String], callables: List[String],
+  envelopes: List[String], unnamed_envelopes: List[String]
+}
+type Definition = {
+  id: String, package_name: String, version: String, extensions: List[String], capabilities: List[String],
+  lexer: () -> Tokenizer, grammar: () -> parser.Grammar,
+  sep: String, symbols: SymbolRules
+}
