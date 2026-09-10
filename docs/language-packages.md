@@ -433,3 +433,30 @@ claim these standard-library modules parse as complete files.
 Compiler-context validation, type comments, Unicode-name escape validation,
 compound suites/declarations, recovery and hew integration remain unfinished.
 Python stays unregistered.
+
+## Python implementation progress: compound control flow
+
+`compounds.almd` connects logical NEWLINE/INDENT/DEDENT tokens to nonempty suites
+and composes them with the simple-statement grammar. It follows CPython v3.14.4
+for if/elif/else, while/for with else, async for, with/async with and try/except/
+except*/else/finally. Ordinary and exception-group handlers cannot be mixed.
+Python 3.14's unparenthesized exception lists are supported, with alias placement
+following the reference grammar.
+
+The with-item grammar distinguishes parenthesized item lists from a tuple
+expression followed by `as`. The former needs the next token after the
+closing parenthesis to be a colon; otherwise it falls back to the expression form. `with ():`
+is syntactically valid (an empty tuple context expression), regardless of whether
+that value can act as a context manager at runtime.
+
+The cumulative statement oracle now matches **491** trees and rejects **146**
+malformed inputs. It includes 227 standard-library simple statements and six
+exact top-level compound-statement segments, nested branch/loop combinations,
+async flags, handler order and aliases, and multiple dedentation levels.
+[Evidence](evidence/python-compound-statements.json) records the corpus hash.
+Tests compare which suite belongs to each else/finally/handler, not just whether
+a file was accepted.
+
+Function/class declarations, match patterns, type aliases, contextual compiler
+checks, type comments, Unicode-name escape validation, recovery and hew
+integration remain unfinished. Python is still unregistered.
