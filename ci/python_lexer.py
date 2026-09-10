@@ -1,4 +1,4 @@
-"""Compare connected Python lexing with CPython, recording interpolation gaps."""
+"""Compare connected Python lexing with CPython, including interpolation."""
 from pathlib import Path
 import io,json,os,platform,shutil,subprocess,sys,sysconfig,tempfile,tokenize,hashlib
 ROOT=Path(__file__).resolve().parents[1]
@@ -14,10 +14,20 @@ SOURCES=[
  ('no_final_newline','if True:\n    x = 1'),('empty',''),('comment_eof','x = 1 # tail'),
 ]
 SOURCES.append(('many_declarations',''.join(f'value_{i} = {i}\n' for i in range(2000))))
+# Exercise literal/field/format transitions for both interpolation families.
+for prefix in ['f','F','fr','RF','t','T','tr','RT']:
+    for quote in [chr(34), chr(39), chr(34)*3, chr(39)*3]:
+        for index,body in enumerate(['','plain','{x}','{{x}}','{x=}','{x!r:>{width}.{precision}}',"{ {'key': value} }",'{(x := 1)}','{x:=10}',"{f'{y}'}",'\\N{SNOWMAN}','日本語 {name}']):
+            source='result = '+prefix+quote+body+quote+'\n'
+            compile(source,'interpolation fixture','exec')
+            SOURCES.append((f'{prefix}_{len(quote)}_{ord(quote[0])}_{index}',source))
+SOURCES.append(('expression_comments','result = f"{(\n # comment\n value\n)}"\n'))
 stdlib=Path(sysconfig.get_path('stdlib'))
-for name in ['keyword.py','token.py','stat.py','copyreg.py','genericpath.py','reprlib.py','textwrap.py']:
+for name in ['keyword.py','token.py','stat.py','copyreg.py','genericpath.py','reprlib.py','textwrap.py','ast.py','argparse.py','dataclasses.py','inspect.py','tokenize.py']:
     SOURCES.append((name,(stdlib/name).read_text()))
 INVALID=['if True:\n\tx = 1\n        y = 2\n','x = (1]\n','x = 1e+\n','x = "unterminated\n','name🪨 = 1\n','x = 1 \\oops\n','x = 1\x00\n']
+
+INVALID.extend(['x = f"single }"\n','x = f"{value"\n','x = f"{x:>10"\n',"x = t'never closed\n"])
 
 def oracle(source):
     # Map normalized character offsets back to original UTF-8 bytes.
@@ -33,17 +43,16 @@ def oracle(source):
     def at(pos):
         row,col=pos
         return offsets[min(starts[row-1]+col,len(offsets)-1)] if row<=len(starts) else len(raw)
-    kinds=[];code=[];interpolated=False
+    kinds=[];code=[]
     for t in tokenize.generate_tokens(io.StringIO(normalized).readline):
-        if tokenize.tok_name[t.type].startswith(('FSTRING','TSTRING')):interpolated=True
         if t.type in (tokenize.NL,tokenize.COMMENT):continue
-        kind={tokenize.NAME:'identifier',tokenize.NUMBER:'number',tokenize.STRING:'string',tokenize.OP:'punct',tokenize.NEWLINE:'newline',tokenize.INDENT:'indent',tokenize.DEDENT:'dedent',tokenize.ENDMARKER:'eof'}.get(t.type,'interpolation')
+        kind={tokenize.NAME:'identifier',tokenize.NUMBER:'number',tokenize.STRING:'string',tokenize.OP:'punct',tokenize.NEWLINE:'newline',tokenize.INDENT:'indent',tokenize.DEDENT:'dedent',tokenize.ENDMARKER:'eof'}.get(t.type,tokenize.tok_name[t.type].lower())
         kinds.append(kind)
-        if kind in ('identifier','number','string','punct'):
+        if kind in ('identifier','number','string','punct','fstring_start','fstring_middle','fstring_end','tstring_start','tstring_middle','tstring_end'):
             start,end=at(t.start),at(t.end)
             line_start=max(raw.rfind(b'\n',0,start),raw.rfind(b'\r',0,start))+1
             code.append(dict(kind=kind,text=raw[start:end].decode(),start=start,end=end,line=t.start[0],col=start-line_start+1))
-    return kinds,code,interpolated
+    return kinds,code
 
 with tempfile.TemporaryDirectory() as tmp:
     project=Path(tmp);(project/'src/packages').mkdir(parents=True)
@@ -62,13 +71,10 @@ with tempfile.TemporaryDirectory() as tmp:
     accepted=[];unsupported=[]
     for (name,source),result in zip(SOURCES,results):
         compile(source,name,'exec')
-        kinds,code,interpolated=oracle(source)
-        if interpolated:
-            assert not result['ok'] and 'interpolated' in result['message'],(name,result)
-            unsupported.append(name);continue
+        kinds,code=oracle(source)
         assert result['ok'],(name,result)
         assert [t['kind'] for t in result['tokens']]==kinds,(name,'token kinds differ')
-        actual=[t for t in result['tokens'] if t['kind'] in ('identifier','number','string','punct')]
+        actual=[t for t in result['tokens'] if t['kind'] in ('identifier','number','string','punct','fstring_start','fstring_middle','fstring_end','tstring_start','tstring_middle','tstring_end')]
         assert actual==code,(name,'source token ranges differ',next(((a,b) for a,b in zip(actual,code) if a!=b),None))
         accepted.append(name)
     assert all(not r['ok'] for r in results[len(SOURCES):])
@@ -76,4 +82,4 @@ with tempfile.TemporaryDirectory() as tmp:
                 source_sha256={name:hashlib.sha256(source.encode()).hexdigest() for name,source in SOURCES},
                 compared='logical token kinds; exact text, bytes, lines and byte columns of code tokens; no grammar claim')
     if len(sys.argv)>1:Path(sys.argv[1]).write_text(json.dumps(report,indent=2)+'\n')
-    print(json.dumps(report))
+    print(json.dumps(dict(python=report['python'],matched=len(accepted),unsupported_interpolation=unsupported,rejected=len(INVALID))))
