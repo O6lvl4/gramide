@@ -1,6 +1,7 @@
-// Python simple statements, reusable by the forthcoming compound suites.
+// Python statements composed with expression and compound-suite rules.
 import self.parser
 import self.packages.python.expressions
+import self.packages.python.compounds
 import self.packages.python.containers
 import self.packages.python.arguments
 import self.parser.{ seq, nott, wrap, r, opt, keep, keeps, alt, rep, tok, lit, grammar }
@@ -48,5 +49,5 @@ fn rules() -> List[(String, parser.Rule)] = [
   ]))),
 ]
 fn file_grammar() -> parser.Grammar = grammar("file", [
-  ("file", wrap("module", rep(r("simple_stmts"))))
-] + rules() + expressions.rules())
+  ("file", wrap("module", rep(r("statement"))))
+] + rules() + compounds.rules() + expressions.rules())

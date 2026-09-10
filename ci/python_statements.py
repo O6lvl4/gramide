@@ -1,4 +1,4 @@
-"""Compare simple-statement structure and syntax rejection with CPython."""
+"""Compare statement structure and syntax rejection with CPython."""
 from pathlib import Path
 import ast,hashlib,itertools,json,os,platform,shutil,subprocess,sys,sysconfig,tempfile,warnings
 from python_ast import reference,actual,OP
@@ -22,9 +22,32 @@ for target in ['a','a,b','(a,b)','[a,b]','()','[]','(a)','f().x','f()[0]','[a,*b
     except SyntaxError:INVALID.append(source)
     else:VALID.append(source)
 
+# Suites, branch ownership, async forms and exception-handler combinations.
+for header in ['if x','if x := f()','while x','for x in xs','for x,y in pairs','async for x in xs','with a as x','async with a as x','with (a,b)','with (a,b) as x']:
+    for body in [' pass\n','\n    a=1\n    b=2\n']:
+        VALID.append(header+':'+body)
+VALID += ['if a:\n if b: x=1\n else: x=2\nelse: x=3\n',
+          'if a: pass\nelif b: pass\nelif c: pass\nelse: pass\n',
+          'while x: break\nelse: pass\n', 'for x in a,b: continue\nelse: pass\n',
+          'with (a as x,b as (y,z),): pass\n', 'with a as [x,*y],b: pass\n',
+          'if a:\n    # comment\n    for b in xs:\n        if b: continue\n    else:\n        pass\nx=1\n']
+for prefix,exceptions,suffix in itertools.product(['except','except*'],['A','A as e','A,B','(A,B) as e','A,',''],['','else: pass\n','finally: pass\n','else: pass\nfinally: pass\n']):
+    source=f'try: pass\n{prefix} {exceptions}: pass\n{suffix}'
+    try:ast.parse(source)
+    except SyntaxError:INVALID.append(source)
+    else:VALID.append(source)
+VALID += ['with (): pass\n', 'try: pass\nfinally: pass\n', 'try:\n x=1\nexcept A:\n raise\nexcept B as e:\n pass\nelse:\n x=2\nfinally:\n x=3\n',
+          'try: pass\nexcept* A: pass\nexcept* B as e: pass\n', 'try: pass\nexcept: pass\nexcept A: pass\n']
+INVALID += ['if x:\npass\n','if x:\n','if x: if y: pass\n','else: pass\n','elif x: pass\n',
+            'while : pass\n','for f() in xs: pass\n','for x in: pass\n','for x in xs,,: pass\n',
+            'with a as f(): pass\n','with a,b,: pass\n','with a as x+y: pass\n',
+            'try: pass\n','try: pass\nelse: pass\n','try: pass\nexcept* : pass\n',
+            'try: pass\nexcept A: pass\nexcept* B: pass\n','try: pass\nexcept A,B as e: pass\n',
+            'try: pass\nfinally: pass\nexcept A: pass\n']
+
 # Exercise real top-level simple statements without inventing replacements for
 # compound suites. Each exact AST source segment becomes a standalone fixture.
-stdlib=Path(sysconfig.get_path('stdlib'));stdlib_count=0
+stdlib=Path(sysconfig.get_path('stdlib'));stdlib_count=0;stdlib_compound_count=0
 simple=(ast.Expr,ast.Assign,ast.AnnAssign,ast.AugAssign,ast.Import,ast.ImportFrom,ast.Assert,ast.Delete)
 for name in ['tokenize.py','dataclasses.py','inspect.py','ast.py','typing.py']:
     source=(stdlib/name).read_text()
@@ -32,8 +55,23 @@ for name in ['tokenize.py','dataclasses.py','inspect.py','ast.py','typing.py']:
         if isinstance(node,simple):
             VALID.append(ast.get_source_segment(source,node)+'\n');stdlib_count+=1
 
+compound=(ast.If,ast.While,ast.For,ast.AsyncFor,ast.With,ast.AsyncWith,ast.Try,ast.TryStar)
+allowed=simple+compound+(ast.Pass,ast.Break,ast.Continue,ast.Return,ast.Raise,ast.Global,ast.Nonlocal)
+for name in ['tokenize.py','dataclasses.py','inspect.py','ast.py','typing.py']:
+    source=(stdlib/name).read_text()
+    for node in ast.parse(source).body:
+        if isinstance(node,compound) and all(isinstance(v,allowed) for v in ast.walk(node) if isinstance(v,ast.stmt)):
+            VALID.append(ast.get_source_segment(source,node)+'\n');stdlib_compound_count+=1
+for outer,inner in itertools.product(['if outer','while outer','for outer in xs'],['if inner','while inner','for inner in ys']):
+    VALID.append(f'{outer}:\n    {inner}:\n        x=1\n    else:\n        x=2\nelse:\n    x=3\nx=4\n')
+
 def ref_stmt(n,source):
     ref=lambda v:reference(v,source) if v is not None else None
+    body=lambda nodes:[ref_stmt(v,source) for v in nodes]
+    if isinstance(n,(ast.If,ast.While)):return [type(n).__name__.lower(),ref(n.test),body(n.body),body(n.orelse)]
+    if isinstance(n,(ast.For,ast.AsyncFor)):return ['for',int(isinstance(n,ast.AsyncFor)),ref(n.target),ref(n.iter),body(n.body),body(n.orelse)]
+    if isinstance(n,(ast.With,ast.AsyncWith)):return ['with',int(isinstance(n,ast.AsyncWith)),[[ref(v.context_expr),ref(v.optional_vars)] for v in n.items],body(n.body)]
+    if isinstance(n,(ast.Try,ast.TryStar)):return ['try_star' if isinstance(n,ast.TryStar) else 'try',body(n.body),[[ref(v.type),v.name,body(v.body)] for v in n.handlers],body(n.orelse),body(n.finalbody)]
     if isinstance(n,ast.Expr):return ['expr_stmt',ref(n.value)]
     if isinstance(n,ast.Assign):return ['assign',[ref(t) for t in n.targets],ref(n.value)]
     if isinstance(n,ast.AnnAssign):return ['annassign',ref(n.target),ref(n.annotation),ref(n.value),n.simple]
@@ -52,8 +90,32 @@ def alias(n):
     kids=n['kids'];name=kids[0]
     return ['.'.join(k['text'] for k in name['kids']) if name['kind']=='dotted_name' else name['text'],kids[1]['text'] if len(kids)>1 else None]
 
+def act_block(n):return [act_stmt(v) for v in n['kids'] if v['kind'] not in ('newline','indent','dedent')]
+def act_else(nodes):
+    if not nodes:return []
+    n=nodes[0]
+    return [act_stmt(n)] if n['kind']=='if_stmt' else act_block(n['kids'][0])
+
 def act_stmt(n):
     k=n['kind'];kids=n['kids'];at=lambda i:actual(kids[i]) if i<len(kids) else None
+    if k in ('if_stmt','while_stmt'):return [k.removesuffix('_stmt'),at(0),act_block(kids[1]),act_else(kids[2:])]
+    if k=='for_stmt':
+        offset=int(kids[0]['text']=='async')
+        return ['for',offset,at(offset),at(offset+1),act_block(kids[offset+2]),act_else(kids[offset+3:])]
+    if k=='with_stmt':
+        offset=int(kids[0]['text']=='async')
+        items=[[actual(v['kids'][0]),actual(v['kids'][1]) if len(v['kids'])>1 else None] for v in kids[offset]['kids']]
+        return ['with',offset,items,act_block(kids[offset+1])]
+    if k in ('try_stmt','try_star'):
+        handlers=[];orelse=[];final=[]
+        for node in kids[1:]:
+            if node['kind']=='handlers':
+                for h in node['kids']:
+                    spec=h['kids'][0]['kids']
+                    handlers.append([actual(spec[0]) if spec else None,spec[1]['text'] if len(spec)>1 else None,act_block(h['kids'][1])])
+            elif node['kind']=='else':orelse=act_block(node['kids'][0])
+            elif node['kind']=='finally':final=act_block(node['kids'][0])
+        return ['try' if k=='try_stmt' else k,act_block(kids[0]),handlers,orelse,final]
     if k=='expr_stmt':return [k,at(0)]
     if k=='assign':return [k,[actual(v) for v in kids[:-1]],actual(kids[-1])]
     if k in ('annassign','annassign_simple'):return ['annassign',at(0),at(1),at(2),int(k=='annassign_simple')]
@@ -93,6 +155,6 @@ with tempfile.TemporaryDirectory() as tmp:
         result=[act_stmt(n) for n in got['tree']['kids'] if n['kind']!='newline']
         assert result==want,(source,want,result)
     for source,got in zip(INVALID,results[len(VALID):]):assert not got['ok'],(source,got)
-report=dict(python=platform.python_version(),matching_statement_trees=len(VALID),stdlib_simple_statements=stdlib_count,rejected_statements=len(INVALID),source_sha256=hashlib.sha256(json.dumps(VALID+INVALID,ensure_ascii=False).encode()).hexdigest(),scope='simple statement structure; no compound statements, type aliases, contextual compiler checks or literal decoding')
+report=dict(python=platform.python_version(),matching_statement_trees=len(VALID),stdlib_simple_statements=stdlib_count,stdlib_compound_statements=stdlib_compound_count,rejected_statements=len(INVALID),source_sha256=hashlib.sha256(json.dumps(VALID+INVALID,ensure_ascii=False).encode()).hexdigest(),scope='simple/control-flow statement structure; no functions, classes, match, type aliases, contextual compiler checks or literal decoding')
 if len(sys.argv)>1:Path(sys.argv[1]).write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report))
