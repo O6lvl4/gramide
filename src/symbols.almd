@@ -18,30 +18,6 @@ fn document(path: String, source: String) -> Result[String, String] = {
   } }
 }
 
-// Stable machine-readable declaration ranges: byte offsets are zero-based,
-// end-exclusive; line ranges are one-based and inclusive.
-fn collect(n: tree.Node, toks: List[tree.Token], scope: String, sep: String, rules: package_api.SymbolRules) -> List[Value] = {
-  var out: List[Value] = []
-  let kind = tags.decl_kind(n.kind, rules)
-  let name = if kind == "" then "" else tags.name_of(n, toks)
-  if name != "" then {
-    let own = tags.owner_for(n, scope, toks, rules)
-    match (list.get(toks, n.start), list.get(toks, n.end - 1)) {
-      (some(first), some(last)) => list.push(out, value.object([
-        ("kind", value.str(if own == "" then kind else "method")),
-        ("name", value.str(if own == "" then name else own + sep + name)),
-        ("owner", value.str(own)), ("syntax_kind", value.str(n.kind)),
-        ("start", value.int(first.line)), ("end", value.int(tags.end_line(n, toks))),
-        ("start_byte", value.int(first.start)), ("end_byte", value.int(last.end))
-      ])),
-      _ => (),
-    }
-  } else ()
-  let inner = tags.scope_under(n, scope, toks, rules)
-  for k in n.kids {
-    let envelope = list.contains(rules.envelopes, n.kind) or (list.contains(rules.unnamed_envelopes, n.kind) and name == "")
-    let decl = if envelope and tags.decl_kind(k.kind, rules) != "" then tree.Node { ...k, start: n.start } else k
-    for sym in collect(decl, toks, inner, sep, rules) { list.push(out, sym) }
-  }
-  out
-}
+// One module boundary per document, rather than per node in the walk.
+fn collect(n: tree.Node, toks: List[tree.Token], scope: String, sep: String, rules: package_api.SymbolRules) -> List[Value] =
+  tags.symbol_rows(n, toks, scope, sep, rules)
