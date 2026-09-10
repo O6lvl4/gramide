@@ -404,3 +404,32 @@ emission, matching default CPython acceptance.
 Unicode-name escapes (`\N{...}`), decoded values and contextual compiler checks
 remain unfinished. This does not complete string validation or Python support;
 statements, declarations, recovery and hew integration are still required.
+
+## Python implementation progress: simple statements
+
+`statements.almd` follows CPython v3.14.4's `simple_stmts`, assignment, import,
+delete and other simple-statement rules. It connects the existing expression
+and assignment-target grammars to semicolon/newline-delimited statements:
+chained/destructuring assignment, annotated and augmented assignment, return,
+raise/from, assert, delete, global/nonlocal, import/from/as, pass, break,
+continue, expression statements and yield statements. Annotation nodes retain
+the distinction between a bare name and a parenthesized/attribute target.
+Relative imports preserve module names, aliases and leading-dot levels.
+
+`statements.file_grammar()` currently accepts files made entirely of these
+simple statements. It uses `expressions.parse_with` for literal preparation and
+validation. Compound statements and type aliases are not implemented by this
+checkpoint, so this is not yet a complete Python file parser or package.
+
+The new statement oracle shares expression normalization with the expression
+suite (`ci/python_ast.py`). It matches **400** statement trees, including **227**
+exact top-level simple-statement segments from CPython's tokenize, dataclasses,
+inspect, ast and typing modules, and rejects **124** malformed inputs. It compares
+assignment targets/order, annotation flags, augmentation operators, import paths
+and aliases, relative levels and control-statement expressions. It does not
+claim these standard-library modules parse as complete files.
+[Evidence](evidence/python-simple-statements.json) records the corpus hash.
+
+Compiler-context validation, type comments, Unicode-name escape validation,
+compound suites/declarations, recovery and hew integration remain unfinished.
+Python stays unregistered.
