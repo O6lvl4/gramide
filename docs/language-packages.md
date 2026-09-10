@@ -256,3 +256,29 @@ Comprehensions, lambdas, assignment/yield/await expressions, complete call
 arguments and interpolation grammar still remain, along with statements,
 declarations, contextual syntax checks, recovery and hew integration. Python
 is not registered by this checkpoint.
+
+## Python implementation progress: call argument ordering
+
+`arguments.almd` follows `arguments`, `args`, `kwargs` and the unpacking rules in
+CPython `Grammar/python.gram` at the pinned reference commit. Calls now preserve
+positional and starred arguments, named keywords and double-starred mappings.
+The grammar enforces the transition from positional arguments to keywords and
+then mapping unpacking: a positional argument can follow `*args`, but cannot
+follow a keyword, and `*args` cannot follow `**kwargs`. Call unpacking accepts a
+full expression, unlike starred container displays. Repeated argument groups
+use repetition rather than recursion per argument.
+
+The oracle enumerates all four argument categories through five positions
+(1,364 combinations), with CPython determining validity. It compares positional
+and keyword sequences separately, matching the CPython AST representation while
+the gramide tree retains source order. Nested calls, conditional unpacking,
+malformed keyword targets and 2,000 positional/keyword argument calls are covered.
+The cumulative suite matches 1,156 expression trees and rejects 1,004 malformed
+expressions. [Evidence](evidence/python-call-arguments.json) records the corpus.
+
+This is AST parsing, not Python compilation or evaluation. Duplicate keyword
+checks, NFKC name identity and other contextual validation remain pending.
+Generator arguments and assignment expressions still require their expression
+rules, as do comprehensions, lambdas, yield/await and interpolation. Statements,
+declarations, recovery and hew integration are unfinished; Python stays
+unregistered.

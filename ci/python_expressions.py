@@ -16,6 +16,18 @@ for item in ['a','a + b','a if b else c','f(a)','[a,b]','{a:b}']:
     for template in ['[{}, x]','({}, x)','{{{}, x}}','{{x: {}, **y}}']:
         VALID.append(template.format(item))
 INVALID += ['*a,', '[*]', '[**x]', '{*}', '{**}', '{a:}', '{:a}', '{a:b,c}', '{a,b:c}', '(*a)', 'a[:::]', 'a[1,,2]', 'a[**x]', '[a,,b]', '(a,,b)']
+# Exhaust all four argument categories through five positions, including
+# orderings that CPython rejects. Unique keyword names avoid semantic duplicates.
+for length in range(1,6):
+    for categories in itertools.product(range(4),repeat=length):
+        items=[['x', f'k{i}=x', '*xs', '**kw'][category] for i,category in enumerate(categories)]
+        source='f('+','.join(items)+(',' if length%2 else '')+')'
+        try:ast.parse(source,mode='eval')
+        except SyntaxError:INVALID.append(source)
+        else:VALID.append(source)
+VALID += ['f(*a if b else c)', 'f(**a if b else c)', 'f(x=1,*a,**b,y=2)', 'f(*a,b,*c)', 'f(x=g(y=1), **h(z=2))']
+VALID += ['f('+','.join('x' for _ in range(2000))+')', 'f('+','.join(f'k{i}=x' for i in range(2000))+')']
+INVALID += ['f(x=)', 'f(=x)', 'f(a.b=x)', 'f((a)=x)', 'f(*a=1)', 'f(**)', 'f(*,)', 'f(x=1,,)', 'f(for=1)']
 OP={ast.Add:'+',ast.Sub:'-',ast.Mult:'*',ast.Div:'/',ast.FloorDiv:'//',ast.Mod:'%',ast.MatMult:'@',ast.Pow:'**',ast.LShift:'<<',ast.RShift:'>>',ast.BitAnd:'&',ast.BitXor:'^',ast.BitOr:'|',ast.And:'and',ast.Or:'or',ast.Eq:'==',ast.NotEq:'!=',ast.Lt:'<',ast.LtE:'<=',ast.Gt:'>',ast.GtE:'>=',ast.In:'in',ast.NotIn:'not in',ast.Is:'is',ast.IsNot:'is not',ast.USub:'-',ast.UAdd:'+',ast.Invert:'~',ast.Not:'not'}
 def reference(n,source):
     if isinstance(n,(ast.Name,ast.Constant)):return ['atom',ast.get_source_segment(source,n)]
@@ -32,7 +44,7 @@ def reference(n,source):
     if isinstance(n,ast.Dict):return ['dict',[[reference(k,source) if k else None,reference(v,source)] for k,v in zip(n.keys,n.values)]]
     if isinstance(n,ast.Slice):return ['slice',*[reference(v,source) if v else None for v in (n.lower,n.upper,n.step)]]
     if isinstance(n,ast.Attribute):return ['attr',reference(n.value,source),n.attr]
-    if isinstance(n,ast.Call):return ['call',reference(n.func,source),[reference(v,source) for v in n.args]]
+    if isinstance(n,ast.Call):return ['call',reference(n.func,source),[reference(v,source) for v in n.args],[[v.arg,reference(v.value,source)] for v in n.keywords]]
     if isinstance(n,ast.Subscript):return ['sub',reference(n.value,source),reference(n.slice,source)]
     raise AssertionError(ast.dump(n))
 def actual(n):
@@ -56,7 +68,13 @@ def actual(n):
         out=actual(kids[0])
         for suffix in kids[1:]:
             if suffix['kind']=='attribute':out=['attr',out,suffix['kids'][0]['text']]
-            elif suffix['kind']=='call':out=['call',out,[actual(k) for k in suffix['kids']]]
+            elif suffix['kind']=='call':
+                positional=[];keywords=[]
+                for k in suffix['kids']:
+                    if k['kind']=='keyword':keywords.append([k['kids'][0]['text'],actual(k['kids'][1])])
+                    elif k['kind']=='mapping':keywords.append([None,actual(k['kids'][0])])
+                    else:positional.append(actual(k))
+                out=['call',out,positional,keywords]
             elif suffix['kind']=='subscript':out=['sub',out,actual(suffix['kids'][0])]
             else:raise AssertionError(suffix)
         return out
@@ -84,6 +102,6 @@ with tempfile.TemporaryDirectory() as tmp:
     for source,got in zip(INVALID,results[len(VALID):]):assert not got['ok'],(source,got)
 report=dict(python=platform.python_version(),matching_expression_trees=len(VALID),rejected_expressions=len(INVALID),
             expressions_sha256=hashlib.sha256(json.dumps(VALID+INVALID,ensure_ascii=False).encode()).hexdigest(),
-            scope='normalized operator trees, conditional order, comparisons, call/attribute/subscript structure, displays, unpacking and slices; not a complete Python grammar')
+            scope='normalized operator trees, conditional order, comparisons, call/attribute/subscript structure, displays, unpacking, slices and call argument ordering; not a complete Python grammar')
 if len(sys.argv)>1:Path(sys.argv[1]).write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report))
