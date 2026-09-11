@@ -29,7 +29,7 @@ contract addition does not change the JSON schema version or capability names.
 
 `gramide languages` emits `{ "schema_version": 1, "packages": [...] }`. Each
 entry has `id`, `name`, `version`, `extensions` and `capabilities`. Consumers must
-check the relevant capability: hew needs `symbols`, while cairn requires `check`
+check the relevant capability: hew needs `symbols`, while golemide requires `check`
 for a grammar-backed write gate. A reader-only grammar must not advertise check.
 All built-in packages expose check, tokens, parse, outline and symbols. Almide,
 Go and Rust additionally advertise tags and map; Python reference extraction is
