@@ -1668,3 +1668,34 @@ binary; [stdlib](../docs/evidence/literal-mask-stdlib.json) unchanged at 721 of
 The engine walks exactly what it walked before — the visit count is the same
 472,089 — and `outline`, `parse`, `symbols`, `tags` and `check` are
 byte-identical, diagnostics included.
+
+## Forty-seven calls to decide that a comma is a comma
+
+The lexer held its operators as a list of byte patterns and, at every character
+no earlier branch claimed, walked all 47 of them — `matches(buffer, i, op.data)`
+each time, and the loop did not even stop at the first hit. It was 10 per cent
+of the profile, second only to `parse_rule`.
+
+Each operator is now one integer — its bytes and its width — and the table is
+grouped by first byte. A comma reads one entry. `**=` reads four, because four
+operators begin with `*`, and they are still in longest-first order, so the
+first that matches is still the longest.
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 10.78 | 10.37 | 10.53 | **0.98x** |
+| typing.py | 11.03 | 10.51 | 10.09 | 1.04x |
+| argparse.py | 10.03 | 9.44 | 9.18 | 1.03x |
+| _pydecimal.py | 14.58 | 14.09 | 14.93 | **0.94x** |
+| dataclasses.py | 6.93 | 7.03 | 7.36 | **0.96x** |
+| pydoc_data/topics.py | 5.05 | 5.02 | 5.33 | **0.94x** |
+
+**inspect.py is read faster than tree-sitter reads it.** It is the file this
+benchmark was built around — issue #37's example, 127 KB and 16,963 tokens — and
+at the start of this file's history it took 48.98 ms against tree-sitter's 10.5.
+Four of the fifteen files now win, and the token stream is byte-identical:
+`tokens`, `outline`, `parse`, `symbols`, `tags` and `check` all are.
+
+[Timing](../docs/evidence/operator-index-timing.json), 21 shuffled samples per
+binary; [stdlib](../docs/evidence/operator-index-stdlib.json) unchanged at 721
+of 721 against tree-sitter's 720.

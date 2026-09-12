@@ -7,20 +7,65 @@ import self.packages.python.strings
 import self.packages.python.numbers
 import self.packages.python.identifiers
 
-type Operator = { text: String, data: Bytes }
-fn operators() -> List[Operator] = list.map([
+// Every operator, longest first, so the first that matches is the longest.
+// Each is packed into one integer — its bytes and its width — and the table is
+// grouped by first byte, because walking all 47 of them at every bracket in the
+// file is 47 calls to decide that a comma is a comma.
+fn operator_texts() -> List[String] = [
   "**=", "//=", ">>=", "<<=", "...", ":=", "**", "//", "<<", ">>", "<=", ">=", "==", "!=", "->",
   "+=", "-=", "*=", "/=", "%=", "@=", "&=", "|=", "^=",
   "+", "-", "*", "/", "%", "@", "<", ">", "=", "&", "|", "^", "~", ":", ".", ",", ";", "(", ")", "[", "]", "{", "}"
-], (s) => Operator { text: s, data: bytes.from_string(s) })
-fn matches(source: Bytes, at: Int, pattern: Bytes) -> Bool = {
-  var i = 0
-  var same = true
-  while i < bytes.len(pattern) and same {
-    same = bytes.get_or(source, at + i, -1) == bytes.get_or(pattern, i, -2)
-    i = i + 1
+]
+type Operators = { start: List[Int], count: List[Int], packed: List[Int] }
+let OP_BYTES = 256
+
+fn operators() -> Operators = {
+  var all: List[Int] = []
+  for text in operator_texts() {
+    let raw = bytes.from_string(text)
+    let width = bytes.len(raw)
+    list.push(all, int.bor(int.bor(bytes.get_or(raw, 0, 0), int.bshl(bytes.get_or(raw, 1, 0), 8)),
+      int.bor(int.bshl(bytes.get_or(raw, 2, 0), 16), int.bshl(width, 24))))
   }
-  same
+  var start: List[Int] = list.with_capacity(OP_BYTES)
+  var count: List[Int] = list.with_capacity(OP_BYTES)
+  var packed: List[Int] = list.with_capacity(list.len(all))
+  var b = 0
+  while b < OP_BYTES {
+    list.push(start, list.len(packed))
+    var n = 0
+    var k = 0
+    while k < list.len(all) {
+      let p = match list.get(all, k) { some(v) => v, none => 0 }
+      if int.band(p, 255) == b then {
+        list.push(packed, p)
+        n = n + 1
+      } else ()
+      k = k + 1
+    }
+    list.push(count, n)
+    b = b + 1
+  }
+  Operators { start: start, count: count, packed: packed }
+}
+
+// The width of the operator standing at `at`, or 0 for none.
+fn operator_width(ops: Operators, source: Bytes, at: Int, first: Int) -> Int = {
+  if first < 0 or first >= OP_BYTES then 0 else {
+    let from = match list.get(ops.start, first) { some(v) => v, none => 0 }
+    let n = match list.get(ops.count, first) { some(v) => v, none => 0 }
+    var width = 0
+    var j = 0
+    while width == 0 and j < n {
+      let p = match list.get(ops.packed, from + j) { some(v) => v, none => 0 }
+      let w = int.bshr(p, 24)
+      if (w < 2 or bytes.get_or(source, at + 1, -1) == int.band(int.bshr(p, 8), 255))
+        and (w < 3 or bytes.get_or(source, at + 2, -1) == int.band(int.bshr(p, 16), 255)) then width = w
+      else ()
+      j = j + 1
+    }
+    width
+  }
 }
 // The three kinds an interpolated literal produces, by family. A frame keeps
 // the family name because the grammar's rule names are built from it; the
@@ -183,12 +228,7 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
       i = i + 1
     }
     else {
-      // Longest match first. Keep the scan here: passing the operator list
-      // by value to a helper would still copy it in the pinned native compiler.
-      var width = 0
-      for op in ops {
-        if width == 0 and matches(buffer, i, op.data) then width = bytes.len(op.data) else ()
-      }
+      let width = operator_width(ops, buffer, i, b)
       if width > 0 then { kind = tree.T_PUNCT; i = i + width }
       else {
         // Quotes, comments, continuations and non-ASCII characters have
