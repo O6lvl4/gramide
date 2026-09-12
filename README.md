@@ -88,6 +88,8 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
   and its grammar, both as values, in one file. The Go one builds its expression ladder
   twice from one function, with and without a trailing composite literal, which is how
   `if x == T{…} {` is kept unambiguous.
+- **`src/packages/tables/`** — generated: each package's grammar already compiled,
+  written down as integers. Do not edit; `scripts/gen_grammar_tables.py` writes it.
 - **`src/tree.almd`** — `Node { kind, field, start, end, kids }` spanning token
   indices, with `child(n, "name")`, `text_of`, `sexp`, and `collect`.
 - **`src/tags.almd`**, **`src/map.almd`** — definitions and references per file, and the
@@ -95,12 +97,19 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
   personalised toward the task ranks the definitions, and the best are rendered file by
   file until the budget is spent.
 
-A note on the engine: the grammar value is compiled once into a flat arena of
+A note on the engine: the grammar value is compiled into a flat arena of
 three-integer nodes and `parse_rule` is one self-recursive function with the loops
 for sequence, choice and repetition inside it. Both shapes come from how the Almide
 native backend copies values, and [docs/design.md](docs/design.md) records each rule
 with the measurement that forced it (the last one took a 116k-line file from 188 s
 to 7.6 s).
+
+That arena is now compiled ahead of time. `python3 scripts/gen_grammar_tables.py`
+writes each package's into `src/packages/tables/`, and `--check` — which
+`ci/check.sh` runs — fails if what is committed is no longer what the grammar
+compiles to. The grammar value in `src/packages` stays the source of truth and
+stays the only thing anyone edits; the table is what a run reads, because
+compiling it took 0.8 ms of every run before the file was opened.
 
 ## Build
 
