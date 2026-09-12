@@ -27,9 +27,10 @@ fn numeric(start: Int, end: Int, raw: Bool, byte_literal: Bool, token: tree.Toke
   }
   ok(())
 }
-fn validate(tokens: List[tree.Token]) -> Result[Unit, parser.Failure] = {
+type TokenBuffer = { items: List[tree.Token] }
+fn validate(buffer: TokenBuffer) -> Result[Unit, parser.Failure] = {
   var raw_frames: List[Bool] = []
-  for token in tokens {
+  for token in buffer.items {
     if token.kind == "string" then {
       let data = bytes.from_string(token.text)
       let opening = strings.opening(data, 0)

@@ -440,3 +440,47 @@ and _pydecimal.py from 84.41 to 81.30 ms. The tree-sitter adapter remains faster
 on every file (11.28, 10.66 and 15.95 ms respectively for those three examples).
 These five-sample, startup-inclusive Python 3.14 comparisons are not the
 700-file Python 3.13 workload in issue #37, which remains unresolved.
+
+## Borrowed Python token preparation
+
+The next profile identified whole-list copying into escape validation and indexed
+per-token cloning in the conversion-adjacency check. A `TokenBuffer` record now
+owns the input once. Generated Rust passes `&buffer` to validation and iterates
+`buffer.items.iter()` for adjacency checks, then consumes the items for lexical
+kind refinement. Escape validation still precedes adjacency diagnostics. Copies
+inside escape validation and the final map remain; this is not a zero-copy claim.
+
+Reference inspection: CPython at `f715d25a8f0f0d57ecd2ae0dfe56c2ee01752733`
+uses buffer-relative positions in `Parser/lexer/buffer.h`; tree-sitter at
+`de98c6c970f4c5d3a725ee48199c478090d614af`, `lib/src/tree.c`, retains its root
+subtree when copying a tree. These are examples of avoiding repeated deep data
+copies, not evidence that gramide shares their ownership or incremental design.
+The internal record here addresses the actual generated native call convention;
+the public token preparation input and output remain lists.
+
+[Same-runtime allocation evidence](../docs/evidence/python-token-preparation-allocations.json)
+compared with scalar scanner dispatch:
+
+| File | Total allocations before → after | Preparation before → after |
+| --- | ---: | ---: |
+| inspect.py | 969,938 → 872,566 | 131,494 → 34,122 |
+| typing.py | 961,793 → 866,821 | 128,316 → 33,344 |
+| argparse.py | 894,248 → 809,074 | 114,851 → 29,677 |
+| _pydecimal.py | 1,480,180 → 1,328,802 | 204,706 → 53,328 |
+| pydoc_data/topics.py | 46,954 → 45,000 | 3,085 → 1,131 |
+
+Source, output and diagnostic runtime hashes match the preceding profile.
+Counts remain exclusive generated-function Rust allocation attribution, not
+exact call sites, live heap, RSS or all libc allocations. Instrumentation may
+change optimization.
+
+[Uninstrumented paired timing](../docs/evidence/python-token-preparation-outline.json)
+validates all 15 outlines against CPython AST before taking five shuffled
+samples with startup included. Fourteen medians decrease, with stat.py effectively
+unchanged. copyreg.py increases from 6.59 to 7.28 ms; that result is retained.
+inspect.py decreases from 55.52 to 53.02 ms, argparse.py from 51.06 to 49.15 ms,
+and _pydecimal.py from 80.22 to 77.18 ms. Tree-sitter remains faster throughout,
+including 11.22, 10.05 and 15.65 ms respectively for those three files.
+The full regression suite, unchanged structural complexity gate and real hew
+integration pass. Issue #37's 700-file Python 3.13 workload, incremental parsing,
+peak memory and general tree-sitter superiority remain unresolved.
