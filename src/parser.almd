@@ -33,6 +33,9 @@ type Rule =
   | Not(Rule)                   // negative lookahead, consumes nothing
   | Ahead(Rule)                 // positive lookahead, consumes nothing
   | Left(String, Rule, Rule)    // operand (op operand)* folded left into nodes of this kind
+  | Needs(Rule)                 // a necessary condition, checked by a scan rather than by
+                               // parsing what follows and failing: one of these literals has
+                               // to stand in the rest of the logical line, outside brackets
   | Prec(String, Rule, List[Rule])
                                // the same fold over several precedence levels at once:
                                // the operand, then one operator per level, lowest first.
@@ -158,6 +161,7 @@ let K_RECOVER = 16
 let K_RECOVER_ALL = 17
 let K_RECOVER_LINES = 18
 let K_PREC = 19
+let K_NEEDS = 20
 
 // Append a rule's subtree to the arena and answer where its own node landed.
 // The three lists are the arena itself, handed down rather than returned:
@@ -182,6 +186,7 @@ fn emit(r: Rule, mut ops: List[Op], mut texts: List[String], mut kids: List[Int]
     Ahead(x) => (K_AHEAD, "", [x]),
     Left(k, x, y) => (K_LEFT, k, [x, y]),
     Prec(k, x, ys) => (K_PREC, k, [x] + ys),
+    Needs(x) => (K_NEEDS, "", [x]),
     Any => (K_ANY, "", []),
     Recover(x, h) => (K_RECOVER, "", [x, h]),
     RecoverAll(x, h) => (K_RECOVER_ALL, "", [x, h]),
@@ -662,6 +667,30 @@ fn may_start(c: Compiled, id: Int, tk: List[Int], tt: List[Int], pos: Int) -> Bo
   }
 }
 
+// Does one of these spellings stand in the rest of the logical line, outside
+// brackets? A newline at depth zero ends the line, and a string or a negation
+// marker is not read as punctuation, exactly as the recovery scans read it.
+fn needs_here(c: Compiled, tk: List[Int], tt: List[Int], want: Op, pos: Int) -> Bool = {
+  var q = pos
+  var depth = 0
+  var found = false
+  var going = true
+  while going {
+    let k = match list.get(tk, q) { some(v) => v, none => tree.T_EOF }
+    if k == tree.T_EOF or (depth == 0 and (k == tree.T_NEWLINE or k == tree.T_INDENT or k == tree.T_DEDENT)) then going = false
+    else {
+      let x = match list.get(tt, q) { some(v) => v, none => -1 }
+      let real = k != tree.T_STRING and k != tree.T_NEG
+      if real and (x == A_LPAREN or x == A_LBRACK or x == A_LBRACE) then depth = depth + 1
+      else if real and (x == A_RPAREN or x == A_RBRACK or x == A_RBRACE) then depth = int.max(0, depth - 1)
+      else if depth == 0 and real and spelled(c, want, x) then { found = true; going = false }
+      else ()
+      q = q + 1
+    }
+  }
+  found
+}
+
 // A literal that did not match names every spelling it would have taken, which
 // is what the alternation's branches named one by one before.
 fn missed(c: Compiled, mut exp: List[Int], st: State, pos: Int, op: Op) -> Out = {
@@ -972,6 +1001,9 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
     if op.a < 0 then miss(exp, st0, pos, id)
     else parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
   }
+  // the collecting pass never refuses here, so a file that fails is described
+  // by the branches themselves and the message is the same message
+  else if op.kind == K_NEEDS then (if st0.collect or needs_here(c, tk, tt, match list.get(c.ops, op.a) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }, pos) then good(st0, pos) else miss(exp, st0, pos, id))
   else if op.kind == K_NOT then {
     let mark = list.len(out)
     let emark = list.len(exp)
@@ -1173,6 +1205,11 @@ fn leftf(kind: String, operand: Rule, op: Rule) -> Rule = Left(kind, operand, op
 // nested `leftf`s say, and the engine reaches the operand without walking a
 // rule per level. Each level's operator has to be a literal terminal.
 fn prec(kind: String, operand: Rule, levels: List[Rule]) -> Rule = Prec(kind, operand, levels)
+// `needs(lits([…]))` in front of an alternation whose every branch wants one of
+// those spellings somewhere on the line. It consumes nothing and decides
+// nothing; it only refuses early, so the branches are not each parsed to the
+// same conclusion. The set has to be a necessary condition for all of them.
+fn needs(what: Rule) -> Rule = Needs(what)
 // An item in a list that a reader would rather skip than lose the list over.
 // `recover` is for a list inside brackets, `recover_all` for the file itself.
 // The `_keeping` forms name a prefix of the item worth having on its own: a
