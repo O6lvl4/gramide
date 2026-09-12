@@ -192,6 +192,40 @@ fn emit(r: Rule, mut ops: List[Op], mut texts: List[String], mut kids: List[Int]
   list.len(ops) - 1
 }
 
+// Is every branch of this alternation the same kind of literal? Branches are
+// emitted before their parent, so they are already resolved here.
+fn all_branches(resolved: List[Op], kids: List[Int], op: Op, kind: Int) -> Bool = {
+  var all = op.b > 1
+  var j = 0
+  while all and j < op.b {
+    let child = match list.get(kids, op.a + j) { some(v) => v, none => -1 }
+    all = (match list.get(resolved, child) { some(o) => o.kind, none => -1 }) == kind
+    j = j + 1
+  }
+  all
+}
+
+// One run for the whole alternation: every branch's atom, then every branch's
+// node id, so a failure still names each spelling separately.
+fn merged_run(resolved: List[Op], mut kids: List[Int], op: Op) -> Int = {
+  let run = list.len(kids)
+  var j = 0
+  while j < op.b {
+    let child = match list.get(kids, op.a + j) { some(v) => v, none => -1 }
+    let at = match list.get(resolved, child) { some(o) => o.a, none => 0 }
+    list.push(kids, match list.get(kids, at) { some(v) => v, none => -1 })
+    j = j + 1
+  }
+  var m = 0
+  while m < op.b {
+    let child = match list.get(kids, op.a + m) { some(v) => v, none => -1 }
+    let at = match list.get(resolved, child) { some(o) => o.a, none => 0 }
+    list.push(kids, match list.get(kids, at + 1) { some(v) => v, none => -1 })
+    m = m + 1
+  }
+  run
+}
+
 fn compile(g: Grammar) -> Compiled = {
   var ops: List[Op] = []
   var texts: List[String] = []
@@ -232,7 +266,14 @@ fn compile(g: Grammar) -> Compiled = {
           next = next + 1
         },
       }
-      list.push(resolved, Op { kind: op.kind, a: op.a, b: map.get(atoms, text) ?? -1 })
+      let run = list.len(kids)
+      list.push(kids, map.get(atoms, text) ?? -1)
+      list.push(kids, i)
+      list.push(resolved, Op { kind: op.kind, a: run, b: 1 })
+    } else if op.kind == K_ALT and all_branches(resolved, kids, op, K_LIT) then {
+      list.push(resolved, Op { kind: K_LIT, a: merged_run(resolved, kids, op), b: op.b })
+    } else if op.kind == K_ALT and all_branches(resolved, kids, op, K_KEEP) then {
+      list.push(resolved, Op { kind: K_KEEP, a: merged_run(resolved, kids, op), b: op.b })
     } else list.push(resolved, op)
     i = i + 1
   }
@@ -440,6 +481,35 @@ fn fold_kids(mut out: List[tree.Node], mark: Int, opmark: Int, rmark: Int) -> Li
 fn text_at(c: Compiled, id: Int) -> String = match list.get(c.texts, id) { some(t) => t, none => "" }
 fn kid_at(c: Compiled, i: Int) -> Int = match list.get(c.kids, i) { some(k) => k, none => 0 }
 
+// A literal terminal holds a set of spellings, not one: `a` starts a run of
+// `b` atom numbers followed by `b` node ids, and an alternation whose every
+// branch is a literal is compiled into one of these. `lits(HARD_KEYWORDS)`
+// guards every name in a Python file and was 35 alternatives tried one call
+// at a time; it is now one op and 35 integer compares.
+fn spelled(c: Compiled, op: Op, x: Int) -> Bool = {
+  var i = 0
+  var hit = false
+  while not hit and i < op.b {
+    hit = kid_at(c, op.a + i) == x
+    i = i + 1
+  }
+  hit
+}
+
+// A literal that did not match names every spelling it would have taken, which
+// is what the alternation's branches named one by one before.
+fn missed(c: Compiled, mut exp: List[Int], st: State, pos: Int, op: Op) -> Out = {
+  if st.collect then {
+    var here = st
+    var i = 0
+    while i < op.b {
+      here = noted(exp, here, pos, kid_at(c, op.a + op.b + i))
+      i = i + 1
+    }
+    Out { ok: false, pos: pos, st: here }
+  } else Out { ok: false, pos: pos, st: st }
+}
+
 // Match arena node `id` at token `pos`.
 //
 // One self-recursive function on purpose: sequence, choice, repetition and
@@ -465,17 +535,17 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
   }
   else if op.kind == K_LIT or op.kind == K_KEEP then {
     match list.get(tt, pos) {
-      some(x) => if x != op.b then miss(exp, st0, pos, id)
+      some(x) => if not spelled(c, op, x) then missed(c, exp, st0, pos, op)
         else match list.get(tk, pos) {
-          some(k) => if k == tree.T_STRING or k == tree.T_NEG then miss(exp, st0, pos, id)
+          some(k) => if k == tree.T_STRING or k == tree.T_NEG then missed(c, exp, st0, pos, op)
             else if op.kind == K_LIT then good(st0, pos + 1)
             else {
               if st0.build then list.push(out, tree.leaf("op", pos)) else ()
               good(st0, pos + 1)
             },
-          none => miss(exp, st0, pos, id),
+          none => missed(c, exp, st0, pos, op),
         },
-      none => miss(exp, st0, pos, id),
+      none => missed(c, exp, st0, pos, op),
     }
   }
   // the body of a macro is a balanced run of tokens the grammar has no reading
