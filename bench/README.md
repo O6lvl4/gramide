@@ -926,3 +926,62 @@ The remaining requests are no longer about the token stream at all. `text_at`
 parser keeps, `take_from` (74,657) builds each node's child list in two
 allocations, and `token_text` (48,476) is mostly the parser numbering tokens
 it could number from the bytes.
+
+## Numbering a token without cutting a string out of the source
+
+`number_tokens` asked `Map[String, Int]` what a token's text was worth, which
+meant cutting that text out of the source first: two allocations for every
+token, and a string hash for a question that is "no" for every ordinary name
+in the file.
+
+`compile` now packs the terminal spellings it has interned — every literal a
+rule asks for — into one byte list in atom order, with a bucket chain keyed by
+a spelling's first byte and its length. `atom_at` reads the source where the
+token sits: a token whose first byte and width no literal shares lands in an
+empty bucket and answers -1 having touched nothing, and one that shares them
+is compared byte by byte against the packed spelling. The answers are the same
+by construction — the same interned set, compared for equality — and the dead
+`text_ids` helper, which numbered a stream the entry points stopped using two
+changes ago, is gone.
+
+Same-runtime allocation profiles,
+[before](../docs/evidence/atom-lookup-allocations-before.json) and
+[after](../docs/evidence/atom-lookup-allocations.json), source and output
+hashes equal on every file:
+
+| File | Total allocations before → after | Fewer |
+| --- | ---: | ---: |
+| inspect.py | 304,479 → 256,817 | 15.7% |
+| typing.py | 310,693 → 264,143 | 15.0% |
+| argparse.py | 297,617 → 255,871 | 14.0% |
+| _pydecimal.py | 454,374 → 380,065 | 16.4% |
+| pydoc_data/topics.py | 32,148 → 31,461 | 2.1% |
+
+One function moves: `token_text` falls from 48,476 requests to 525 on
+inspect.py, and nothing else changes by more than 300. What is left of it is
+the names the outline actually prints. Reallocation counts rise from 697 to
+728, which is the packed table growing as it is built, once per process.
+
+The [full stdlib survey](../docs/evidence/atom-lookup-stdlib.json) matches
+CPython outlines on 721/721 Python 3.14.4 files, with the pinned tree-sitter
+adapter at its known 720/721, and full local CI passes.
+
+[Timing](../docs/evidence/atom-lookup-timing.json), 21 shuffled samples per
+binary, startup included, all 945 timed outputs matching CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) |
+| --- | ---: | ---: | ---: |
+| inspect.py | 40.79 | 39.89 | 11.13 |
+| typing.py | 39.87 | 38.90 | 10.76 |
+| argparse.py | 38.31 | 37.64 | 10.29 |
+| _pydecimal.py | 58.68 | 57.12 | 15.78 |
+| dataclasses.py | 21.86 | 21.24 | 7.91 |
+
+Twelve of the fifteen medians improve, by 1.0% to 5.7%; three small files read
+0.2% to 1.7% slower. The gain is smaller than the 15.7% of allocations removed,
+and that is the useful part of the result: a short-lived 8-byte string costs
+tens of nanoseconds, so what is left to win in this engine is no longer in the
+allocator. A CPU sample of a 2.5 MB parse puts 47% of the time inside
+`parse_rule` itself and 20% in `miss`, against 8.5% in malloc and free
+together — the engine visits the grammar arena about seventy times per token,
+and that count, not the heap, is what stands between it and tree-sitter.
