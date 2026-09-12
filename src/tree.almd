@@ -10,7 +10,65 @@
 
 type Node = { kind: String, field: String, start: Int, end: Int, kids: List[Node] }
 
-type Token = { kind: String, text: String, start: Int, end: Int, line: Int, col: Int }
+type Token = { kind: Int, text: String, start: Int, end: Int, line: Int, col: Int }
+
+// ── token kinds ───────────────────────────────────────────────────────────
+//
+// A kind is a number, not a name. Every stage copies the token stream — the
+// lexer builds it, a layout pass rewrites it, the reader hands it to the
+// parser — and a record of scalars is copied without touching the heap, where
+// a record holding an owned string costs one allocation per copy per field.
+// The names live here rather than in a language package because a grammar
+// names its terminals (`tok("identifier")`) and the compiler has to resolve
+// those to the numbers the lexer wrote.
+//
+// `kind_names` is the one table: an id is a position in it, so the two
+// directions cannot disagree and a new kind is one line. A name it does not
+// hold answers -1, which no token carries and so no terminal ever matches.
+let T_NONE = 0             // the scanner has not decided yet; never in a stream
+let T_ERROR = 1
+let T_EOF = 2
+let T_IDENTIFIER = 3
+let T_KEYWORD = 4
+let T_TYPE_NAME = 5
+let T_PUNCT = 6
+let T_NEG = 7
+let T_INTEGER = 8
+let T_FLOAT = 9
+let T_IMAGINARY = 10
+let T_NUMBER = 11
+let T_STRING = 12
+let T_RUNE = 13
+let T_BYTES = 14
+let T_COMMENT = 15
+let T_NEWLINE = 16
+let T_INDENT = 17
+let T_DEDENT = 18
+let T_CONTINUATION = 19
+let T_FSTRING_START = 20
+let T_FSTRING_MIDDLE = 21
+let T_FSTRING_END = 22
+let T_TSTRING_START = 23
+let T_TSTRING_MIDDLE = 24
+let T_TSTRING_END = 25
+
+fn kind_names() -> List[String] = ["", "error", "eof", "identifier", "keyword", "type_name",
+  "punct", "neg", "integer", "float", "imaginary", "number", "string", "rune", "bytes",
+  "comment", "newline", "indent", "dedent", "continuation",
+  "fstring_start", "fstring_middle", "fstring_end",
+  "tstring_start", "tstring_middle", "tstring_end"]
+
+// Naming one token at a time rebuilds the table; a loop over a stream holds it
+// once and calls `kind_name_in`.
+fn kind_name_in(names: List[String], id: Int) -> String = match list.get(names, id) {
+  some(name) => name,
+  none => "",
+}
+fn kind_name(id: Int) -> String = kind_name_in(kind_names(), id)
+fn kind_id(name: String) -> Int = match list.index_of(kind_names(), name) {
+  some(id) => id,
+  none => -1,
+}
 
 fn leaf(kind: String, at: Int) -> Node = {
   let none_kids: List[Node] = []
@@ -119,10 +177,21 @@ test "a node's text is cut by bytes, not by characters" {
   // source would return `neDb` here. Offsets come from a lexer reading bytes.
   let source = "//! —\nSpineDb x"
   let toks = [
-    Token { kind: "identifier", text: "SpineDb", start: 8, end: 15, line: 2, col: 1 },
-    Token { kind: "identifier", text: "x", start: 16, end: 17, line: 2, col: 9 },
+    Token { kind: T_IDENTIFIER, text: "SpineDb", start: 8, end: 15, line: 2, col: 1 },
+    Token { kind: T_IDENTIFIER, text: "x", start: 16, end: 17, line: 2, col: 9 },
   ]
   let n = node("type_name", [], 0, 1)
   assert_eq(text_of(n, toks, source), "SpineDb")
   assert_eq(span_text(node("path", [], 0, 2), toks), "SpineDbx")
+}
+
+test "kind names and ids are one table read both ways" {
+  assert_eq(kind_id("identifier"), T_IDENTIFIER)
+  assert_eq(kind_name(T_IDENTIFIER), "identifier")
+  assert_eq(kind_name(T_TSTRING_END), "tstring_end")
+  assert_eq(kind_id(kind_name(T_NEWLINE)), T_NEWLINE)
+  // A terminal the table does not name can never match a token.
+  assert_eq(kind_id("not_a_kind"), -1)
+  assert_eq(kind_name(-1), "")
+  assert_eq(kind_name(list.len(kind_names())), "")
 }

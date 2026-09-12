@@ -22,7 +22,14 @@ fn matches(source: Bytes, at: Int, pattern: Bytes) -> Bool = {
   }
   same
 }
-fn make(source: Bytes, kind: String, start: Int, end: Int, line: Int, line_start: Int) -> tree.Token =
+// The three kinds an interpolated literal produces, by family. A frame keeps
+// the family name because the grammar's rule names are built from it; the
+// token stream keeps numbers.
+fn family_start(family: String) -> Int = if family == "fstring" then tree.T_FSTRING_START else tree.T_TSTRING_START
+fn family_middle(family: String) -> Int = if family == "fstring" then tree.T_FSTRING_MIDDLE else tree.T_TSTRING_MIDDLE
+fn family_end(family: String) -> Int = if family == "fstring" then tree.T_FSTRING_END else tree.T_TSTRING_END
+
+fn make(source: Bytes, kind: Int, start: Int, end: Int, line: Int, line_start: Int) -> tree.Token =
   tree.Token { kind: kind, text: bytes.to_string_lossy(bytes.slice(source, start, end)), start: start, end: end, line: line, col: start - line_start + 1 }
 fn newline_byte(b: Int) -> Bool = b == 10 or b == 13
 fn newline_end(source: Bytes, at: Int) -> Int = at + (if bytes.get_or(source, at, -1) == 13 and bytes.get_or(source, at + 1, -1) == 10 then 2 else 1)
@@ -53,7 +60,7 @@ fn prefix_code(buffer: Bytes, start: Int, end: Int) -> Int = {
 // Keeping a partial opening would leave layout with fabricated unmatched braces.
 fn discard_interpolation(mut tokens: List[tree.Token], checkpoint: Int, head: tree.Token, buffer: Bytes, end: Int) -> Unit = {
   while list.len(tokens) > checkpoint { let _ = list.pop(tokens) }
-  list.push(tokens, tree.Token { ...head, kind: "error", text: bytes.to_string_lossy(bytes.slice(buffer, head.start, end)), end: end })
+  list.push(tokens, tree.Token { ...head, kind: tree.T_ERROR, text: bytes.to_string_lossy(bytes.slice(buffer, head.start, end)), end: end })
 }
 
 // Scalar dispatch avoids allocating a default string and option-map closure
@@ -82,7 +89,7 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
   var tokens: List[tree.Token] = []
   var frames: List[interpolation.Frame] = []
   var checkpoint = 0
-  var head = make(buffer, "error", 0, 0, 1, 0)
+  var head = make(buffer, tree.T_ERROR, 0, 0, 1, 0)
   var i = 0
   var line = 1
   var line_start = 0
@@ -93,7 +100,7 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
     // the branches that use them, not for every ordinary character.
     let first_line = line
     let first_line_start = line_start
-    var kind = ""
+    var kind = tree.T_NONE
     var token_end = -1
     var failure: Option[lex.LexError] = none
     let frame = list.last(frames)
@@ -107,52 +114,52 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
       token_end = part.end
       i = part.next
       if part.kind == "failed" then ()
-      else if part.kind == "end" then { kind = f.family + "_end"; let _ = list.pop(frames) }
+      else if part.kind == "end" then { kind = family_end(f.family); let _ = list.pop(frames) }
       else if part.kind == "open" then {
-        kind = "punct"
+        kind = tree.T_PUNCT
         list.push(frames, interpolation.Frame { ...f, mode: "expression", depth: 0 })
       } else {
-        kind = f.family + "_middle"
+        kind = family_middle(f.family)
         if part.kind == "format_end" then {
           let _ = list.pop(frames)
           list.push(frames, interpolation.Frame { ...f, mode: "closing" })
         } else ()
       }
     }
-    else if mode == MODE_CLOSING then { kind = "punct"; i = i + 1; let _ = list.pop(frames) }
+    else if mode == MODE_CLOSING then { kind = tree.T_PUNCT; i = i + 1; let _ = list.pop(frames) }
     else if b == 32 or b == 9 or b == 12 then i = i + 1
-    else if b == 10 or b == 13 then { kind = "newline"; i = newline_end(buffer, i) }
+    else if b == 10 or b == 13 then { kind = tree.T_NEWLINE; i = newline_end(buffer, i) }
     else if b == 35 then {
-      kind = "comment"
+      kind = tree.T_COMMENT
       while i < bytes.len(buffer) and not newline_byte(bytes.get_or(buffer, i, -1)) { i = i + 1 }
     }
     else if b == 92 then {
       if newline_byte(bytes.get_or(buffer, i + 1, -1)) then {
-        kind = "continuation"
+        kind = tree.T_CONTINUATION
         i = newline_end(buffer, i + 1)
       } else failure = some(lex.LexError { line: first_line, col: start - first_line_start + 1, message: "unexpected character after line continuation" })
     }
     else if option.is_some(strings.opening(buffer, i)) then {
-      kind = "string"
+      kind = tree.T_STRING
       match strings.scan(buffer, i, line, i - line_start + 1) {
         ok(end) => { i = end },
         err(e) => {
           if list.is_empty(frames) then {
             guard recovering else err(e)
-            kind = "error"
+            kind = tree.T_ERROR
             i = strings.recovery_end(buffer, i)
           } else failure = some(e)
         },
       }
     }
     else if numbers.starts(buffer, i) then {
-      kind = "number"
+      kind = tree.T_NUMBER
       match numbers.scan(buffer, i, line, i - line_start + 1) {
         ok(end) => { i = end }, err(e) => { failure = some(e) },
       }
     }
     else if identifiers.ascii_start(b) or b >= 128 then {
-      kind = "identifier"
+      kind = tree.T_IDENTIFIER
       match identifiers.scan(classes, buffer, i, line, i - line_start + 1) {
         ok(end) => { i = end }, err(e) => { failure = some(e) },
       }
@@ -164,15 +171,15 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
         guard list.len(frames) < 200 else err(lex.LexError { line: first_line, col: start - first_line_start + 1, message: "too many nested interpolated strings" })
         if list.is_empty(frames) then {
           checkpoint = list.len(tokens)
-          head = make(buffer, "error", start, i + width, first_line, first_line_start)
+          head = make(buffer, tree.T_ERROR, start, i + width, first_line, first_line_start)
         } else ()
         list.push(frames, interpolation.Frame { family: family, quote: q, width: width, raw: prefix == P_FR or prefix == P_TR, mode: "literal", depth: 0 })
-        kind = family + "_start"
+        kind = family_start(family)
         i = i + width
       } else ()
     }
     else if mode == MODE_EXPRESSION and (option.map(frame, (f) => f.depth) ?? 0) == 0 and (b == 58 or (b == 33 and bytes.get_or(buffer, i + 1, -1) != 61)) then {
-      kind = "punct"
+      kind = tree.T_PUNCT
       i = i + 1
     }
     else {
@@ -182,12 +189,12 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
       for op in ops {
         if width == 0 and matches(buffer, i, op.data) then width = bytes.len(op.data) else ()
       }
-      if width > 0 then { kind = "punct"; i = i + width }
+      if width > 0 then { kind = tree.T_PUNCT; i = i + width }
       else {
         // Quotes, comments, continuations and non-ASCII characters have
         // dedicated branches above. This unknown ASCII byte has no extent
         // beyond itself and cannot establish a new lexical mode.
-        if recovering and list.is_empty(frames) then { kind = "error"; i = i + 1 }
+        if recovering and list.is_empty(frames) then { kind = tree.T_ERROR; i = i + 1 }
         else failure = some(lex.LexError { line: first_line, col: start - first_line_start + 1, message: "unexpected Python character" })
       }
     }
@@ -200,11 +207,11 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
         i = if list.len(frames) == 1 and mode == MODE_LITERAL and e.message == "unterminated interpolated string" then interpolation.failed_literal_end(buffer, start, f) else bytes.len(buffer)
         discard_interpolation(tokens, checkpoint, head, buffer, i)
         frames = []
-        kind = ""
+        kind = tree.T_NONE
       },
       none => (),
     }
-    if mode == MODE_EXPRESSION and kind == "punct" then {
+    if mode == MODE_EXPRESSION and kind == tree.T_PUNCT then {
       let f = option.to_result(frame, lex.LexError { line: first_line, col: start - first_line_start + 1, message: "unexpected Python character" })!
       let text = bytes.to_string_lossy(bytes.slice(buffer, start, i))
       if f.depth == 0 and text == "}" then { let _ = list.pop(frames) }
@@ -217,7 +224,7 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
         list.push(frames, interpolation.Frame { ...f, depth: f.depth + (if list.contains(["(", "[", "{"], text) then 1 else -1) })
       } else ()
     } else ()
-    if kind != "" then list.push(tokens, make(buffer, kind, start, if token_end < 0 then i else token_end, first_line, first_line_start)) else ()
+    if kind != tree.T_NONE then list.push(tokens, make(buffer, kind, start, if token_end < 0 then i else token_end, first_line, first_line_start)) else ()
     // Count physical lines once, including those inside multiline strings.
     var at = start
     while at < i {
@@ -232,7 +239,7 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
     guard recovering else err(lex.LexError { line: line, col: i - line_start + 1, message: "unterminated interpolated string" })
     discard_interpolation(tokens, checkpoint, head, buffer, i)
   } else ()
-  list.push(tokens, make(buffer, "eof", i, i, line, line_start))
+  list.push(tokens, make(buffer, tree.T_EOF, i, i, line, line_start))
   ok(tokens)
 }
 fn physical(source: String) -> Result[List[tree.Token], lex.LexError] = physical_with(source, false)
@@ -241,9 +248,9 @@ fn scan_source(source: String) -> Result[List[tree.Token], lex.LexError] = scan_
 
 test "Python lexer joins lines and does not invent code inside strings" {
   let ts = scan_source("if True:\n    日本語 = (1 +\n        2)\n    text = \"\"\"\nnot code\n\"\"\"\n")!
-  assert_eq(list.len(list.filter(ts, (t) => t.kind == "indent")), 1)
-  assert_eq(list.len(list.filter(ts, (t) => t.kind == "newline")), 3)
-  assert_eq(list.len(list.filter(ts, (t) => t.kind == "string")), 1)
+  assert_eq(list.len(list.filter(ts, (t) => t.kind == tree.T_INDENT)), 1)
+  assert_eq(list.len(list.filter(ts, (t) => t.kind == tree.T_NEWLINE)), 3)
+  assert_eq(list.len(list.filter(ts, (t) => t.kind == tree.T_STRING)), 1)
   assert(result.is_ok(scan_source("x = f\"{value}\"\n")))
 }
 

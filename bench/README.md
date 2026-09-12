@@ -772,3 +772,82 @@ local CI passes, including the CPython oracles this change is nearest to:
 2,020 ordinary string boundaries, 409 lexer cases, and 25 layout cases with
 51 rejections. The structural complexity baseline is unchanged, and issue #37
 and the broader tree-sitter goal remain open.
+
+## A token's kind is a number
+
+Six passes walk the token stream for one Python file: the physical scanner
+builds it, the layout pass rewrites it into logical lines, `escapes.validate`
+checks literals, `string_expressions.prepare` refines two kinds, the reader
+hands the stream to the parser, and `number_tokens` numbers it. A `Token` held
+two owned strings, so every one of those passes allocated a string per token
+for the kind alone.
+
+`tree.almd` now numbers the kinds. `kind_names` is the one table — an id is a
+position in it — and `kind_id` and `kind_name` read it in both directions, so
+a grammar naming a terminal `tok("identifier")` resolves to the number the
+lexer already wrote on the token. The terminals the engine tests itself move
+with them: `eof`, `newline`, `indent`, `dedent`, `string` and `neg` are kinds
+and now come from that table, which leaves `compile`'s text numbering to the
+spellings literals actually ask for, and `SEEDS` pins those seven. A kind the
+table does not name answers -1, which no token carries, so a grammar that
+misspells a terminal matches nothing — exactly as it did when the name was
+interned and never found.
+
+Same-runtime allocation profiles,
+[before](../docs/evidence/token-kind-ids-allocations-before.json) and
+[after](../docs/evidence/token-kind-ids-allocations.json), source and output
+hashes equal on every file:
+
+| File | Total allocations before → after | Fewer |
+| --- | ---: | ---: |
+| inspect.py | 498,266 → 391,165 | 21.5% |
+| typing.py | 504,411 → 397,189 | 21.3% |
+| argparse.py | 469,911 → 374,995 | 20.2% |
+| _pydecimal.py | 756,727 → 589,771 | 22.1% |
+| pydoc_data/topics.py | 36,863 → 35,468 | 3.8% |
+
+The per-function moves say what the change is. inspect.py holds 16,963 tokens,
+and on it `apply_with`, `read_lang`, `prepare`, `number_tokens` and `validate`
+each lose between 16,963 and 16,979 requests — one per token — while
+`physical_with` loses the 16,857 it still had and `code_end` loses 3,030.
+`kind_names` gains 806: the table is rebuilt for each terminal the grammar
+compile resolves, once per process. These are exclusive generated-function
+Rust allocation requests under the same diagnostic runtime, not exact call
+sites, live heap, RSS or all libc allocations.
+
+What remains is the other string. `text_at` (102,032 requests on inspect.py),
+`take_from` (74,657) and `lexer_make` (50,513) are now the three largest, and
+the first two are about the tree, not the token stream.
+
+Two test-only probes renamed their local `node` helper to `node_value`: with
+the larger `tree.almd`, the unqualified recursive call in
+`ci/python_expressions_probe.almd` began resolving to `tree.node` rather than
+to the probe's own function. Nothing under `src/` depends on that name, and
+the probes' JSON output is unchanged.
+
+[Timing](../docs/evidence/token-kind-ids-timing.json), 21 shuffled samples per
+binary against the merged previous change, startup included, all 945 timed
+outputs matching CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) |
+| --- | ---: | ---: | ---: |
+| inspect.py | 46.37 | 44.16 | 11.34 |
+| typing.py | 45.59 | 43.37 | 11.27 |
+| argparse.py | 43.52 | 41.49 | 10.48 |
+| _pydecimal.py | 67.44 | 63.09 | 16.13 |
+| dataclasses.py | 24.54 | 23.43 | 8.34 |
+
+Fourteen of the fifteen medians improve, by 0.2% to 6.5%; token.py reads 1.5%
+slower and is a 4.8 ms file where startup is most of the measurement. An
+earlier run of the same comparison was discarded for timing: another process
+on the machine took the one-minute load average from 3.7 to 10.5 mid-run and
+doubled tree-sitter's own medians. This one ran at 3.7 to 3.9. Medians on a
+shared machine are not a significance claim, and tree-sitter is still about
+four times faster with startup included.
+
+The [full stdlib survey](../docs/evidence/token-kind-ids-stdlib.json) matches
+CPython outlines on 721/721 Python 3.14.4 files, with the pinned tree-sitter
+adapter at its known 720/721. Full local CI passes — the four-language smoke
+check, the Go parser range oracle, and the CPython layout, string, number,
+identifier, lexer, expression, statement, symbol and recovery oracles — and
+the structural complexity baseline is unchanged.
