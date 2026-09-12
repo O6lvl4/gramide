@@ -289,3 +289,79 @@ higher individual samples for textwrap (4.36 vs 3.94 MiB), inspect (16.42 vs
 this change makes no memory-reduction claim. Tree-sitter remains faster and uses
 less peak memory on every input, and no incremental reuse is measured. The
 full token/grammar/recovery gates and real hew integration also pass.
+
+## Allocation-guided outline work (#37)
+
+`instrument_allocations.py` instruments the pinned compiler's generated Rust
+function headers with a diagnostic Rust global allocator. Each alloc/alloc_zeroed
+and realloc request is charged to the innermost generated function, including
+uninstrumented runtime calls beneath it. These are **exclusive function counts**,
+not sampled stacks, exact source call sites, live heap, peak RSS, or all libc
+allocations. Instrumentation can affect optimization; do not time this binary.
+It targets this generated Rust layout, not arbitrary Rust source. Reports require
+normal return from main; process::exit does not run the reporting guard.
+`ci/allocation_profiler.py` calibrates attribution with one known 64-byte request.
+
+Generate a separate diagnostic binary with the generated program's compatible
+runtime rlib and the same release flags, then require output equivalence:
+
+```sh
+ALMIDE_RUN_PROJECT_DIR=/tmp/native almide build
+python3 bench/instrument_allocations.py /tmp/native/almide_gen_main.rs /tmp/profile.rs
+rustc /tmp/profile.rs --edition=2021 -C opt-level=3 -C overflow-checks=no \
+  --extern almide_rt=/path/to/libalmide_rt.rlib -o /tmp/profile
+python3 bench/profile_outline.py --gramide ./gramide --profiled /tmp/profile \
+  --generated-rust /tmp/native/almide_gen_main.rs \
+  --runtime-rlib /path/to/libalmide_rt.rlib --output /tmp/allocations.json
+```
+
+[Before](../docs/evidence/python-outline-allocations-before.json) and
+[after](../docs/evidence/python-outline-allocations-after.json) record the
+instrumented/normal binaries, generated source, runtime rlib and instrumenter
+hashes. Both profiles use the same runtime rlib. On all five inputs, instrumented
+stdout equals the corresponding normal binary; before/after output hashes also
+match. The normal binary is measured separately below.
+
+Three newline predicates in Python physical scanning constructed `[10, 13]`
+repeatedly (comment scanning, continuation checks and physical line counting).
+Replacing them with an integer predicate gives these allocation-count deltas:
+
+| Input | Total before | Total after | Fewer requests |
+| --- | ---: | ---: | ---: |
+| inspect.py | 1,451,554 | 1,309,507 | 142,047 |
+| typing.py | 1,426,778 | 1,279,121 | 147,657 |
+| argparse.py | 1,322,917 | 1,201,475 | 121,442 |
+| _pydecimal.py | 2,272,229 | 2,012,359 | 259,870 |
+| pydoc_data/topics.py | 638,220 | 56,710 | 581,510 |
+
+All reductions are attributed to `lexer.physical_with`; each removed request
+accounts for exactly 16 requested bytes, consistent with the two-i64 temporary
+list at those three sites. Reallocation counts are unchanged. These cumulative
+requested-byte savings are not a measurement of resident memory. Large remaining
+contributors include `tags.decl_kind`, `parser.take_from`, string preparation and
+other physical-scanner work, so this does not resolve #37.
+
+### Identical outline work, without instrumentation
+
+The C Python adapter now has a strict `--outline` mode alongside its existing
+JSON modes. `python_outline.py` independently renders the CPython AST as nested
+outline text (including decorator starts). Every normal old/new/tree-sitter
+output must equal it before timing. All 15 inputs pass; the original JSON modes
+also retain their CPython/range and recovery comparisons.
+
+```sh
+python3 bench/python_outline.py --gramide ./gramide --before /path/to/old-gramide \
+  --tree-sitter /path/to/tree-sitter-python --references /path/to/almide-references \
+  --output /tmp/outline-timing.json
+```
+
+[Five shuffled samples](../docs/evidence/python-newline-outline.json) include
+process startup, read, full parse and identical outline output. The code-heavy
+examples improve modestly: inspect 64.87→62.83 ms, argparse 59.62→57.24 ms,
+_pydecimal 92.95→89.09 ms; ast.py is effectively unchanged. The string-heavy
+topics.py control improves 14.34→6.82 ms. Tree-sitter remains faster on every
+input (inspect 11.59 ms, _pydecimal 15.91 ms, topics 5.45 ms).
+This Python 3.14.4 sample is not the reported 700-file Python 3.13 workload or its
+ctxgate-outline binary. No startup subtraction, incremental reuse, RSS claim or
+general victory is implied. The full regression suite, real hew integration and
+the per-file codopsy-almd complexity baseline pass without relaxing the baseline.

@@ -23,6 +23,7 @@ python3 ci/python_delimiter_recovery.py
 python3 ci/python_isolated_errors.py
 python3 ci/recovered_symbols.py
 python3 ci/recovery_comparison.py
+python3 ci/allocation_profiler.py
 
 # A per-file ratchet, not a target: `parse_rule` is the worst function in any of these repositories.
 # Each file is held where it stands, so a clean one cannot rot up to the worst
