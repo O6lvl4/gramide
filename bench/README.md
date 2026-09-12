@@ -1115,3 +1115,38 @@ Since the session's first change, inspect.py has gone from 48.98 ms and
 635,940 allocation requests to 31.47 ms and 256,820, and from 4.3x tree-sitter
 to 2.8x. The engine is still an interpreter walking an arena, and that walk is
 now nearly all of the remaining time.
+
+## The dispatch chain is ordered by how often each kind is visited
+
+`parse_rule` chooses what to do with an arena node through a chain of `else
+if`s, and the chain was in the order the kinds were declared. `K_LEFT` — one
+per precedence level, at every level of the Python expression ladder — was the
+trailing `else`, reached only after fifteen comparisons; `K_SEQ` and `K_ALT`,
+the two kinds that hold every rule together, were sixth and seventh.
+
+The chain is now ordered by how often a kind is actually visited: sequence,
+alternation, literal, token, left fold, wrap, option, repetition, field, and
+then the ones a parse meets rarely — reference (`compile` now bypasses almost
+all of them), lookahead, epsilon, any, and the recovery rules, which carry the
+`else`. Nothing else changes: the arms are the same arms, and the kinds are
+disjoint, so the order they are tested in cannot change which one runs.
+`parse_rule`'s recorded complexity falls by one, because the recovery arm no
+longer needs its condition.
+
+[Timing](../docs/evidence/dispatch-order-timing.json), 21 shuffled samples per
+binary on a quiet machine (load average 2.7), all 945 timed outputs matching
+CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 30.68 | 29.27 | 11.26 | 2.6x |
+| typing.py | 30.82 | 29.03 | 11.00 | 2.6x |
+| argparse.py | 29.04 | 27.80 | 10.14 | 2.7x |
+| _pydecimal.py | 43.55 | 41.56 | 15.89 | 2.6x |
+| dataclasses.py | 17.06 | 16.20 | 8.05 | 2.0x |
+
+Twelve of the fifteen medians improve, the code-heavy files by 4.3% to 5.8%.
+Three small files read 0.3% to 2.9% slower and are all under 7 ms.
+
+The [full stdlib survey](../docs/evidence/dispatch-order-stdlib.json) matches
+CPython outlines on 721/721 Python 3.14.4 files.

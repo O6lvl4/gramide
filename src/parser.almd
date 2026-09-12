@@ -573,46 +573,7 @@ fn missed(c: Compiled, mut exp: List[Int], st: State, pos: Int, op: Op) -> Out =
 // the analysis treat the parameter as escaping.
 fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node], mut exp: List[Int], st0: State, id: Int, pos: Int) -> Out = {
   let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
-  if op.kind == K_EPS then good(st0, pos)
-  else if op.kind == K_TOK then {
-    match list.get(tk, pos) {
-      some(k) => if k != op.b then miss(exp, st0, pos, id)
-        else if op.b == tree.T_NEWLINE or op.b == tree.T_EOF then good(st0, pos + 1)
-        else {
-          if st0.build then list.push(out, tree.leaf(text_at(c, id), pos)) else ()
-          good(st0, pos + 1)
-        },
-      none => miss(exp, st0, pos, id),
-    }
-  }
-  else if op.kind == K_LIT or op.kind == K_KEEP then {
-    match list.get(tt, pos) {
-      some(x) => if not spelled(c, op, x) then missed(c, exp, st0, pos, op)
-        else match list.get(tk, pos) {
-          some(k) => if k == tree.T_STRING or k == tree.T_NEG then missed(c, exp, st0, pos, op)
-            else if op.kind == K_LIT then good(st0, pos + 1)
-            else {
-              if st0.build then list.push(out, tree.leaf("op", pos)) else ()
-              good(st0, pos + 1)
-            },
-          none => missed(c, exp, st0, pos, op),
-        },
-      none => missed(c, exp, st0, pos, op),
-    }
-  }
-  // the body of a macro is a balanced run of tokens the grammar has no reading
-  // of; `any` consumes one and leaves nothing behind
-  else if op.kind == K_ANY then {
-    match list.get(tk, pos) {
-      some(k) => if k == tree.T_EOF then miss(exp, st0, pos, id) else good(st0, pos + 1),
-      none => miss(exp, st0, pos, id),
-    }
-  }
-  else if op.kind == K_REF then {
-    if op.a < 0 then miss(exp, st0, pos, id)
-    else parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
-  }
-  else if op.kind == K_SEQ then {
+  if op.kind == K_SEQ then {
     let mark = list.len(out)
     var st = st0
     var p = pos
@@ -643,6 +604,95 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
     }
     Out { ok: done, pos: p, st: st }
   }
+  else if op.kind == K_LIT or op.kind == K_KEEP then {
+    match list.get(tt, pos) {
+      some(x) => if not spelled(c, op, x) then missed(c, exp, st0, pos, op)
+        else match list.get(tk, pos) {
+          some(k) => if k == tree.T_STRING or k == tree.T_NEG then missed(c, exp, st0, pos, op)
+            else if op.kind == K_LIT then good(st0, pos + 1)
+            else {
+              if st0.build then list.push(out, tree.leaf("op", pos)) else ()
+              good(st0, pos + 1)
+            },
+          none => missed(c, exp, st0, pos, op),
+        },
+      none => missed(c, exp, st0, pos, op),
+    }
+  }
+  // the body of a macro is a balanced run of tokens the grammar has no reading
+  // of; `any` consumes one and leaves nothing behind
+  else if op.kind == K_TOK then {
+    match list.get(tk, pos) {
+      some(k) => if k != op.b then miss(exp, st0, pos, id)
+        else if op.b == tree.T_NEWLINE or op.b == tree.T_EOF then good(st0, pos + 1)
+        else {
+          if st0.build then list.push(out, tree.leaf(text_at(c, id), pos)) else ()
+          good(st0, pos + 1)
+        },
+      none => miss(exp, st0, pos, id),
+    }
+  }
+  else if op.kind == K_LEFT then {
+    let mark = list.len(out)
+    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    if not o.ok then {
+      rollback(out, mark)
+      Out { ok: false, pos: pos, st: o.st }
+    } else {
+      var st = o.st
+      var p = o.pos
+      var go = true
+      while go {
+        // out holds the left operand from `mark`; the operator lands at
+        // `opmark` and the right operand at `rmark`, so one drain can name
+        // all three and fold them into a single node
+        let opmark = list.len(out)
+        let oo = parse_rule(c, tk, tt, out, exp, st, op.b, p)
+        st = oo.st
+        if not oo.ok then {
+          rollback(out, opmark)
+          go = false
+        } else {
+          let rmark = list.len(out)
+          let rr = parse_rule(c, tk, tt, out, exp, st, op.a, oo.pos)
+          st = rr.st
+          if not rr.ok then {
+            rollback(out, opmark)
+            go = false
+          } else {
+            if st0.build then {
+              let kids = fold_kids(out, mark, opmark, rmark)
+              list.push(out, tree.node(text_at(c, id), kids, pos, rr.pos))
+            } else ()
+            p = rr.pos
+          }
+        }
+      }
+      good(st, p)
+    }
+  }
+  else if op.kind == K_WRAP then {
+    let mark = list.len(out)
+    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    if o.ok then {
+      if st0.build then {
+        let kids = take_from(out, mark)
+        list.push(out, tree.node(text_at(c, id), kids, pos, o.pos))
+      } else ()
+      good(o.st, o.pos)
+    } else {
+      rollback(out, mark)
+      Out { ok: false, pos: pos, st: o.st }
+    }
+  }
+  else if op.kind == K_OPT then {
+    let mark = list.len(out)
+    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    if o.ok then o else {
+      rollback(out, mark)
+      good(o.st, pos)
+    }
+  }
   else if op.kind == K_REP or op.kind == K_REP1 then {
     var st = st0
     var p = pos
@@ -660,28 +710,6 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
     }
     if op.kind == K_REP1 and count == 0 then Out { ok: false, pos: pos, st: st } else good(st, p)
   }
-  else if op.kind == K_OPT then {
-    let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
-    if o.ok then o else {
-      rollback(out, mark)
-      good(o.st, pos)
-    }
-  }
-  else if op.kind == K_WRAP then {
-    let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
-    if o.ok then {
-      if st0.build then {
-        let kids = take_from(out, mark)
-        list.push(out, tree.node(text_at(c, id), kids, pos, o.pos))
-      } else ()
-      good(o.st, o.pos)
-    } else {
-      rollback(out, mark)
-      Out { ok: false, pos: pos, st: o.st }
-    }
-  }
   else if op.kind == K_FIELD then {
     let mark = list.len(out)
     let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
@@ -691,6 +719,33 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
     } else {
       rollback(out, mark)
       Out { ok: false, pos: pos, st: o.st }
+    }
+  }
+  else if op.kind == K_REF then {
+    if op.a < 0 then miss(exp, st0, pos, id)
+    else parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+  }
+  else if op.kind == K_NOT then {
+    let mark = list.len(out)
+    let emark = list.len(exp)
+    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    rollback(out, mark)
+    untrack(exp, emark)
+    if o.ok then Out { ok: false, pos: pos, st: st0 } else good(st0, pos)
+  }
+  else if op.kind == K_AHEAD then {
+    let mark = list.len(out)
+    let emark = list.len(exp)
+    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    rollback(out, mark)
+    untrack(exp, emark)
+    if o.ok then good(st0, pos) else Out { ok: false, pos: pos, st: st0 }
+  }
+  else if op.kind == K_EPS then good(st0, pos)
+  else if op.kind == K_ANY then {
+    match list.get(tk, pos) {
+      some(k) => if k == tree.T_EOF then miss(exp, st0, pos, id) else good(st0, pos + 1),
+      none => miss(exp, st0, pos, id),
     }
   }
   else if op.kind == K_RECOVER_LINES then {
@@ -740,7 +795,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
       }
     }
   }
-  else if op.kind == K_RECOVER or op.kind == K_RECOVER_ALL then {
+  else {            // K_RECOVER and K_RECOVER_ALL: the rarest arm carries the chain
     let mark = list.len(out)
     let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
     if o.ok then o
@@ -780,61 +835,6 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
           } else Out { ok: true, pos: limit, st: st }
         }
       }
-    }
-  }
-  else if op.kind == K_NOT then {
-    let mark = list.len(out)
-    let emark = list.len(exp)
-    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
-    rollback(out, mark)
-    untrack(exp, emark)
-    if o.ok then Out { ok: false, pos: pos, st: st0 } else good(st0, pos)
-  }
-  else if op.kind == K_AHEAD then {
-    let mark = list.len(out)
-    let emark = list.len(exp)
-    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
-    rollback(out, mark)
-    untrack(exp, emark)
-    if o.ok then good(st0, pos) else Out { ok: false, pos: pos, st: st0 }
-  }
-  else {                                                                 // K_LEFT: a = operand, b = op
-    let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
-    if not o.ok then {
-      rollback(out, mark)
-      Out { ok: false, pos: pos, st: o.st }
-    } else {
-      var st = o.st
-      var p = o.pos
-      var go = true
-      while go {
-        // out holds the left operand from `mark`; the operator lands at
-        // `opmark` and the right operand at `rmark`, so one drain can name
-        // all three and fold them into a single node
-        let opmark = list.len(out)
-        let oo = parse_rule(c, tk, tt, out, exp, st, op.b, p)
-        st = oo.st
-        if not oo.ok then {
-          rollback(out, opmark)
-          go = false
-        } else {
-          let rmark = list.len(out)
-          let rr = parse_rule(c, tk, tt, out, exp, st, op.a, oo.pos)
-          st = rr.st
-          if not rr.ok then {
-            rollback(out, opmark)
-            go = false
-          } else {
-            if st0.build then {
-              let kids = fold_kids(out, mark, opmark, rmark)
-              list.push(out, tree.node(text_at(c, id), kids, pos, rr.pos))
-            } else ()
-            p = rr.pos
-          }
-        }
-      }
-      good(st, p)
     }
   }
 }
