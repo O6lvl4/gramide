@@ -670,3 +670,35 @@ and allocation reports. No new wall-time result is claimed: the machine's load
 average remained elevated (12.35 after validation), following the noisy preceding
 run. Quiet paired timing, the exact issue #37 workload and incremental parsing
 remain unfinished.
+
+## Repeated timing after the two copy reductions
+
+`python_outline.py` now accepts `--samples N` (positive integer, default 5), records
+the selected count and still checks every timed output against CPython. This lets
+noisy runs be investigated without editing the harness or dropping earlier data.
+
+Following the high-load run above, the load average had fallen to 3.99. A
+[five-sample comparison](../docs/evidence/combined-copy-timing-five.json) still had
+mixed results, so a [21-sample comparison](../docs/evidence/combined-copy-timing-21.json)
+was run with the same binaries. Both reports are retained. The baseline is PR #43;
+the current binary includes scalar outline depth/borrowed membership (PR #45) and
+combined borrowed token numbering (PR #46). Binary hashes match their allocation
+profiles. This comparison measures their combined effect, not either change alone.
+
+All 945 timed outputs (15 files × 3 implementations × 21 samples) match CPython.
+Fourteen file medians improve; keyword.py increases from 4.267 to 4.313 ms.
+Representative medians, including startup, reading and identical outline output:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) |
+| --- | ---: | ---: | ---: |
+| inspect.py | 53.86 | 50.42 | 12.68 |
+| typing.py | 54.22 | 51.19 | 12.39 |
+| argparse.py | 50.53 | 46.88 | 11.36 |
+| _pydecimal.py | 78.02 | 72.12 | 17.11 |
+
+The changes reduce these medians by approximately 5.6–7.6%, while tree-sitter
+remains about four times faster. More samples do not make a shared machine an
+isolated benchmark environment, and these medians are not a statistical-significance
+claim. This is still the selected 15-file Python 3.14 corpus, not issue #37's exact
+Python 3.13 corpus, nor incremental or peak-memory evidence. The earlier noisy
+measurements remain valid records of those runs, not results to hide.
