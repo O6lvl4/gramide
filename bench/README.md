@@ -1528,3 +1528,45 @@ to 40.
 `ci/check.sh` builds `--release` from here on, so what the tests check and what
 the benchmark times is what `almide install` produces. It costs the CI job
 about ten seconds.
+
+## Two questions the engine stopped scanning for
+
+A release profile of the parse loop put 20 per cent of it in `may_start` and
+another 4 in hashing. Neither was doing anything a parser has to do.
+
+**Can this token begin this rule?** The head table held a run of terminal nodes
+per rule, and answering meant fetching each node and, for a literal set,
+scanning its spellings — up to 48 nodes and a nested loop, at every alternative
+branch, every option and every repetition. The runs are now turned once, at the
+end of `compile`, into what the question actually needs: a bitmask of the token
+kinds a rule can begin with, a 64-bit sketch of its spellings, and the
+spellings themselves. A rule with no known head answers -1 for its kinds, so
+the first test already says yes. The answer is exactly the answer it was —
+the sketch only decides whether the exact list is worth reading — and
+`may_start` falls from 20 per cent of the profile to 1.2.
+
+**Which spelling is this token?** `atom_at` reached two `Map` lookups per token,
+keyed by a first byte and a width and by an atom number. Both key spaces are
+dense and small — 256 bytes by 17 widths, and one slot per spelling — so both
+are now plain arrays read by index, and the SipHash that numbered every token
+in the file is gone. Filling a 4,352-slot table needed care: `list.set` on this
+backend copies the whole list, so the table is built by appending — the chain
+looks backward for the last spelling in its slot, and the heads come off one
+sorted pass.
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 12.51 | 11.76 | 10.44 | 1.13x |
+| typing.py | 13.30 | 12.50 | 10.72 | 1.17x |
+| argparse.py | 11.80 | 11.41 | 9.90 | 1.15x |
+| _pydecimal.py | 18.35 | 17.04 | 15.58 | 1.09x |
+| dataclasses.py | 8.30 | 8.09 | 7.97 | 1.02x |
+| pydoc_data/topics.py | 5.22 | 5.18 | 5.35 | 0.97x |
+
+[Timing](../docs/evidence/head-index-timing.json), 21 shuffled samples per
+binary; [stdlib](../docs/evidence/head-index-stdlib.json) unchanged at 721 of
+721. `outline`, `parse`, `symbols`, `tags` and `check` are byte-identical on
+stdlib files and on malformed ones, diagnostics included.
+[Allocations](../docs/evidence/head-index-allocations.json) barely move —
+90,789 against 90,767 on inspect.py, the new tables — which is the point: this
+change is about what the engine reads, not what it allocates.
