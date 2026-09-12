@@ -14,8 +14,11 @@ type Names = { blob: Bytes, start: List[Int], end: List[Int] }
 // and spellings are source text, and source text holds no NUL — then cut by
 // scanning for it. Building the blob a string at a time cost an allocation per
 // name; this costs four for the whole table.
-fn names_of(texts: List[String]) -> Names = {
-  let blob = bytes.from_string(list.join(texts, "\u{0000}"))
+fn names_of(texts: List[String]) -> Names = names_in(bytes.from_string(list.join(texts, "\u{0000}")))
+
+// The same table from the blob alone: a grammar compiled ahead of time carries
+// the bytes and nothing else, and the bounds are one scan away.
+fn names_in(blob: Bytes) -> Names = {
   var start: List[Int] = []
   var end: List[Int] = []
   var from = 0
