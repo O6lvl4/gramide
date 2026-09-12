@@ -6,12 +6,12 @@ import fs
 import json
 
 fn token(v: Value) -> tree.Token = tree.Token {
-  kind: json.get_string(v, "kind") ?? "", text: json.get_string(v, "text") ?? "",
+  kind: tree.kind_id(json.get_string(v, "kind") ?? ""), text: json.get_string(v, "text") ?? "",
   start: json.get_int(v, "start") ?? 0, end: json.get_int(v, "end") ?? 0,
   line: json.get_int(v, "line") ?? 0, col: json.get_int(v, "col") ?? 0
 }
 fn row(t: tree.Token) -> Value = value.object([
-  ("kind", value.str(t.kind)), ("text", value.str(t.text)),
+  ("kind", value.str(tree.kind_name(t.kind))), ("text", value.str(t.text)),
   ("start", value.int(t.start)), ("end", value.int(t.end)),
   ("line", value.int(t.line)), ("col", value.int(t.col))
 ])

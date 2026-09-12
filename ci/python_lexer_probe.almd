@@ -6,7 +6,7 @@ import fs
 import json
 
 fn row(t: tree.Token) -> Value = value.object([
-  ("kind", value.str(t.kind)), ("text", value.str(t.text)),
+  ("kind", value.str(tree.kind_name(t.kind))), ("text", value.str(t.text)),
   ("start", value.int(t.start)), ("end", value.int(t.end)),
   ("line", value.int(t.line)), ("col", value.int(t.col))
 ])

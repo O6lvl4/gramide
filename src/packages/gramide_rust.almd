@@ -370,14 +370,14 @@ test "a lifetime and a character are told apart by what closes them" {
   let toks = lex.tokenize("fn f<'a>(x: &'a str) -> char { 'q' }", spec())!
   // `'a` is the quote and a name; `'q'` is one token
   assert_eq(list.contains(lex.kinds(toks), "rune"), true)
-  assert_eq(list.len(list.filter(toks, (t) => t.kind == "rune")), 1)
+  assert_eq(list.len(list.filter(toks, (t) => t.kind == tree.T_RUNE)), 1)
   // and a list of lifetimes does not swallow the comma between them
   assert_eq(top_kinds("struct S<'a, 'b> { x: &'a str, y: &'b str }"), ["type_declaration"])
 }
 
 test "raw strings end only at the hashes they opened with" {
   let toks = lex.tokenize("let a = r#\"one \" two\"#; let b = b\"bytes\";", spec())!
-  assert_eq(list.len(list.filter(toks, (t) => t.kind == "string")), 2)
+  assert_eq(list.len(list.filter(toks, (t) => t.kind == tree.T_STRING)), 2)
   assert_eq(list.get(lex.texts(toks), 3), some("r#\"one \" two\"#"))
 }
 

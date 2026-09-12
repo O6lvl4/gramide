@@ -49,7 +49,8 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
   match cmd {
     "tokens" => {
       let toks = lang.tokens_for(path, src)!
-      for t in toks { println(int.to_string(t.line) + ":" + int.to_string(t.col) + " " + t.kind + " " + t.text) }
+      let names = tree.kind_names()
+      for t in toks { println(int.to_string(t.line) + ":" + int.to_string(t.col) + " " + tree.kind_name_in(names, t.kind) + " " + t.text) }
       ok(())
     },
     // the readers answer about the file they were given even when it does not

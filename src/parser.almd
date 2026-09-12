@@ -52,30 +52,23 @@ type Grammar = { start: String, rules: Map[String, Rule] }
 // in the native backend every value read is a copy, and running the engine
 // on the Rule tree itself cloned a whole sub-grammar at every reference.
 //
-// Terminals are interned. `compile` numbers every distinct text a terminal
-// asks for and stores that number in the node's `b`, which the other kinds
-// leave at zero; `kind_ids` and `text_ids` number the token stream the same
-// way once. A terminal match is then an integer compare rather than two
-// string compares, and reading a token is reading an Int rather than copying
-// a record that owns two strings. The first four numbers are fixed so the
-// engine can name the kinds it tests by name.
+// Terminals are interned. A terminal named by kind carries the number the
+// lexer already wrote on the token (`tree.kind_id`); a terminal named by text
+// carries a number `compile` assigns to every distinct spelling a rule asks
+// for, and `number_tokens` numbers the stream's texts the same way once. A
+// terminal match is then an integer compare rather than a string compare, and
+// the few spellings the engine tests itself are pinned by `SEEDS`.
 type Op = { kind: Int, a: Int, b: Int }
 type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int, atoms: Map[String, Int], name: String }
 
-let A_NEWLINE = 0
-let A_EOF = 1
-let A_STRING = 2
-let A_NEG = 3
-let A_LPAREN = 4
-let A_RPAREN = 5
-let A_LBRACK = 6
-let A_RBRACK = 7
-let A_LBRACE = 8
-let A_RBRACE = 9
-let A_SEMI = 10
-let A_INDENT = 11
-let A_DEDENT = 12
-let SEEDS = ["newline", "eof", "string", "neg", "(", ")", "[", "]", "{", "}", ";", "indent", "dedent"]
+let A_LPAREN = 0
+let A_RPAREN = 1
+let A_LBRACK = 2
+let A_RBRACK = 3
+let A_LBRACE = 4
+let A_RBRACE = 5
+let A_SEMI = 6
+let SEEDS = ["(", ")", "[", "]", "{", "}", ";"]
 
 let K_EPS = 0
 let K_TOK = 1
@@ -164,7 +157,11 @@ fn compile(g: Grammar) -> Compiled = {
     if op.kind == K_REF then {
       let target = map.get(names, text) ?? -1
       list.push(resolved, Op { kind: K_REF, a: target, b: 0 })
-    } else if op.kind == K_TOK or op.kind == K_LIT or op.kind == K_KEEP then {
+    } else if op.kind == K_TOK then {
+      // A terminal named by kind resolves to the number the lexer writes, so
+      // the grammar's text table holds only the spellings literals ask for.
+      list.push(resolved, Op { kind: K_TOK, a: op.a, b: tree.kind_id(text) })
+    } else if op.kind == K_LIT or op.kind == K_KEEP then {
       match map.get(atoms, text) {
         some(_) => (),
         none => {
@@ -179,14 +176,9 @@ fn compile(g: Grammar) -> Compiled = {
   Compiled { ops: resolved, texts: texts, kids: kids, start: start, atoms: atoms, name: g.start }
 }
 
-// The token stream, numbered against the grammar's terminals. A token whose
-// kind or text the grammar never names gets -1, which no terminal asks for.
-fn kind_ids(c: Compiled, toks: List[tree.Token]) -> List[Int] = {
-  var out: List[Int] = []
-  for t in toks { list.push(out, map.get(c.atoms, t.kind) ?? -1) }
-  out
-}
-
+// The token stream's texts, numbered against the grammar's literals. A text
+// the grammar never names gets -1, which no terminal asks for. Kinds need no
+// pass: the lexer wrote each token's kind number already.
 fn text_ids(c: Compiled, toks: List[tree.Token]) -> List[Int] = {
   var out: List[Int] = []
   for t in toks { list.push(out, map.get(c.atoms, t.text) ?? -1) }
@@ -201,7 +193,7 @@ fn number_tokens(c: Compiled, input: TokenInput) -> NumberedTokens = {
   var kinds: List[Int] = list.with_capacity(list.len(input.tokens))
   var texts: List[Int] = list.with_capacity(list.len(input.tokens))
   for t in input.tokens {
-    list.push(kinds, map.get(c.atoms, t.kind) ?? -1)
+    list.push(kinds, t.kind)
     list.push(texts, map.get(c.atoms, t.text) ?? -1)
   }
   NumberedTokens { kinds: kinds, texts: texts }
@@ -287,10 +279,10 @@ fn skip_limit(tk: List[Int], tt: List[Int], from: Int, bounded: Bool) -> Int = {
   while limit < 0 {
     match list.get(tk, q) {
       none => { limit = q },
-      some(k) => if k == A_EOF then { limit = q }
+      some(k) => if k == tree.T_EOF then { limit = q }
         else {
           let x = match list.get(tt, q) { some(v) => v, none => -1 }
-          let real = k != A_STRING and k != A_NEG
+          let real = k != tree.T_STRING and k != tree.T_NEG
           if real and (x == A_LPAREN or x == A_LBRACK or x == A_LBRACE) then depth = depth + 1
           else if real and (x == A_RPAREN or x == A_RBRACK or x == A_RBRACE) then {
             if depth == 0 and bounded then limit = q else depth = int.max(0, depth - 1)
@@ -313,7 +305,7 @@ fn real_between(tk: List[Int], tt: List[Int], from: Int, to: Int) -> Bool = {
       none => { i = to },
       some(k) => {
         let x = match list.get(tt, i) { some(v) => v, none => -1 }
-        if k != A_NEWLINE and not (k != A_STRING and x == A_SEMI) then found = true else ()
+        if k != tree.T_NEWLINE and not (k != tree.T_STRING and x == A_SEMI) then found = true else ()
         i = i + 1
       },
     }
@@ -398,7 +390,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
   else if op.kind == K_TOK then {
     match list.get(tk, pos) {
       some(k) => if k != op.b then miss(exp, st0, pos, id)
-        else if op.b == A_NEWLINE or op.b == A_EOF then good(st0, pos + 1)
+        else if op.b == tree.T_NEWLINE or op.b == tree.T_EOF then good(st0, pos + 1)
         else {
           if st0.build then list.push(out, tree.leaf(text_at(c, id), pos)) else ()
           good(st0, pos + 1)
@@ -410,7 +402,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
     match list.get(tt, pos) {
       some(x) => if x != op.b then miss(exp, st0, pos, id)
         else match list.get(tk, pos) {
-          some(k) => if k == A_STRING or k == A_NEG then miss(exp, st0, pos, id)
+          some(k) => if k == tree.T_STRING or k == tree.T_NEG then miss(exp, st0, pos, id)
             else if op.kind == K_LIT then good(st0, pos + 1)
             else {
               if st0.build then list.push(out, tree.leaf("op", pos)) else ()
@@ -425,7 +417,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
   // of; `any` consumes one and leaves nothing behind
   else if op.kind == K_ANY then {
     match list.get(tk, pos) {
-      some(k) => if k == A_EOF then miss(exp, st0, pos, id) else good(st0, pos + 1),
+      some(k) => if k == tree.T_EOF then miss(exp, st0, pos, id) else good(st0, pos + 1),
       none => miss(exp, st0, pos, id),
     }
   }
@@ -531,12 +523,12 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
         var limit = -1
         var st = o.st
         while resume < 0 and limit < 0 {
-          let k = list.get(tk, q) ?? A_EOF
-          if k == A_EOF or (k == A_DEDENT and depth == 0) then limit = q
+          let k = list.get(tk, q) ?? tree.T_EOF
+          if k == tree.T_EOF or (k == tree.T_DEDENT and depth == 0) then limit = q
           else {
-            if k == A_INDENT then { depth = depth + 1; line_start = false }
-            else if k == A_DEDENT then { depth = depth - 1; line_start = true }
-            else if k == A_NEWLINE then line_start = true
+            if k == tree.T_INDENT then { depth = depth + 1; line_start = false }
+            else if k == tree.T_DEDENT then { depth = depth - 1; line_start = true }
+            else if k == tree.T_NEWLINE then line_start = true
             else {
               if line_start and depth == 0 and q > pos then {
                 let a = parse_rule(c, tk, tt, out, exp, st, op.a, q)
@@ -677,7 +669,7 @@ fn failure_at(c: Compiled, toks: List[tree.Token], far: Int, exp: List[Int]) -> 
   Failure {
     line: option.map(t, (x) => x.line) ?? 0,
     col: option.map(t, (x) => x.col) ?? 0,
-    found: match t { some(x) => if x.kind == "eof" then "end of file" else if x.kind == "newline" then "end of line" else "`" + x.text + "`", none => "end of file" },
+    found: match t { some(x) => if x.kind == tree.T_EOF then "end of file" else if x.kind == tree.T_NEWLINE then "end of line" else "`" + x.text + "`", none => "end of file" },
     expected: list.map(exp, (id) => expectation(c, id)),
   }
 }
@@ -821,7 +813,7 @@ fn toks_of(texts: List[String]) -> List[tree.Token] = {
   var out: List[tree.Token] = []
   var i = 0
   for t in texts {
-    let kind = if t == "" then "eof" else if string.is_digit(t) then "integer" else "punct"
+    let kind = if t == "" then tree.T_EOF else if string.is_digit(t) then tree.T_INTEGER else tree.T_PUNCT
     list.push(out, tree.Token { kind: kind, text: t, start: i, end: i + 1, line: 1, col: i + 1 })
     i = i + 1
   }

@@ -28,7 +28,7 @@ fn start_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks
 // Layout markers can point at the next declaration. Ranges end at source code.
 fn code_end(n: tree.Node, toks: List[tree.Token]) -> Int = {
   var end = n.end
-  while end > n.start and (option.map(list.get(toks, end - 1), (t) => list.contains(["newline", "dedent", "indent"], t.kind)) ?? false) { end = end - 1 }
+  while end > n.start and (option.map(list.get(toks, end - 1), (t) => t.kind == tree.T_NEWLINE or t.kind == tree.T_DEDENT or t.kind == tree.T_INDENT) ?? false) { end = end - 1 }
   end
 }
 fn end_line(n: tree.Node, toks: List[tree.Token]) -> Int = match list.get(toks, code_end(n, toks) - 1) {

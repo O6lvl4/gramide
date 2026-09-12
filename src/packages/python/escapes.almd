@@ -31,7 +31,7 @@ type TokenBuffer = { items: List[tree.Token] }
 fn validate(buffer: TokenBuffer) -> Result[Unit, parser.Failure] = {
   var raw_frames: List[Bool] = []
   for token in buffer.items {
-    if token.kind == "string" then {
+    if token.kind == tree.T_STRING then {
       let data = bytes.from_string(token.text)
       let opening = strings.opening(data, 0)
       match opening {
@@ -42,11 +42,11 @@ fn validate(buffer: TokenBuffer) -> Result[Unit, parser.Failure] = {
         },
         none => (),
       }
-    } else if token.kind == "fstring_start" or token.kind == "tstring_start" then {
+    } else if token.kind == tree.T_FSTRING_START or token.kind == tree.T_TSTRING_START then {
       list.push(raw_frames, string.contains(string.to_lower(token.text), "r"))
-    } else if token.kind == "fstring_end" or token.kind == "tstring_end" then {
+    } else if token.kind == tree.T_FSTRING_END or token.kind == tree.T_TSTRING_END then {
       let _ = list.pop(raw_frames)
-    } else if token.kind == "fstring_middle" or token.kind == "tstring_middle" then {
+    } else if token.kind == tree.T_FSTRING_MIDDLE or token.kind == tree.T_TSTRING_MIDDLE then {
       numeric(0, bytes.len(bytes.from_string(token.text)), list.last(raw_frames) ?? false, false, token)!
     } else ()
   }
