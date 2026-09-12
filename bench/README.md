@@ -1414,3 +1414,44 @@ samples per binary, all 945 timed outputs matching CPython:
 | dataclasses.py | 11.38 | 10.81 | 8.32 | 1.3x |
 
 Thirteen of the fifteen medians improve, the code-heavy files by 1.5% to 5.0%.
+
+## A rule that only stands in front of another says nothing
+
+`x = 1` parsed to `(assign (identifier) (conditional (comparison (power
+(primary (number))))))`. Four of those seven nodes exist because Python's
+expression grammar is a ladder and each rung wraps what it matched, whether or
+not it matched anything of its own. inspect.py's tree held 29,427 nodes.
+
+`nest(kind, rule)` is `wrap` that keeps quiet when the rule left exactly one
+node behind. The four rungs — `conditional`, `comparison`, `power`, `primary`,
+and the two pattern rules that share the last one — use it, and the same file's
+tree is 16,652 nodes. `x = 1` is now `(assign (identifier) (number))`.
+
+Nothing a reader asks for changes. `outline`, `symbols`, `tags` and `check` are
+byte-identical on six stdlib files, the CPython expression oracle matches the
+same 2,993 trees with the same digest, and the statement oracle matches the
+same 857 — because a node with one child and a name that only says which rule
+ran is exactly what those oracles already looked through. `gramide parse` does
+change, and for the better: the s-expression is now the shape of the code.
+
+[Allocations](../docs/evidence/transparent-wraps-allocations.json):
+
+| File | Total allocations before → after | Fewer |
+| --- | ---: | ---: |
+| inspect.py | 145,487 → 90,731 | 37.6% |
+| typing.py | 156,980 → 100,067 | 36.3% |
+| argparse.py | 135,962 → 88,560 | 34.9% |
+| _pydecimal.py | 220,268 → 136,045 | 38.2% |
+
+[Timing](../docs/evidence/transparent-wraps-timing.json), 21 shuffled samples
+per binary, all 945 timed outputs matching CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 17.44 | 15.25 | 10.91 | 1.4x |
+| typing.py | 16.96 | 15.27 | 10.54 | 1.4x |
+| argparse.py | 15.16 | 13.91 | 9.69 | 1.4x |
+| _pydecimal.py | 24.13 | 21.39 | 15.46 | 1.4x |
+| dataclasses.py | 10.12 | 9.18 | 7.58 | 1.2x |
+
+Thirteen of the fifteen medians improve, the code-heavy files by 7.1% to 12.6%.

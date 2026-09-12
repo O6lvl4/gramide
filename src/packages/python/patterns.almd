@@ -2,7 +2,7 @@
 import self.parser
 import self.packages.python.containers
 import self.packages.python.arguments
-import self.parser.{ seq, nott, wrap, r, opt, keep, keeps, lits, alt, rep, tok, lit }
+import self.parser.{ nest, seq, nott, wrap, r, opt, keep, keeps, lits, alt, rep, tok, lit }
 
 fn more(rule: parser.Rule) -> parser.Rule = seq([rule, rep(rule)])
 fn rules() -> List[(String, parser.Rule)] = [
@@ -24,8 +24,8 @@ fn rules() -> List[(String, parser.Rule)] = [
     seq([lit("("), r("pattern"), lit(")")]), r("sequence_pattern"), r("mapping_pattern"), r("class_pattern")
   ])),
   ("capture_target", seq([nott(lit("_")), r("name"), nott(lits([".", "(", "="]))])),
-  ("pattern_attr", wrap("primary", seq([r("name"), more(r("attribute_suffix"))]))),
-  ("pattern_class_name", wrap("primary", seq([r("name"), rep(r("attribute_suffix"))]))),
+  ("pattern_attr", nest("primary", seq([r("name"), more(r("attribute_suffix"))]))),
+  ("pattern_class_name", nest("primary", seq([r("name"), rep(r("attribute_suffix"))]))),
   ("literal_pattern", alt([
     wrap("pattern_singleton", keeps(["None", "True", "False"])), wrap("pattern_value", r("pattern_literal"))
   ])),

@@ -7,20 +7,20 @@ import self.packages.python.lambdas
 import self.packages.python.string_expressions
 import self.tree
 import self.parser
-import self.parser.{ seq, nott, lits, tok, wrap, r, opt, keep, leftf, prec, alt, rep, keeps, lit, grammar }
+import self.parser.{ nest, seq, nott, lits, tok, wrap, r, opt, keep, leftf, prec, alt, rep, keeps, lit, grammar }
 
 let HARD_KEYWORDS = ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"]
 
 fn rules() -> List[(String, parser.Rule)] = [
   ("name", seq([nott(lits(HARD_KEYWORDS)), tok("identifier")])),
   ("expression", alt([r("lambda"), r("conditional")])),
-  ("conditional", wrap("conditional", seq([r("disjunction"), opt(seq([keep("if"), r("disjunction"), keep("else"), r("expression")]))]))),
+  ("conditional", nest("conditional", seq([r("disjunction"), opt(seq([keep("if"), r("disjunction"), keep("else"), r("expression")]))]))),
   ("assignment_expression", wrap("named", seq([r("name"), lit(":="), r("expression")]))),
   ("named_expression", alt([r("assignment_expression"), seq([r("expression"), nott(lit(":="))])])),
   // `or` and `and` are one ladder: two levels, lowest first, left-associative
   ("disjunction", prec("boolean", r("inversion"), [keep("or"), keep("and")])),
   ("inversion", alt([wrap("unary", seq([keep("not"), r("inversion")])), r("comparison")])),
-  ("comparison", wrap("comparison", seq([r("bit_or"), rep(seq([r("comparison_op"), r("bit_or")]))]))),
+  ("comparison", nest("comparison", seq([r("bit_or"), rep(seq([r("comparison_op"), r("bit_or")]))]))),
   ("comparison_op", wrap("comparison_operator", alt([seq([keep("not"), keep("in")]), seq([keep("is"), keep("not")]), keeps(["==", "!=", "<=", "<", ">=", ">", "in", "is"])]))),
   // The six binary levels are one ladder. Written as nested folds, reaching a
   // name cost a rule apiece before the operand was even tried.
@@ -29,9 +29,9 @@ fn rules() -> List[(String, parser.Rule)] = [
   ])),
   ("factor", alt([wrap("unary", seq([keeps(["+", "-", "~"]), r("factor")])), r("power")])),
   // Power binds less tightly than unary on its right, more tightly on its left.
-  ("power", wrap("power", seq([r("await_primary"), opt(seq([keep("**"), r("factor")]))]))),
+  ("power", nest("power", seq([r("await_primary"), opt(seq([keep("**"), r("factor")]))]))),
   ("await_primary", alt([wrap("await", seq([lit("await"), r("primary")])), r("primary")])),
-  ("primary", wrap("primary", seq([r("atom"), rep(r("primary_suffix"))]))),
+  ("primary", nest("primary", seq([r("atom"), rep(r("primary_suffix"))]))),
   ("primary_suffix", alt([r("attribute_suffix"), r("generator_call"), r("call_suffix"), r("subscript_suffix")])),
   ("attribute_suffix", wrap("attribute", seq([lit("."), r("name")]))),
   ("call_suffix", wrap("call", seq([lit("("), opt(r("call_arguments")), lit(")")]))),
