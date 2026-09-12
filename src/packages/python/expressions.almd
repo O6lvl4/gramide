@@ -7,7 +7,7 @@ import self.packages.python.lambdas
 import self.packages.python.string_expressions
 import self.tree
 import self.parser
-import self.parser.{ seq, nott, lits, tok, wrap, r, opt, keep, leftf, alt, rep, keeps, lit, grammar }
+import self.parser.{ seq, nott, lits, tok, wrap, r, opt, keep, leftf, prec, alt, rep, keeps, lit, grammar }
 
 let HARD_KEYWORDS = ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"]
 
@@ -17,17 +17,16 @@ fn rules() -> List[(String, parser.Rule)] = [
   ("conditional", wrap("conditional", seq([r("disjunction"), opt(seq([keep("if"), r("disjunction"), keep("else"), r("expression")]))]))),
   ("assignment_expression", wrap("named", seq([r("name"), lit(":="), r("expression")]))),
   ("named_expression", alt([r("assignment_expression"), seq([r("expression"), nott(lit(":="))])])),
-  ("disjunction", leftf("boolean", r("conjunction"), keep("or"))),
-  ("conjunction", leftf("boolean", r("inversion"), keep("and"))),
+  // `or` and `and` are one ladder: two levels, lowest first, left-associative
+  ("disjunction", prec("boolean", r("inversion"), [keep("or"), keep("and")])),
   ("inversion", alt([wrap("unary", seq([keep("not"), r("inversion")])), r("comparison")])),
   ("comparison", wrap("comparison", seq([r("bit_or"), rep(seq([r("comparison_op"), r("bit_or")]))]))),
   ("comparison_op", wrap("comparison_operator", alt([seq([keep("not"), keep("in")]), seq([keep("is"), keep("not")]), keeps(["==", "!=", "<=", "<", ">=", ">", "in", "is"])]))),
-  ("bit_or", leftf("binary", r("bit_xor"), keep("|"))),
-  ("bit_xor", leftf("binary", r("bit_and"), keep("^"))),
-  ("bit_and", leftf("binary", r("shift"), keep("&"))),
-  ("shift", leftf("binary", r("sum"), keeps(["<<", ">>"]))),
-  ("sum", leftf("binary", r("term"), keeps(["+", "-"]))),
-  ("term", leftf("binary", r("factor"), keeps(["*", "@", "/", "//", "%"]))),
+  // The six binary levels are one ladder. Written as nested folds, reaching a
+  // name cost a rule apiece before the operand was even tried.
+  ("bit_or", prec("binary", r("factor"), [
+    keep("|"), keep("^"), keep("&"), keeps(["<<", ">>"]), keeps(["+", "-"]), keeps(["*", "@", "/", "//", "%"])
+  ])),
   ("factor", alt([wrap("unary", seq([keeps(["+", "-", "~"]), r("factor")])), r("power")])),
   // Power binds less tightly than unary on its right, more tightly on its left.
   ("power", wrap("power", seq([r("await_primary"), opt(seq([keep("**"), r("factor")]))]))),
