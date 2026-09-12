@@ -105,7 +105,7 @@ to 7.6 s).
 ## Build
 
 ```
-almide build            # → ./gramide
+almide build --release   # → ./gramide, the way `almide install` builds it
 almide test             # includes language-package contract tests
 ```
 
