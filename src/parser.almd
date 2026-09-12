@@ -311,7 +311,15 @@ fn noted(mut exp: List[Int], st: State, pos: Int, what: Int) -> State = {
   }
 }
 
-fn miss(mut exp: List[Int], st: State, pos: Int, what: Int) -> Out = Out { ok: false, pos: pos, st: noted(exp, st, pos, what) }
+// `far` and the expectation set are only ever read from the pass that collects
+// them: a parse that fails runs a second time with `collect` on, and the
+// message comes from that run. Every parse that succeeds, and the first half
+// of every one that does not, therefore records nothing at a failed
+// alternative — which is the busiest path in the engine, and was 20% of a
+// 2.5 MB parse in a CPU sample.
+fn miss(mut exp: List[Int], st: State, pos: Int, what: Int) -> Out =
+  if st.collect then Out { ok: false, pos: pos, st: noted(exp, st, pos, what) }
+  else Out { ok: false, pos: pos, st: st }
 fn good(st: State, pos: Int) -> Out = Out { ok: true, pos: pos, st: st }
 
 // A lookahead reports on the token stream without becoming part of it, and
