@@ -88,8 +88,16 @@ fn decl_kind(k: String, table: DeclarationTable) -> String = {
   found
 }
 
-fn is_scope(k: String, rules: package_api.SymbolRules) -> Bool = list.contains(rules.scopes, k)
-fn is_callable(k: String, rules: package_api.SymbolRules) -> Bool = list.contains(rules.callables, k)
+fn is_scope(k: String, rules: package_api.SymbolRules) -> Bool = {
+  var found = false
+  for candidate in rules.scopes { if candidate == k then found = true else () }
+  found
+}
+fn is_callable(k: String, rules: package_api.SymbolRules) -> Bool = {
+  var found = false
+  for candidate in rules.callables { if candidate == k then found = true else () }
+  found
+}
 
 // The native list.find lowering currently clones its complete input and each
 // candidate. Borrow the scan and copy only the matching field, never its siblings.
@@ -231,20 +239,20 @@ test "definitions, calls and type mentions" {
 // though the indentation already shows what encloses what, so that one line
 // cut out of the output still says what it is.
 fn outline(root: tree.Node, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> List[String] =
-  outline_walk(root, toks, "", "", sep, rules, declaration_table(rules))
+  outline_walk(root, toks, 0, "", sep, rules, declaration_table(rules))
 
-fn outline_walk(n: tree.Node, toks: List[tree.Token], indent: String, scope: String, sep: String, rules: package_api.SymbolRules, table: DeclarationTable) -> List[String] = {
+fn outline_walk(n: tree.Node, toks: List[tree.Token], depth: Int, scope: String, sep: String, rules: package_api.SymbolRules, table: DeclarationTable) -> List[String] = {
   let kind = decl_kind(n.kind, table)
   let name = if kind != "" then name_of(n, toks) else ""
   var out: List[String] = []
   if name != "" then {
     let own = owner_for(n, scope, toks, rules)
-    list.push(out, indent + "L" + int.to_string(start_line(n, toks)) + "-" + int.to_string(end_line(n, toks))
+    list.push(out, string.repeat("  ", depth) + "L" + int.to_string(start_line(n, toks)) + "-" + int.to_string(end_line(n, toks))
       + " " + (if own == "" then kind else "method")
       + " " + (if own == "" then name else own + sep + name))
   }
   else ()
-  let deeper = if name == "" then indent else indent + "  "
+  let deeper = if name == "" then depth else depth + 1
   let inner = scope_under(n, scope, toks, rules)
   var i = 0
   let count = list.len(n.kids)
