@@ -1362,3 +1362,32 @@ own, against the same binary and interleaved, startup is 3.42 ms before and
 The complexity baseline records three changes, all of them falls or a new file:
 `parser.almd` 74 → 65, where the terminal, recovery and ladder arms moved out
 of the dispatch; `layout.almd` 28 → 27; and `names.almd` at 7.
+
+## What a rule answers is two words
+
+A rule returned `Out { ok, pos, st }`, where `st` was `State { far, collect,
+recover, build }`: six words, written to memory at every call because nothing
+that large comes back in registers. Of those six, three are flags that never
+change while a pass runs, and `far` is read only by the pass that collects
+expectations.
+
+So the flags are now one scalar argument — a mode the caller fixes before the
+first rule is entered — and `far` is a one-place list the collecting pass
+writes. What comes back from a rule is whether it matched and where it
+stopped, and nothing else.
+
+[Allocations](../docs/evidence/parser-state-allocations.json) move by one
+request (the cell). [Timing](../docs/evidence/parser-state-timing.json), 21
+shuffled samples per binary, all 945 timed outputs matching CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 18.67 | 17.96 | 10.99 | 1.6x |
+| typing.py | 19.16 | 18.67 | 10.98 | 1.7x |
+| argparse.py | 17.10 | 16.65 | 10.23 | 1.6x |
+| _pydecimal.py | 26.89 | 26.43 | 15.96 | 1.7x |
+| dataclasses.py | 11.25 | 10.98 | 8.14 | 1.3x |
+
+Eleven of the fifteen medians improve, the code-heavy files by 1.4% to 3.8%.
+Messages are unchanged: the collecting pass computes the same farthest
+position and the same expectation set, and `check` prints what it printed.

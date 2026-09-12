@@ -482,33 +482,47 @@ fn number_tokens(c: Compiled, source: Bytes, input: TokenInput) -> NumberedToken
 // would have made. `check` is that caller, and it is the one an agent runs on
 // every write. Verified: `check` output is byte-identical on all 39,021 files
 // of the validation corpus with the tree off.
-type State = { far: Int, collect: Bool, recover: Bool, build: Bool }
+// What a pass does, fixed before it starts. The three flags never change while
+// it runs, and `far` is read only by the pass that collects expectations, so
+// neither travels in the result: the mode is one scalar argument and `far` is a
+// cell the collecting pass writes. What comes back from a rule is then two
+// words — whether it matched and where it ended — which fit in registers,
+// where the four-field record it used to carry did not.
+let M_COLLECT = 1
+let M_RECOVER = 2
+let M_BUILD = 4
+fn wants(mode: Int, flag: Int) -> Bool = int.band(mode, flag) != 0
 
-fn fresh(collect: Bool) -> State = State { far: 0, collect: collect, recover: false, build: true }
-fn verifying() -> State = State { far: 0, collect: false, recover: false, build: false }
-fn recovering() -> State = State { far: 0, collect: false, recover: true, build: true }
+fn fresh(collect: Bool) -> Int = if collect then M_COLLECT + M_BUILD else M_BUILD
+fn verifying() -> Int = 0
+fn recovering() -> Int = M_RECOVER + M_BUILD
+// The farthest failure lives in a one-place list so a result does not have to
+// carry it. Only the collecting pass ever writes or reads it.
+fn far_cell() -> List[Int] = [0]
+fn far_of(far: List[Int]) -> Int = match list.get(far, 0) { some(v) => v, none => 0 }
+fn set_far(mut far: List[Int], pos: Int) -> Unit = {
+  let _ = list.pop(far)
+  list.push(far, pos)
+}
 
 // A rule reports whether it matched and where it stopped. The nodes it built
 // are not carried in the result: they are pushed onto a single list that the
 // caller owns and passes down, so a child's subtree is never copied into its
 // parent. A rule that fails must leave that list exactly as it found it,
 // which `rollback` does; `mark` is the length on entry.
-type Out = { ok: Bool, pos: Int, st: State }
+type Out = { ok: Bool, pos: Int }
 
 type Failure = { line: Int, col: Int, found: String, expected: List[String] }
 
 // `exp` holds arena node ids, not strings: a name is only needed once, when
 // the message is written.
-fn noted(mut exp: List[Int], st: State, pos: Int, what: Int) -> State = {
-  if pos > st.far then {
-    if st.collect then {
-      list.clear(exp)
-      list.push(exp, what)
-    } else ()
-    State { far: pos, collect: st.collect, recover: st.recover, build: st.build }
+fn noted(mut exp: List[Int], mut far: List[Int], pos: Int, what: Int) -> Unit = {
+  if pos > far_of(far) then {
+    list.clear(exp)
+    list.push(exp, what)
+    set_far(far, pos)
   } else {
-    if st.collect and pos == st.far and not list.contains(exp, what) then list.push(exp, what) else ()
-    st
+    if pos == far_of(far) and not list.contains(exp, what) then list.push(exp, what) else ()
   }
 }
 
@@ -518,10 +532,12 @@ fn noted(mut exp: List[Int], st: State, pos: Int, what: Int) -> State = {
 // of every one that does not, therefore records nothing at a failed
 // alternative — which is the busiest path in the engine, and was 20% of a
 // 2.5 MB parse in a CPU sample.
-fn miss(mut exp: List[Int], st: State, pos: Int, what: Int) -> Out =
-  if st.collect then Out { ok: false, pos: pos, st: noted(exp, st, pos, what) }
-  else Out { ok: false, pos: pos, st: st }
-fn good(st: State, pos: Int) -> Out = Out { ok: true, pos: pos, st: st }
+fn miss(mut exp: List[Int], mut far: List[Int], mode: Int, pos: Int, what: Int) -> Out = {
+  if wants(mode, M_COLLECT) then noted(exp, far, pos, what) else ()
+  Out { ok: false, pos: pos }
+}
+fn good(pos: Int) -> Out = Out { ok: true, pos: pos }
+fn bad(pos: Int) -> Out = Out { ok: false, pos: pos }
 
 // A lookahead reports on the token stream without becoming part of it, and
 // restores the state it was given. What it expected has to go back too, or
@@ -735,16 +751,15 @@ fn needs_here(c: Compiled, tk: List[Int], tt: List[Int], want: Op, pos: Int) -> 
 
 // A literal that did not match names every spelling it would have taken, which
 // is what the alternation's branches named one by one before.
-fn missed(c: Compiled, mut exp: List[Int], st: State, pos: Int, op: Op) -> Out = {
-  if st.collect then {
-    var here = st
+fn missed(c: Compiled, mut exp: List[Int], mut far: List[Int], mode: Int, pos: Int, op: Op) -> Out = {
+  if wants(mode, M_COLLECT) then {
     var i = 0
     while i < op.b {
-      here = noted(exp, here, pos, kid_at(c, op.a + op.b + i))
+      noted(exp, far, pos, kid_at(c, op.a + op.b + i))
       i = i + 1
     }
-    Out { ok: false, pos: pos, st: here }
-  } else Out { ok: false, pos: pos, st: st }
+  } else ()
+  Out { ok: false, pos: pos }
 }
 
 // Match arena node `id` at token `pos`.
@@ -759,31 +774,31 @@ fn missed(c: Compiled, mut exp: List[Int], st: State, pos: Int, op: Op) -> Out =
 // The two terminals, lifted out of the dispatch so the engine's one big
 // function stays about choosing what to do rather than about doing it. Neither
 // calls `parse_rule`, so neither joins its recursive group.
-fn token_here(c: Compiled, tk: List[Int], mut out: List[tree.Node], mut exp: List[Int], st0: State, id: Int, op: Op, pos: Int) -> Out = {
+fn token_here(c: Compiled, tk: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
     match list.get(tk, pos) {
-      some(k) => if k != op.b then miss(exp, st0, pos, id)
-        else if op.b == tree.T_NEWLINE or op.b == tree.T_EOF then good(st0, pos + 1)
+      some(k) => if k != op.b then miss(exp, far, mode, pos, id)
+        else if op.b == tree.T_NEWLINE or op.b == tree.T_EOF then good(pos + 1)
         else {
-          if st0.build then list.push(out, tree.leaf(kind_at(c, id), pos)) else ()
-          good(st0, pos + 1)
+          if wants(mode, M_BUILD) then list.push(out, tree.leaf(kind_at(c, id), pos)) else ()
+          good(pos + 1)
         },
-      none => miss(exp, st0, pos, id),
+      none => miss(exp, far, mode, pos, id),
     }
 }
 
-fn literal_here(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node], mut exp: List[Int], st0: State, op: Op, pos: Int) -> Out = {
+fn literal_here(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, op: Op, pos: Int) -> Out = {
   match list.get(tt, pos) {
-    some(x) => if not spelled(c, op, x) then missed(c, exp, st0, pos, op)
+    some(x) => if not spelled(c, op, x) then missed(c, exp, far, mode, pos, op)
       else match list.get(tk, pos) {
-        some(k) => if k == tree.T_STRING or k == tree.T_NEG then missed(c, exp, st0, pos, op)
-          else if op.kind == K_LIT then good(st0, pos + 1)
+        some(k) => if k == tree.T_STRING or k == tree.T_NEG then missed(c, exp, far, mode, pos, op)
+          else if op.kind == K_LIT then good(pos + 1)
           else {
-            if st0.build then list.push(out, tree.leaf(c.extra + X_OP, pos)) else ()
-            good(st0, pos + 1)
+            if wants(mode, M_BUILD) then list.push(out, tree.leaf(c.extra + X_OP, pos)) else ()
+            good(pos + 1)
           },
-        none => missed(c, exp, st0, pos, op),
+        none => missed(c, exp, far, mode, pos, op),
       },
-    none => missed(c, exp, st0, pos, op),
+    none => missed(c, exp, far, mode, pos, op),
   }
 }
 
@@ -793,13 +808,13 @@ fn literal_here(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.No
 // reference on native, so the arena and the token lists are no longer copied
 // at the call. Measured at the boundary: extracting an arm this way moves the
 // three code-heavy files by less than half a percent either way.
-fn recover_lines_here(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node], mut exp: List[Int], st0: State, id: Int, op: Op, pos: Int) -> Out = {
+fn recover_lines_here(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
     let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt, out, exp, far, mode, op.a, pos)
     if o.ok then o
     else {
       rollback(out, mark)
-      if not st0.recover then Out { ok: false, pos: pos, st: o.st }
+      if not wants(mode, M_RECOVER) then Out { ok: false, pos: pos }
       else {
         // Only a logical line at the original indentation may resume. Never
         // lift a declaration from a skipped nested suite into its parent.
@@ -808,7 +823,6 @@ fn recover_lines_here(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[t
         var line_start = false
         var resume = -1
         var limit = -1
-        var st = o.st
         while resume < 0 and limit < 0 {
           let k = list.get(tk, q) ?? tree.T_EOF
           if k == tree.T_EOF or (k == tree.T_DEDENT and depth == 0) then limit = q
@@ -818,8 +832,7 @@ fn recover_lines_here(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[t
             else if k == tree.T_NEWLINE then line_start = true
             else {
               if line_start and depth == 0 and q > pos then {
-                let a = parse_rule(c, tk, tt, out, exp, st, op.a, q)
-                st = a.st
+                let a = parse_rule(c, tk, tt, out, exp, far, mode, op.a, q)
                 rollback(out, mark)
                 if a.ok and a.pos > q then resume = q else ()
               } else ()
@@ -829,40 +842,37 @@ fn recover_lines_here(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[t
           }
         }
         let stop = if resume >= 0 then resume else limit
-        if not real_between(tk, tt, pos, stop) then Out { ok: false, pos: pos, st: st }
+        if not real_between(tk, tt, pos, stop) then Out { ok: false, pos: pos }
         else {
           list.push(out, tree.node(c.extra + X_ERROR, [], pos, stop))
           if resume >= 0 then {
-            let a = parse_rule(c, tk, tt, out, exp, st, op.a, resume)
-            if a.ok then a else { rollback(out, mark); Out { ok: false, pos: pos, st: a.st } }
-          } else good(st, stop)
+            let a = parse_rule(c, tk, tt, out, exp, far, mode, op.a, resume)
+            if a.ok then a else { rollback(out, mark); Out { ok: false, pos: pos } }
+          } else good(stop)
         }
       }
     }
 }
 
-fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node], mut exp: List[Int], st0: State, id: Int, pos: Int) -> Out = {
+fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, pos: Int) -> Out = {
   let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
   if op.kind == K_SEQ then {
     let mark = list.len(out)
-    var st = st0
     var p = pos
     var failed = false
     var i = 0
     while not failed and i < op.b {
-      let o = parse_rule(c, tk, tt, out, exp, st, kid_at(c, op.a + i), p)
-      st = o.st
+      let o = parse_rule(c, tk, tt, out, exp, far, mode, kid_at(c, op.a + i), p)
       if o.ok then { p = o.pos } else { failed = true }
       i = i + 1
     }
     if failed then {
       rollback(out, mark)
-      Out { ok: false, pos: pos, st: st }
-    } else good(st, p)
+      Out { ok: false, pos: pos }
+    } else good(p)
   }
   else if op.kind == K_ALT then {
     let mark = list.len(out)
-    var st = st0
     var p = pos
     var done = false
     var i = 0
@@ -870,19 +880,18 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
       let branch = kid_at(c, op.a + i)
       // a branch the token cannot begin is not walked into; the collecting
       // pass walks every one of them, so the message is the same message
-      if st0.collect or may_start(c, branch, tk, tt, pos) then {
-        let o = parse_rule(c, tk, tt, out, exp, st, branch, pos)
-        st = o.st
+      if wants(mode, M_COLLECT) or may_start(c, branch, tk, tt, pos) then {
+        let o = parse_rule(c, tk, tt, out, exp, far, mode, branch, pos)
         if o.ok then { done = true; p = o.pos } else rollback(out, mark)
       } else ()
       i = i + 1
     }
-    Out { ok: done, pos: p, st: st }
+    Out { ok: done, pos: p }
   }
-  else if op.kind == K_LIT or op.kind == K_KEEP then literal_here(c, tk, tt, out, exp, st0, op, pos)
+  else if op.kind == K_LIT or op.kind == K_KEEP then literal_here(c, tk, tt, out, exp, far, mode, op, pos)
   // the body of a macro is a balanced run of tokens the grammar has no reading
   // of; `any` consumes one and leaves nothing behind
-  else if op.kind == K_TOK then token_here(c, tk, out, exp, st0, id, op, pos)
+  else if op.kind == K_TOK then token_here(c, tk, out, exp, far, mode, id, op, pos)
   else if op.kind == K_PREC then {
     // One pass over the levels rather than one rule per level: the operand is
     // parsed once, and each operator found is held on a stack until an
@@ -890,12 +899,11 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
     // folds did by returning.
     let operand = kid_at(c, op.a)
     let base = list.len(out)
-    let o = parse_rule(c, tk, tt, out, exp, st0, operand, pos)
+    let o = parse_rule(c, tk, tt, out, exp, far, mode, operand, pos)
     if not o.ok then {
       rollback(out, base)
-      Out { ok: false, pos: pos, st: o.st }
+      Out { ok: false, pos: pos }
     } else {
-      var st = o.st
       var p = o.pos
       var mark = base                  // where the rightmost operand starts in `out`
       var from = pos                   // and at which token
@@ -909,18 +917,16 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
         if l < 0 then going = false
         else {
           while list.len(levels) > 0 and (match list.last(levels) { some(v) => v, none => -1 }) >= l {
-            let (m, f) = reduce_top(c, out, marks, opmarks, levels, froms, id, mark, p, st0.build)
+            let (m, f) = reduce_top(c, out, marks, opmarks, levels, froms, id, mark, p, wants(mode, M_BUILD))
             mark = m
             from = f
           }
           let opmark = list.len(out)
-          let oo = parse_rule(c, tk, tt, out, exp, st, kid_at(c, op.a + 1 + l), p)
-          st = oo.st
+          let oo = parse_rule(c, tk, tt, out, exp, far, mode, kid_at(c, op.a + 1 + l), p)
           if not oo.ok then going = false
           else {
             let rmark = list.len(out)
-            let rr = parse_rule(c, tk, tt, out, exp, st, operand, oo.pos)
-            st = rr.st
+            let rr = parse_rule(c, tk, tt, out, exp, far, mode, operand, oo.pos)
             if not rr.ok then {
               rollback(out, opmark)
               going = false
@@ -937,21 +943,20 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
         }
       }
       while list.len(levels) > 0 {
-        let (m, f) = reduce_top(c, out, marks, opmarks, levels, froms, id, mark, p, st0.build)
+        let (m, f) = reduce_top(c, out, marks, opmarks, levels, froms, id, mark, p, wants(mode, M_BUILD))
         mark = m
         from = f
       }
-      good(st, p)
+      good(p)
     }
   }
   else if op.kind == K_LEFT then {
     let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt, out, exp, far, mode, op.a, pos)
     if not o.ok then {
       rollback(out, mark)
-      Out { ok: false, pos: pos, st: o.st }
+      Out { ok: false, pos: pos }
     } else {
-      var st = o.st
       var p = o.pos
       var go = true
       while go {
@@ -959,20 +964,18 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
         // `opmark` and the right operand at `rmark`, so one drain can name
         // all three and fold them into a single node
         let opmark = list.len(out)
-        let oo = parse_rule(c, tk, tt, out, exp, st, op.b, p)
-        st = oo.st
+        let oo = parse_rule(c, tk, tt, out, exp, far, mode, op.b, p)
         if not oo.ok then {
           rollback(out, opmark)
           go = false
         } else {
           let rmark = list.len(out)
-          let rr = parse_rule(c, tk, tt, out, exp, st, op.a, oo.pos)
-          st = rr.st
+          let rr = parse_rule(c, tk, tt, out, exp, far, mode, op.a, oo.pos)
           if not rr.ok then {
             rollback(out, opmark)
             go = false
           } else {
-            if st0.build then {
+            if wants(mode, M_BUILD) then {
               let kids = fold_kids(out, mark, opmark, rmark, c.extra + X_LEFT, c.extra + X_OPERATOR, c.extra + X_RIGHT)
               list.push(out, tree.node(kind_at(c, id), kids, pos, rr.pos))
             } else ()
@@ -980,45 +983,43 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
           }
         }
       }
-      good(st, p)
+      good(p)
     }
   }
   else if op.kind == K_WRAP then {
     let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt, out, exp, far, mode, op.a, pos)
     if o.ok then {
-      if st0.build then {
+      if wants(mode, M_BUILD) then {
         let kids = take_from(out, mark)
         list.push(out, tree.node(kind_at(c, id), kids, pos, o.pos))
       } else ()
-      good(o.st, o.pos)
+      good(o.pos)
     } else {
       rollback(out, mark)
-      Out { ok: false, pos: pos, st: o.st }
+      Out { ok: false, pos: pos }
     }
   }
   else if op.kind == K_OPT then {
-    if not (st0.collect or may_start(c, op.a, tk, tt, pos)) then good(st0, pos)
+    if not (wants(mode, M_COLLECT) or may_start(c, op.a, tk, tt, pos)) then good(pos)
     else {
       let mark = list.len(out)
-      let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+      let o = parse_rule(c, tk, tt, out, exp, far, mode, op.a, pos)
       if o.ok then o else {
         rollback(out, mark)
-        good(o.st, pos)
+        good(pos)
       }
     }
   }
   else if op.kind == K_REP or op.kind == K_REP1 then {
-    var st = st0
     var p = pos
     var count = 0
     var go = true
     while go {
-      if not (st0.collect or may_start(c, op.a, tk, tt, p)) then go = false
+      if not (wants(mode, M_COLLECT) or may_start(c, op.a, tk, tt, p)) then go = false
       else {
         let mark = list.len(out)
-        let o = parse_rule(c, tk, tt, out, exp, st, op.a, p)
-        st = o.st
+        let o = parse_rule(c, tk, tt, out, exp, far, mode, op.a, p)
         if o.ok and o.pos != p then { p = o.pos; count = count + 1 }
         else {
           rollback(out, mark)
@@ -1026,88 +1027,85 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
         }
       }
     }
-    if op.kind == K_REP1 and count == 0 then Out { ok: false, pos: pos, st: st } else good(st, p)
+    if op.kind == K_REP1 and count == 0 then Out { ok: false, pos: pos } else good(p)
   }
   else if op.kind == K_FIELD then {
     let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt, out, exp, far, mode, op.a, pos)
     if o.ok then {
       label_from(out, mark, kind_at(c, id))
-      good(o.st, o.pos)
+      good(o.pos)
     } else {
       rollback(out, mark)
-      Out { ok: false, pos: pos, st: o.st }
+      Out { ok: false, pos: pos }
     }
   }
   else if op.kind == K_REF then {
-    if op.a < 0 then miss(exp, st0, pos, id)
-    else parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    if op.a < 0 then miss(exp, far, mode, pos, id)
+    else parse_rule(c, tk, tt, out, exp, far, mode, op.a, pos)
   }
   // the collecting pass never refuses here, so a file that fails is described
   // by the branches themselves and the message is the same message
-  else if op.kind == K_NEEDS then (if st0.collect or needs_here(c, tk, tt, match list.get(c.ops, op.a) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }, pos) then good(st0, pos) else miss(exp, st0, pos, id))
+  else if op.kind == K_NEEDS then (if wants(mode, M_COLLECT) or needs_here(c, tk, tt, match list.get(c.ops, op.a) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }, pos) then good(pos) else miss(exp, far, mode, pos, id))
   else if op.kind == K_NOT then {
     let mark = list.len(out)
     let emark = list.len(exp)
-    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt, out, exp, far, mode, op.a, pos)
     rollback(out, mark)
     untrack(exp, emark)
-    if o.ok then Out { ok: false, pos: pos, st: st0 } else good(st0, pos)
+    if o.ok then Out { ok: false, pos: pos } else good(pos)
   }
   else if op.kind == K_AHEAD then {
     let mark = list.len(out)
     let emark = list.len(exp)
-    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt, out, exp, far, mode, op.a, pos)
     rollback(out, mark)
     untrack(exp, emark)
-    if o.ok then good(st0, pos) else Out { ok: false, pos: pos, st: st0 }
+    if o.ok then good(pos) else Out { ok: false, pos: pos }
   }
-  else if op.kind == K_EPS then good(st0, pos)
+  else if op.kind == K_EPS then good(pos)
   else if op.kind == K_ANY then {
     match list.get(tk, pos) {
-      some(k) => if k == tree.T_EOF then miss(exp, st0, pos, id) else good(st0, pos + 1),
-      none => miss(exp, st0, pos, id),
+      some(k) => if k == tree.T_EOF then miss(exp, far, mode, pos, id) else good(pos + 1),
+      none => miss(exp, far, mode, pos, id),
     }
   }
-  else if op.kind == K_RECOVER_LINES then recover_lines_here(c, tk, tt, out, exp, st0, id, op, pos)
+  else if op.kind == K_RECOVER_LINES then recover_lines_here(c, tk, tt, out, exp, far, mode, id, op, pos)
   else {            // K_RECOVER and K_RECOVER_ALL: the rarest arm carries the chain
     let mark = list.len(out)
-    let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
+    let o = parse_rule(c, tk, tt, out, exp, far, mode, op.a, pos)
     if o.ok then o
     else {
       rollback(out, mark)
-      if not st0.recover then Out { ok: false, pos: pos, st: o.st }
+      if not wants(mode, M_RECOVER) then Out { ok: false, pos: pos }
       else {
         // find the next place the rule reads, and give up the tokens between
         let limit = skip_limit(tk, tt, pos, op.kind == K_RECOVER)
-        var st = o.st
         var q = pos + 1
         var resume = -1
         while resume < 0 and q < limit {
-          let a = parse_rule(c, tk, tt, out, exp, st, op.a, q)
-          st = a.st
+          let a = parse_rule(c, tk, tt, out, exp, far, mode, op.a, q)
           rollback(out, mark)
           if a.ok then resume = q else q = q + 1
         }
         // where the tokens given up end: at the next item, or at the end of
         // what this list may reach
         let stop = if resume >= 0 then resume else limit
-        if resume < 0 and not real_between(tk, tt, pos, limit) then Out { ok: false, pos: pos, st: st }
+        if resume < 0 and not real_between(tk, tt, pos, limit) then Out { ok: false, pos: pos }
         else {
           // keep whatever of the failed item is readable on its own
-          let h = parse_rule(c, tk, tt, out, exp, st, op.b, pos)
-          st = h.st
+          let h = parse_rule(c, tk, tt, out, exp, far, mode, op.b, pos)
           let kept = h.ok and h.pos > pos and h.pos <= stop
           if not kept then rollback(out, mark) else ()
           let from = if kept then h.pos else pos
           if real_between(tk, tt, from, stop) then list.push(out, tree.node(c.extra + X_ERROR, [], from, stop)) else ()
           if resume >= 0 then {
-            let a = parse_rule(c, tk, tt, out, exp, st, op.a, resume)
-            if a.ok then Out { ok: true, pos: a.pos, st: a.st } else {
+            let a = parse_rule(c, tk, tt, out, exp, far, mode, op.a, resume)
+            if a.ok then Out { ok: true, pos: a.pos } else {
               rollback(out, mark)
-              Out { ok: false, pos: pos, st: a.st }
+              Out { ok: false, pos: pos }
             }
-          } else Out { ok: true, pos: limit, st: st }
+          } else Out { ok: true, pos: limit }
         }
       }
     }
@@ -1154,7 +1152,8 @@ fn parse_with(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Result[Pars
   let numbered = number_tokens(c, source, input)
   var out: List[tree.Node] = []
   var exp: List[Int] = []
-  let o = parse_rule(c, numbered.kinds, numbered.texts, out, exp, fresh(false), c.start, 0)
+  var far: List[Int] = far_cell()
+  let o = parse_rule(c, numbered.kinds, numbered.texts, out, exp, far, fresh(false), c.start, 0)
   if o.ok then {
     // the start rule leaves one node; take it without copying it, which
     // means draining the list rather than reading its first element
@@ -1168,8 +1167,9 @@ fn parse_with(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Result[Pars
     // this second run collects that, and only a file that fails pays for it
     var again: List[tree.Node] = []
     var wanted: List[Int] = []
-    let d = parse_rule(c, numbered.kinds, numbered.texts, again, wanted, fresh(true), c.start, 0)
-    err(failure_at(c, source, input.tokens, d.st.far, wanted))
+    var far2: List[Int] = far_cell()
+    let d = parse_rule(c, numbered.kinds, numbered.texts, again, wanted, far2, fresh(true), c.start, 0)
+    err(failure_at(c, source, input.tokens, far_of(far2), wanted))
   }
 }
 
@@ -1183,13 +1183,15 @@ fn verify(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Result[Unit, Fa
   let numbered = number_tokens(c, source, input)
   var out: List[tree.Node] = []
   var exp: List[Int] = []
-  let o = parse_rule(c, numbered.kinds, numbered.texts, out, exp, verifying(), c.start, 0)
+  var far: List[Int] = far_cell()
+  let o = parse_rule(c, numbered.kinds, numbered.texts, out, exp, far, verifying(), c.start, 0)
   if o.ok then ok(())
   else {
     var again: List[tree.Node] = []
     var wanted: List[Int] = []
-    let d = parse_rule(c, numbered.kinds, numbered.texts, again, wanted, fresh(true), c.start, 0)
-    err(failure_at(c, source, input.tokens, d.st.far, wanted))
+    var far2: List[Int] = far_cell()
+    let d = parse_rule(c, numbered.kinds, numbered.texts, again, wanted, far2, fresh(true), c.start, 0)
+    err(failure_at(c, source, input.tokens, far_of(far2), wanted))
   }
 }
 
@@ -1204,7 +1206,8 @@ fn parse_recovering(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Resul
   let numbered = number_tokens(c, source, input)
   var out: List[tree.Node] = []
   var exp: List[Int] = []
-  let o = parse_rule(c, numbered.kinds, numbered.texts, out, exp, recovering(), c.start, 0)
+  var far: List[Int] = far_cell()
+  let o = parse_rule(c, numbered.kinds, numbered.texts, out, exp, far, recovering(), c.start, 0)
   if o.ok then {
     var rev: List[tree.Node] = []
     while list.len(out) > 0 {
@@ -1214,8 +1217,9 @@ fn parse_recovering(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Resul
   } else {
     var again: List[tree.Node] = []
     var wanted: List[Int] = []
-    let d = parse_rule(c, numbered.kinds, numbered.texts, again, wanted, fresh(true), c.start, 0)
-    err(failure_at(c, source, input.tokens, d.st.far, wanted))
+    var far2: List[Int] = far_cell()
+    let d = parse_rule(c, numbered.kinds, numbered.texts, again, wanted, far2, fresh(true), c.start, 0)
+    err(failure_at(c, source, input.tokens, far_of(far2), wanted))
   }
 }
 
