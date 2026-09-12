@@ -484,3 +484,48 @@ including 11.22, 10.05 and 15.65 ms respectively for those three files.
 The full regression suite, unchanged structural complexity gate and real hew
 integration pass. Issue #37's 700-file Python 3.13 workload, incremental parsing,
 peak memory and general tree-sitter superiority remain unresolved.
+
+## Single-child drain reuse
+
+`parser.take_from` moved children through two lists to recover their original
+order. Zero/one child already has the correct order, so that branch now returns
+the first list directly. Generated Rust moves it without cloning; multi-child
+drains retain the existing ordering algorithm. A direct regression covers an
+untouched prefix, empty drain, nested single child, multiple ordered siblings
+and draining the whole list.
+
+Reference: tree-sitter `de98c6c970f4c5d3a725ee48199c478090d614af`,
+`lib/src/subtree.c:ts_subtree_new_node`, takes ownership of its child array and
+allocates node data at its end, reallocating only when capacity is insufficient.
+Gramide does not use that compact representation; avoiding a redundant child
+buffer is one step toward lower allocation costs, not equivalent architecture.
+
+[Same-runtime profiles](../docs/evidence/single-child-allocations.json) compared
+with token preparation borrowing preserve all source/output hashes:
+
+| File | Total allocations before → after | take_from before → after |
+| --- | ---: | ---: |
+| inspect.py | 872,566 → 815,957 | 131,266 → 74,657 |
+| typing.py | 866,821 → 810,229 | 131,922 → 75,330 |
+| argparse.py | 809,074 → 750,852 | 134,766 → 76,544 |
+| _pydecimal.py | 1,328,802 → 1,249,602 | 184,584 → 105,384 |
+| pydoc_data/topics.py | 45,000 → 41,731 | 7,188 → 3,919 |
+
+These are exclusive generated-function Rust allocation requests, not exact
+call sites, live heap, RSS or all libc allocations; instrumentation can affect
+optimization. The normal binary used for timing has a recorded matching hash.
+
+[Normal Python outline comparison](../docs/evidence/single-child-outline.json)
+requires CPython-equivalent output for all 15 files. Eleven medians decrease;
+token.py, stat.py, copyreg.py and topics.py increase and are retained. In this
+five-sample startup-inclusive run inspect.py is 53.14 → 52.07 ms, argparse.py
+49.81 → 48.12 ms and _pydecimal.py 77.65 → 75.53 ms. Tree-sitter is still faster
+throughout (11.08, 10.13 and 16.10 ms for those three files).
+
+The shared engine also passes the [generated Go comparison](../docs/evidence/single-child-go.json):
+all 100/400/800-function symbol ranges agree with the old binary and tree-sitter.
+The 100/400 medians decrease; 800 increases 16.43 → 16.93 ms (tree-sitter 6.48 ms).
+This is a consistent allocation reduction, not a universal timing improvement.
+The full regression suite, unchanged structural baseline and real hew integration
+pass. Full issue #37 reproduction, incremental performance and superiority across
+languages remain unresolved.
