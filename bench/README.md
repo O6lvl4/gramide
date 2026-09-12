@@ -1202,3 +1202,53 @@ The [full stdlib survey](../docs/evidence/precedence-ladder-stdlib.json)
 matches CPython outlines on 721/721 Python 3.14.4 files. Go, Rust and Almide
 still use the nested form, and folding their ladders — the ones whose operators
 are literals — is left for later.
+
+## A branch the token cannot begin is not walked into
+
+An alternation tried each branch by parsing it, and a repetition ended by
+parsing its body one last time and failing. Both are how a PEG works, and both
+mean walking a long way in to learn something the first token already said:
+`simple_stmt` has fourteen branches, nine of which begin with a keyword, and
+every `rep(seq([lit(","), item]))` in the grammar ends by descending into an
+item that is not there.
+
+`compile` now records, for each node, the terminal the rule it heads must
+begin with — following the first child of a sequence, through wraps, fields,
+folds and ladders — or -1 when the rule can begin in more than one way. An
+optional, a repetition or a lookahead in front of the first element answers -1,
+because then the rule can begin elsewhere. `may_start` reads the token against
+that terminal, and an alternation branch, a repetition body or an optional that
+cannot possibly match is skipped rather than entered.
+
+The collecting pass never skips, so a file that fails is still described by
+every branch that could have applied: the messages are the ones the 21
+diagnostic checks pin, unchanged.
+
+The table is built by repeated linear passes over the arena, not by walking
+each chain: a node's answer is its first child's, and a child emitted before
+its parent is already answered in the same pass, so two passes settle it.
+Written recursively it cost 2.7 ms of startup — the whole table copied at every
+node — which a file that parses in 3 ms cannot afford. Measured against a build
+without the table at all, startup moves by 0.03 ms.
+
+[Allocations](../docs/evidence/head-pruning-allocations.json) move by 13
+requests on inspect.py, to 258,651.
+
+[Timing](../docs/evidence/head-pruning-timing.json), 21 shuffled samples per
+binary on a quiet machine (load average 2.6), all 945 timed outputs matching
+CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 26.91 | 23.09 | 10.68 | 2.2x |
+| typing.py | 26.85 | 23.00 | 10.59 | 2.2x |
+| argparse.py | 25.63 | 22.07 | 9.79 | 2.3x |
+| _pydecimal.py | 38.69 | 33.25 | 15.25 | 2.2x |
+| dataclasses.py | 15.09 | 13.18 | 7.56 | 1.7x |
+
+Fourteen of the fifteen medians improve, the code-heavy files by 12.6% to
+14.3%; keyword.py reads 1.4% slower and is 3.3 ms of mostly startup. This is
+the largest single change in the session.
+
+The [full stdlib survey](../docs/evidence/head-pruning-stdlib.json) matches
+CPython outlines on 721/721 Python 3.14.4 files.
