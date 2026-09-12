@@ -365,3 +365,41 @@ This Python 3.14.4 sample is not the reported 700-file Python 3.13 workload or i
 ctxgate-outline binary. No startup subtraction, incremental reuse, RSS claim or
 general victory is implied. The full regression suite, real hew integration and
 the per-file codopsy-almd complexity baseline pass without relaxing the baseline.
+
+## Borrowable declaration lookup table
+
+The allocation profile identified `tags.decl_kind` as another large source of
+requests. Native tuple iteration cloned both candidate strings, and the optional
+lookup/closure added work even when no declaration matched. An indexed tuple
+lookup and a destructuring loop were inspected but still copied candidates, so
+neither was retained.
+
+The CLI and public `SymbolRules.declarations` tuple format stay the same. Each
+`of_tree`, `outline` or `symbol_rows` traversal prepares a small record table once
+and shares it through recursion. Generated Rust borrows the table and each entry;
+only a matched kind is cloned for the return value. A separate match flag retains
+first-match semantics even if the first mapped kind is empty. A regression covers
+empty maps, unknown syntax and duplicate mappings with an empty first result.
+
+Compared with the preceding newline-predicate profile, the
+[new same-runtime profile](../docs/evidence/python-kind-borrow-allocations.json)
+reduces declaration-lookup allocations on inspect.py from 206,313 to 162 and on
+typing.py from 200,587 to 253. The prepared Python table costs 19 allocation
+requests once per traversal. Total instrumented allocations drop from 1,309,507
+to 1,103,375 on inspect and 2,012,359 to 1,688,636 on _pydecimal; all five normal
+output hashes and source hashes match the baseline. These remain diagnostic
+request counts, not timing or peak-RSS measurements.
+
+[Normal Python outline timing](../docs/evidence/python-kind-borrow-outline.json)
+requires CPython-equivalent output for all 15 old/new/tree-sitter runs. Fourteen
+medians decrease: inspect 63.16→60.00 ms, typing 65.47→61.83 ms, argparse
+61.63→55.58 ms, _pydecimal 105.66→92.14 ms. genericpath increases 7.27→7.48 ms;
+that sample is retained. Tree-sitter is still faster throughout.
+
+Because the lookup is shared, a [Go structured-symbol comparison](../docs/evidence/go-kind-borrow-symbols.json)
+also checks 100/400/800 generated functions against unchanged old/new/tree-sitter
+ranges. The 800-function median decreases 19.68→18.03 ms (tree-sitter 6.89 ms).
+This small generated Go corpus is not general Go or Rust performance evidence.
+The full multi-language regression suite, real hew integration and unchanged
+per-file codopsy-almd baseline pass. Issue #37, the complete 700-file workload,
+peak memory, incremental reuse and general superiority remain unfinished.

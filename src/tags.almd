@@ -73,15 +73,21 @@ fn render(t: Tag) -> String =
 //
 // This is the whole vocabulary. A grammar that invents a kind still parses; it
 // is simply invisible to `outline`, `tags` and `map`.
-fn decl_kind(k: String, rules: package_api.SymbolRules) -> String = {
-  var found = -1
-  var index = 0
-  for d in rules.declarations {
-    if found < 0 and d.0 == k then found = index else ()
-    index = index + 1
+// Keep the public package mapping as tuples. Prepare borrowable records once
+// per traversal; native tuple iteration otherwise clones both strings per node.
+type DeclarationEntry = { syntax: String, kind: String }
+type DeclarationTable = { entries: List[DeclarationEntry] }
+fn declaration_table(rules: package_api.SymbolRules) -> DeclarationTable =
+  DeclarationTable { entries: list.map(rules.declarations, (d) => DeclarationEntry { syntax: d.0, kind: d.1 }) }
+fn decl_kind(k: String, table: DeclarationTable) -> String = {
+  var found = ""
+  var matched = false
+  for entry in table.entries {
+    if not matched and entry.syntax == k then { found = entry.kind; matched = true } else ()
   }
-  option.map(list.get(rules.declarations, found), (d) => d.1) ?? ""
+  found
 }
+
 fn is_scope(k: String, rules: package_api.SymbolRules) -> Bool = list.contains(rules.scopes, k)
 fn is_callable(k: String, rules: package_api.SymbolRules) -> Bool = list.contains(rules.callables, k)
 
@@ -151,9 +157,9 @@ fn scope_under(n: tree.Node, owner: String, toks: List[tree.Token], rules: packa
 // The chain is read with one step of memory (what the previous two kids
 // were) rather than by looking ahead, because reading a kid with list.get
 // copies its whole subtree — a look-ahead would copy every subtree twice.
-fn walk(n: tree.Node, toks: List[tree.Token], scope: String, namespace: String, sep: String, rules: package_api.SymbolRules) -> List[Tag] = {
+fn walk(n: tree.Node, toks: List[tree.Token], scope: String, namespace: String, sep: String, rules: package_api.SymbolRules, table: DeclarationTable) -> List[Tag] = {
   var out: List[Tag] = []
-  let kind = decl_kind(n.kind, rules)
+  let kind = decl_kind(n.kind, table)
   let name = if kind != "" then name_of(n, toks) else ""
   if name != "" then {
     let own = owner_for(n, scope, toks, rules)
@@ -200,7 +206,7 @@ fn walk(n: tree.Node, toks: List[tree.Token], scope: String, namespace: String, 
         prev_name = if k.kind == "identifier" then leaf_text(k, toks)
           else if k.kind == "field_access" then (match child(k, "field") { some(m) => leaf_text(m, toks), none => "" })
           else ""
-        for t in walk(k, toks, inner, inner_namespace, sep, rules) { list.push(out, t) }
+        for t in walk(k, toks, inner, inner_namespace, sep, rules, table) { list.push(out, t) }
       },
     }
     i = i + 1
@@ -208,7 +214,7 @@ fn walk(n: tree.Node, toks: List[tree.Token], scope: String, namespace: String, 
   out
 }
 
-fn of_tree(root: tree.Node, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> List[Tag] = walk(root, toks, "", "", sep, rules)
+fn of_tree(root: tree.Node, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> List[Tag] = walk(root, toks, "", "", sep, rules, declaration_table(rules))
 
 fn tags(root: tree.Node, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> List[String] =
   list.map(of_tree(root, toks, sep, rules), (t) => render(t))
@@ -225,10 +231,10 @@ test "definitions, calls and type mentions" {
 // though the indentation already shows what encloses what, so that one line
 // cut out of the output still says what it is.
 fn outline(root: tree.Node, toks: List[tree.Token], sep: String, rules: package_api.SymbolRules) -> List[String] =
-  outline_walk(root, toks, "", "", sep, rules)
+  outline_walk(root, toks, "", "", sep, rules, declaration_table(rules))
 
-fn outline_walk(n: tree.Node, toks: List[tree.Token], indent: String, scope: String, sep: String, rules: package_api.SymbolRules) -> List[String] = {
-  let kind = decl_kind(n.kind, rules)
+fn outline_walk(n: tree.Node, toks: List[tree.Token], indent: String, scope: String, sep: String, rules: package_api.SymbolRules, table: DeclarationTable) -> List[String] = {
+  let kind = decl_kind(n.kind, table)
   let name = if kind != "" then name_of(n, toks) else ""
   var out: List[String] = []
   if name != "" then {
@@ -244,7 +250,7 @@ fn outline_walk(n: tree.Node, toks: List[tree.Token], indent: String, scope: Str
   let count = list.len(n.kids)
   while i < count {
     match list.get(n.kids, i) {
-      some(k) => for l in outline_walk(k, toks, deeper, inner, sep, rules) { list.push(out, l) },
+      some(k) => for l in outline_walk(k, toks, deeper, inner, sep, rules, table) { list.push(out, l) },
       none => (),
     }
     i = i + 1
@@ -312,9 +318,9 @@ test "a function written inside a method body is not a method of the type" {
 // structured reads quadratic in the size of the source.
 // Stable machine-readable declaration ranges: byte offsets are zero-based,
 // end-exclusive; line ranges are one-based and inclusive.
-fn symbol_rows_in(n: tree.Node, start: Int, toks: List[tree.Token], scope: String, namespace: String, sep: String, rules: package_api.SymbolRules) -> List[Value] = {
+fn symbol_rows_in(n: tree.Node, start: Int, toks: List[tree.Token], scope: String, namespace: String, sep: String, rules: package_api.SymbolRules, table: DeclarationTable) -> List[Value] = {
   var out: List[Value] = []
-  let kind = decl_kind(n.kind, rules)
+  let kind = decl_kind(n.kind, table)
   let name = if kind == "" then "" else name_of(n, toks)
   if name != "" then {
     let own = owner_for(n, scope, toks, rules)
@@ -337,15 +343,15 @@ fn symbol_rows_in(n: tree.Node, start: Int, toks: List[tree.Token], scope: Strin
     // separate so the native backend borrows children instead of cloning them.
     // A leaf cannot contain the name field required for a declaration.
     if not list.is_empty(k.kids) then {
-      let first = if envelope and decl_kind(k.kind, rules) != "" then start else k.start
-      for sym in symbol_rows_in(k, first, toks, inner, inner_namespace, sep, rules) { list.push(out, sym) }
+      let first = if envelope and decl_kind(k.kind, table) != "" then start else k.start
+      for sym in symbol_rows_in(k, first, toks, inner, inner_namespace, sep, rules, table) { list.push(out, sym) }
     } else ()
   }
   out
 }
 
 fn symbol_rows(n: tree.Node, toks: List[tree.Token], scope: String, sep: String, rules: package_api.SymbolRules) -> List[Value] =
-  symbol_rows_in(n, n.start, toks, scope, "", sep, rules)
+  symbol_rows_in(n, n.start, toks, scope, "", sep, rules, declaration_table(rules))
 
 test "flat Rust names preserve nested modules and trait display without changing bases" {
   let src = "mod outer { mod inner { impl PartialEq<S> for S { fn eq(&self) {} } fn free() {} } }"
@@ -392,4 +398,15 @@ fn error_free_rows(rows: List[Value], ranges: List[ErrorRange]) -> List[Value] =
     if start >= 0 and end > start and not overlaps(ranges, start, end) then list.push(kept, row) else ()
   }
   kept
+}
+
+
+test "prepared declarations preserve first mapping including empty kinds" {
+  let rules = lang_almide.symbol_rules()
+  let table = declaration_table(package_api.SymbolRules { ...rules, declarations: [("hidden", ""), ("hidden", "function"), ("item", "first"), ("item", "second")] })
+  assert_eq(decl_kind("hidden", table), "")
+  assert_eq(decl_kind("item", table), "first")
+  assert_eq(decl_kind("missing", table), "")
+  let empty: List[(String, String)] = []
+  assert_eq(decl_kind("item", declaration_table(package_api.SymbolRules { ...rules, declarations: empty })), "")
 }
