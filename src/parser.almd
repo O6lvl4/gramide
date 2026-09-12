@@ -33,6 +33,13 @@ type Rule =
   | Not(Rule)                   // negative lookahead, consumes nothing
   | Ahead(Rule)                 // positive lookahead, consumes nothing
   | Left(String, Rule, Rule)    // operand (op operand)* folded left into nodes of this kind
+  | Prec(String, Rule, List[Rule])
+                               // the same fold over several precedence levels at once:
+                               // the operand, then one operator per level, lowest first.
+                               // Every level is left-associative and makes nodes of the
+                               // same kind, and every level's operator must be a literal
+                               // terminal, because the ladder peeks at the token to find
+                               // which level it belongs to before running anything.
   | Any                         // any one token but the end of the file, kept out of the tree
   | Recover(Rule, Rule)         // on a recovering parse: skip to where the first matches
   | RecoverAll(Rule, Rule)      //   again, keeping what the second reads of the failed item
@@ -149,6 +156,7 @@ let K_ANY = 15
 let K_RECOVER = 16
 let K_RECOVER_ALL = 17
 let K_RECOVER_LINES = 18
+let K_PREC = 19
 
 // Append a rule's subtree to the arena and answer where its own node landed.
 // The three lists are the arena itself, handed down rather than returned:
@@ -172,6 +180,7 @@ fn emit(r: Rule, mut ops: List[Op], mut texts: List[String], mut kids: List[Int]
     Not(x) => (K_NOT, "", [x]),
     Ahead(x) => (K_AHEAD, "", [x]),
     Left(k, x, y) => (K_LEFT, k, [x, y]),
+    Prec(k, x, ys) => (K_PREC, k, [x] + ys),
     Any => (K_ANY, "", []),
     Recover(x, h) => (K_RECOVER, "", [x, h]),
     RecoverAll(x, h) => (K_RECOVER_ALL, "", [x, h]),
@@ -185,6 +194,11 @@ fn emit(r: Rule, mut ops: List[Op], mut texts: List[String], mut kids: List[Int]
     let first = list.len(kids)
     for id in ids { list.push(kids, id) }
     Op { kind: kind, a: first, b: list.len(ids) }
+  } else if kind == K_PREC then {
+    // the operand, then one operator rule per level: `b` counts the levels
+    let first = list.len(kids)
+    for id in ids { list.push(kids, id) }
+    Op { kind: kind, a: first, b: list.len(ids) - 1 }
   } else if kind == K_LEFT or kind == K_RECOVER or kind == K_RECOVER_ALL then Op { kind: kind, a: list.get(ids, 0) ?? 0, b: list.get(ids, 1) ?? 0 }
   else Op { kind: kind, a: list.get(ids, 0) ?? -1, b: 0 }
   list.push(ops, op)
@@ -548,6 +562,40 @@ fn spelled(c: Compiled, op: Op, x: Int) -> Bool = {
   hit
 }
 
+// Which level's operator stands at `pos`, or -1 for none. The token is read,
+// not consumed: a level whose operator is not a literal terminal can never be
+// found here, which is why `prec` asks for literals.
+fn level_at(c: Compiled, op: Op, tk: List[Int], tt: List[Int], pos: Int) -> Int = {
+  let x = match list.get(tt, pos) { some(v) => v, none => -1 }
+  let k = match list.get(tk, pos) { some(v) => v, none => tree.T_EOF }
+  if k == tree.T_STRING or k == tree.T_NEG then -1
+  else {
+    var found = -1
+    var i = 0
+    while found < 0 and i < op.b {
+      let level = match list.get(c.ops, kid_at(c, op.a + 1 + i)) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+      if (level.kind == K_LIT or level.kind == K_KEEP) and spelled(c, level, x) then found = i else ()
+      i = i + 1
+    }
+    found
+  }
+}
+
+// Fold the operation on top of the pending stack into one node, and answer
+// where the operand that results begins — in the output list and in the tokens.
+fn reduce_top(c: Compiled, mut out: List[tree.Node], mut marks: List[Int], mut opmarks: List[Int],
+  mut levels: List[Int], mut froms: List[Int], id: Int, right: Int, to: Int, build: Bool) -> (Int, Int) = {
+  let mark = match list.pop(marks) { some(v) => v, none => right }
+  let opmark = match list.pop(opmarks) { some(v) => v, none => right }
+  let from = match list.pop(froms) { some(v) => v, none => 0 }
+  let _ = list.pop(levels)
+  if build then {
+    let kids = fold_kids(out, mark, opmark, right)
+    list.push(out, tree.node(text_at(c, id), kids, from, to))
+  } else ()
+  (mark, from)
+}
+
 // A literal that did not match names every spelling it would have taken, which
 // is what the alternation's branches named one by one before.
 fn missed(c: Compiled, mut exp: List[Int], st: State, pos: Int, op: Op) -> Out = {
@@ -571,6 +619,37 @@ fn missed(c: Compiled, mut exp: List[Int], st: State, pos: Int, op: Op) -> Out =
 // the grammar and the token list, and parsing would go quadratic. For the
 // same reason there is no `??` on anything holding `c`: that form makes
 // the analysis treat the parameter as escaping.
+// The two terminals, lifted out of the dispatch so the engine's one big
+// function stays about choosing what to do rather than about doing it. Neither
+// calls `parse_rule`, so neither joins its recursive group.
+fn token_here(c: Compiled, tk: List[Int], mut out: List[tree.Node], mut exp: List[Int], st0: State, id: Int, op: Op, pos: Int) -> Out = {
+    match list.get(tk, pos) {
+      some(k) => if k != op.b then miss(exp, st0, pos, id)
+        else if op.b == tree.T_NEWLINE or op.b == tree.T_EOF then good(st0, pos + 1)
+        else {
+          if st0.build then list.push(out, tree.leaf(text_at(c, id), pos)) else ()
+          good(st0, pos + 1)
+        },
+      none => miss(exp, st0, pos, id),
+    }
+}
+
+fn literal_here(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node], mut exp: List[Int], st0: State, op: Op, pos: Int) -> Out = {
+  match list.get(tt, pos) {
+    some(x) => if not spelled(c, op, x) then missed(c, exp, st0, pos, op)
+      else match list.get(tk, pos) {
+        some(k) => if k == tree.T_STRING or k == tree.T_NEG then missed(c, exp, st0, pos, op)
+          else if op.kind == K_LIT then good(st0, pos + 1)
+          else {
+            if st0.build then list.push(out, tree.leaf("op", pos)) else ()
+            good(st0, pos + 1)
+          },
+        none => missed(c, exp, st0, pos, op),
+      },
+    none => missed(c, exp, st0, pos, op),
+  }
+}
+
 fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node], mut exp: List[Int], st0: State, id: Int, pos: Int) -> Out = {
   let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
   if op.kind == K_SEQ then {
@@ -604,32 +683,69 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
     }
     Out { ok: done, pos: p, st: st }
   }
-  else if op.kind == K_LIT or op.kind == K_KEEP then {
-    match list.get(tt, pos) {
-      some(x) => if not spelled(c, op, x) then missed(c, exp, st0, pos, op)
-        else match list.get(tk, pos) {
-          some(k) => if k == tree.T_STRING or k == tree.T_NEG then missed(c, exp, st0, pos, op)
-            else if op.kind == K_LIT then good(st0, pos + 1)
-            else {
-              if st0.build then list.push(out, tree.leaf("op", pos)) else ()
-              good(st0, pos + 1)
-            },
-          none => missed(c, exp, st0, pos, op),
-        },
-      none => missed(c, exp, st0, pos, op),
-    }
-  }
+  else if op.kind == K_LIT or op.kind == K_KEEP then literal_here(c, tk, tt, out, exp, st0, op, pos)
   // the body of a macro is a balanced run of tokens the grammar has no reading
   // of; `any` consumes one and leaves nothing behind
-  else if op.kind == K_TOK then {
-    match list.get(tk, pos) {
-      some(k) => if k != op.b then miss(exp, st0, pos, id)
-        else if op.b == tree.T_NEWLINE or op.b == tree.T_EOF then good(st0, pos + 1)
+  else if op.kind == K_TOK then token_here(c, tk, out, exp, st0, id, op, pos)
+  else if op.kind == K_PREC then {
+    // One pass over the levels rather than one rule per level: the operand is
+    // parsed once, and each operator found is held on a stack until an
+    // operator of its precedence or lower arrives, which is what nesting the
+    // folds did by returning.
+    let operand = kid_at(c, op.a)
+    let base = list.len(out)
+    let o = parse_rule(c, tk, tt, out, exp, st0, operand, pos)
+    if not o.ok then {
+      rollback(out, base)
+      Out { ok: false, pos: pos, st: o.st }
+    } else {
+      var st = o.st
+      var p = o.pos
+      var mark = base                  // where the rightmost operand starts in `out`
+      var from = pos                   // and at which token
+      var marks: List[Int] = []
+      var opmarks: List[Int] = []
+      var levels: List[Int] = []
+      var froms: List[Int] = []
+      var going = true
+      while going {
+        let l = level_at(c, op, tk, tt, p)
+        if l < 0 then going = false
         else {
-          if st0.build then list.push(out, tree.leaf(text_at(c, id), pos)) else ()
-          good(st0, pos + 1)
-        },
-      none => miss(exp, st0, pos, id),
+          while list.len(levels) > 0 and (match list.last(levels) { some(v) => v, none => -1 }) >= l {
+            let (m, f) = reduce_top(c, out, marks, opmarks, levels, froms, id, mark, p, st0.build)
+            mark = m
+            from = f
+          }
+          let opmark = list.len(out)
+          let oo = parse_rule(c, tk, tt, out, exp, st, kid_at(c, op.a + 1 + l), p)
+          st = oo.st
+          if not oo.ok then going = false
+          else {
+            let rmark = list.len(out)
+            let rr = parse_rule(c, tk, tt, out, exp, st, operand, oo.pos)
+            st = rr.st
+            if not rr.ok then {
+              rollback(out, opmark)
+              going = false
+            } else {
+              list.push(marks, mark)
+              list.push(opmarks, opmark)
+              list.push(levels, l)
+              list.push(froms, from)
+              mark = rmark
+              from = oo.pos
+              p = rr.pos
+            }
+          }
+        }
+      }
+      while list.len(levels) > 0 {
+        let (m, f) = reduce_top(c, out, marks, opmarks, levels, froms, id, mark, p, st0.build)
+        mark = m
+        from = f
+      }
+      good(st, p)
     }
   }
   else if op.kind == K_LEFT then {
@@ -967,6 +1083,11 @@ fn nott(x: Rule) -> Rule = Not(x)
 fn ahead(x: Rule) -> Rule = Ahead(x)
 fn any() -> Rule = Any
 fn leftf(kind: String, operand: Rule, op: Rule) -> Rule = Left(kind, operand, op)
+// A ladder of left-associative levels in one rule, lowest precedence first.
+// `prec("binary", r("factor"), [keep("|"), …, keeps(["*", "/"])])` is what six
+// nested `leftf`s say, and the engine reaches the operand without walking a
+// rule per level. Each level's operator has to be a literal terminal.
+fn prec(kind: String, operand: Rule, levels: List[Rule]) -> Rule = Prec(kind, operand, levels)
 // An item in a list that a reader would rather skip than lose the list over.
 // `recover` is for a list inside brackets, `recover_all` for the file itself.
 // The `_keeping` forms name a prefix of the item worth having on its own: a

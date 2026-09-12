@@ -1150,3 +1150,55 @@ Three small files read 0.3% to 2.9% slower and are all under 7 ms.
 
 The [full stdlib survey](../docs/evidence/dispatch-order-stdlib.json) matches
 CPython outlines on 721/721 Python 3.14.4 files.
+
+## A ladder of precedence levels is one rule
+
+Python's binary operators are written as six rules, each a left fold whose
+operand is the next one down: `bit_or` folds `bit_xor`, which folds `bit_and`,
+and so on to `term`. Reaching a name inside an expression meant visiting all
+six before the operand was tried, and each of them then asked its own operator
+rule whether it was there. `or` and `and` are two more levels above.
+
+`prec(kind, operand, levels)` says the same thing in one rule: the operand,
+then one operator per level, lowest precedence first, all left-associative and
+all making nodes of one kind. The engine parses the operand once and holds each
+operator it finds on a stack until an operator of the same precedence or lower
+arrives — which is exactly what nesting the folds achieved by returning. A
+level's operator must be a literal terminal, because the ladder reads the token
+to decide which level it belongs to before running anything; `leftf` stays for
+the folds whose operator is a rule, as in Almide's `seq([nl, keep("or"), nl])`
+and Rust's `alt([keep("<<"), seq([keep(">"), lit(">")])])`.
+
+The trees are the same trees. `gramide parse` output is byte-identical on
+mixed-precedence expressions, and the CPython expression oracle matches the
+same 2,993 trees with the same digest as before the change.
+
+Two terminals moved out of `parse_rule` to make room for the new arm:
+`token_here` and `literal_here` are leaf functions that never call back into
+it, so the engine's one big function is about choosing what to do rather than
+doing it, and its recorded complexity is unchanged.
+
+[Timing](../docs/evidence/precedence-ladder-timing.json), 21 shuffled samples
+per binary on a quiet machine (load average 3.4), all 945 timed outputs
+matching CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 29.12 | 27.34 | 11.21 | 2.4x |
+| typing.py | 28.58 | 27.14 | 10.84 | 2.5x |
+| argparse.py | 27.86 | 26.02 | 10.12 | 2.6x |
+| _pydecimal.py | 41.47 | 39.06 | 15.77 | 2.5x |
+| dataclasses.py | 16.21 | 15.20 | 7.92 | 1.9x |
+
+Fourteen of the fifteen medians improve, the code-heavy files by 4.7% to 6.6%.
+
+[Allocations](../docs/evidence/precedence-ladder-allocations.json) rise by
+1,818 on inspect.py, to 258,638. The ladder keeps its pending operations on
+four lists, and an expression that has an operator pays for them; this is the
+first change in the session that buys time with heap rather than the other way
+round, and at 0.7% it is worth it.
+
+The [full stdlib survey](../docs/evidence/precedence-ladder-stdlib.json)
+matches CPython outlines on 721/721 Python 3.14.4 files. Go, Rust and Almide
+still use the nested form, and folding their ladders — the ones whose operators
+are literals — is left for later.
