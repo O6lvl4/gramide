@@ -1252,3 +1252,50 @@ the largest single change in the session.
 
 The [full stdlib survey](../docs/evidence/head-pruning-stdlib.json) matches
 CPython outlines on 721/721 Python 3.14.4 files.
+
+## A necessary condition, checked by a scan
+
+Two thousand expression statements cost 37 ms to check; two thousand
+assignments cost 19 ms and two thousand `pass` statements 5 ms. The reason is
+that `simple_stmt` tries `assignment` first, and all four of its forms —
+annotated, annotated-with-target, plain and augmented — parse the whole
+expression before finding out that no `:`, `=` or augmented operator follows.
+An expression statement pays for the expression five times.
+
+Every one of those forms needs one of those spellings somewhere on the logical
+line, outside brackets. `needs(lits([…]))` says so, and the engine answers by
+scanning the line — a depth-aware walk of integers, the same shape as the
+recovery scans — instead of parsing four rules to the same conclusion. It
+consumes nothing and decides nothing else: a line that has an `=` is parsed
+exactly as before.
+
+The collecting pass never refuses, so a file that fails is still described by
+the branches themselves, and the messages are unchanged.
+
+The rule is only sound where the set is a necessary condition for everything
+behind it, which is why it is a grammar's statement rather than an engine's
+guess.
+
+| Input | Before (ms) | After (ms) |
+| --- | ---: | ---: |
+| 2,000 expression statements, `check` | 38.41 | 20.62 |
+| 2,000 assignments, `check` | 19.32 | 19.29 |
+
+[Allocations](../docs/evidence/line-guard-allocations.json) fall with the
+parses that no longer happen: 258,651 → 239,227 on inspect.py, and 255,874 →
+218,323 on argparse.py.
+
+[Timing](../docs/evidence/line-guard-timing.json), 21 shuffled samples per
+binary (load average 3.3), all 945 timed outputs matching CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 23.26 | 21.41 | 10.98 | 1.9x |
+| typing.py | 23.23 | 21.37 | 10.48 | 2.0x |
+| argparse.py | 22.94 | 19.43 | 9.88 | 2.0x |
+| _pydecimal.py | 33.39 | 31.22 | 15.66 | 2.0x |
+| ast.py | 7.37 | 6.62 | 4.03 | 1.6x |
+
+Twelve of the fifteen medians improve, the code-heavy files by 6.5% to 15.3%.
+The three that do not are 3.6 to 5.3 ms files, where startup is most of the
+measurement.

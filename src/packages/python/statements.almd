@@ -6,7 +6,7 @@ import self.packages.python.declarations
 import self.packages.python.patterns
 import self.packages.python.containers
 import self.packages.python.arguments
-import self.parser.{ seq, nott, wrap, r, opt, keep, keeps, alt, rep, tok, lit, grammar }
+import self.parser.{ seq, nott, wrap, r, opt, keep, keeps, alt, rep, tok, lit, lits, needs, grammar }
 
 fn rules() -> List[(String, parser.Rule)] = [
   ("simple_stmts", seq([r("simple_stmt"), rep(seq([lit(";"), r("simple_stmt")])), opt(lit(";")), tok("newline")])),
@@ -23,12 +23,15 @@ fn rules() -> List[(String, parser.Rule)] = [
   ])),
   ("rhs", alt([r("yield_expression"), r("yield_values")])),
   ("single_target", alt([r("target_primary"), r("name"), seq([lit("("), r("single_target"), lit(")")])])),
-  ("assignment", alt([
+  // Every form below wants an annotation colon, an equals sign or an augmented
+  // assignment on this line; without one the four of them would each parse the
+  // whole expression to find that out.
+  ("assignment", seq([needs(lits([":", "=", "+=", "-=", "*=", "@=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "**=", "//="])), alt([
     wrap("annassign_simple", seq([r("name"), lit(":"), r("expression"), opt(seq([lit("="), r("rhs")]))])),
     wrap("annassign", seq([alt([r("target_primary"), seq([lit("("), r("single_target"), lit(")")])]), lit(":"), r("expression"), opt(seq([lit("="), r("rhs")]))])),
     wrap("assign", seq([r("assignment_target"), rep(r("assignment_target")), r("rhs"), nott(lit("="))])),
     wrap("augassign", seq([r("single_target"), keeps(["+=", "-=", "*=", "@=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "**=", "//="]), r("rhs")]))
-  ])),
+  ])])),
   ("assignment_target", seq([r("targets"), lit("=")])),
   ("delete_target", alt([
     r("target_primary"), r("name"), seq([lit("("), r("delete_target"), lit(")")]),
