@@ -985,3 +985,46 @@ allocator. A CPU sample of a 2.5 MB parse puts 47% of the time inside
 `parse_rule` itself and 20% in `miss`, against 8.5% in malloc and free
 together — the engine visits the grammar arena about seventy times per token,
 and that count, not the heap, is what stands between it and tree-sitter.
+
+## The pass that succeeds stops recording where it failed
+
+`miss` is the engine's busiest path: every alternative that does not match
+goes through it, and a CPU sample of a 2.5 MB parse put 20% of the time
+there. What it did was maintain `far`, the farthest token anything failed at,
+and the set of what was expected there.
+
+Neither is ever read from the pass that computes it. A parse that fails runs a
+second time with `collect` on, and `parse_with`, `verify` and
+`parse_recovering` all take `far` and the expectation set from *that* run.
+The first run's copy is thrown away — as is the whole of it for a file that
+parses, which is the case every reader is timing. So `miss` now returns the
+state it was given unless the pass is collecting, and `noted` runs only on the
+pass whose answer somebody reads.
+
+Nothing about the messages changes: the collecting pass is untouched, and
+`check` prints the same "unexpected X (expected …)" for the same files.
+
+[Allocation profiles](../docs/evidence/failure-tracking-allocations.json) are
+identical to the change before it on all five files — 256,817 requests on
+inspect.py, to the request — which is the point: this one buys time, not heap.
+
+[Timing](../docs/evidence/failure-tracking-timing.json), 21 shuffled samples
+per binary, startup included, all 945 timed outputs matching CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 40.00 | 35.46 | 11.12 | 3.2x |
+| typing.py | 39.20 | 34.85 | 10.79 | 3.2x |
+| argparse.py | 37.81 | 33.63 | 9.91 | 3.4x |
+| _pydecimal.py | 57.16 | 50.53 | 15.59 | 3.2x |
+| dataclasses.py | 21.38 | 19.30 | 7.93 | 2.4x |
+
+Thirteen of the fifteen medians improve; the four code-heavy files all improve
+by 11.1% to 11.6%, which is the most any single change in this file has bought.
+keyword.py reads 6.7% slower and is a 4 ms file that is almost all startup.
+A fresh CPU sample shows `miss` down from 20% to 13% of a 2.5 MB parse: what
+is left of it is the call itself, not the work it used to do inside.
+
+The [full stdlib survey](../docs/evidence/failure-tracking-stdlib.json) matches
+CPython outlines on 721/721 Python 3.14.4 files and full local CI passes,
+including the 21 diagnostic checks that pin the failure messages.
