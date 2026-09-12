@@ -1634,3 +1634,37 @@ _pydecimal.py — 220 KB of code — is within two per cent.
 [allocations](../docs/evidence/leaf-ops-allocations.json) unchanged, which is
 expected — no node is built or skipped that was not before, and `outline`,
 `parse`, `symbols`, `tags` and `check` are byte-identical, diagnostics included.
+
+## The set that says an identifier is not a keyword
+
+With the terminal tests folded, the profile's second-hottest function was
+`literal_here` at 14 per cent, and the reason is one set. `lits(HARD_KEYWORDS)`
+has 35 members, `spelled` walks it looking for the token's spelling number, and
+an ordinary identifier is spelled none of them — so every name in the file
+walked all 35 and found nothing. Worse, a token no terminal spells carries -1,
+which the walk compared against 35 numbers that are all non-negative.
+
+Every literal set now carries a 64-bit sketch of the spellings in it, built
+beside the ops in `compile`. A -1 fails without a comparison, a number outside
+the sketch fails in a shift and a test, and only a possible hit walks the set —
+where the answer is still the exact answer the walk gave.
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 11.16 | 10.68 | 10.44 | 1.02x |
+| typing.py | 11.50 | 10.90 | 10.08 | 1.08x |
+| argparse.py | 10.45 | 10.06 | 9.41 | 1.07x |
+| _pydecimal.py | 15.51 | 14.54 | 15.04 | **0.97x** |
+| dataclasses.py | 7.38 | 7.04 | 7.52 | **0.94x** |
+| pydoc_data/topics.py | 4.82 | 4.83 | 5.17 | **0.94x** |
+
+Three of the fifteen files are now read faster than tree-sitter reads them,
+including _pydecimal.py, which at 220 KB is the largest and the one this
+benchmark exists for. inspect.py is within two per cent.
+
+[Timing](../docs/evidence/literal-mask-timing.json), 21 shuffled samples per
+binary; [stdlib](../docs/evidence/literal-mask-stdlib.json) unchanged at 721 of
+721; [allocations](../docs/evidence/literal-mask-allocations.json) unchanged.
+The engine walks exactly what it walked before — the visit count is the same
+472,089 — and `outline`, `parse`, `symbols`, `tags` and `check` are
+byte-identical, diagnostics included.
