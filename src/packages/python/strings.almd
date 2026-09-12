@@ -13,7 +13,7 @@ fn opening(buffer: Bytes, start: Int) -> Option[Opening] = {
   else {
     let a = lower(first)
     let second = bytes.get_or(buffer, start + 1, -1)
-    if list.contains([114, 98, 117], a) and quote(second) then
+    if (a == 114 or a == 98 or a == 117) and quote(second) then
       some(Opening { quote: second, at: start + 1, byte_literal: a == 98 })
     else {
       let b = lower(second)
