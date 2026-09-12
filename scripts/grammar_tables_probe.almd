@@ -4,17 +4,31 @@
 import self.registry
 import self.parser
 import self.package_api
+import self.names as nametable
 import json
 
 fn ints(xs: List[Int]) -> Value = value.array(list.map(xs, (x) => value.int(x)))
 
+// The name table as the strings it was built from, so the generator can write
+// the blob itself and the round trip stays inspectable.
+fn texts_of(names: nametable.Names) -> List[String] = {
+  var out: List[String] = list.with_capacity(list.len(names.start))
+  var i = 0
+  while i < list.len(names.start) {
+    list.push(out, nametable.name_at(names, i))
+    i = i + 1
+  }
+  out
+}
+
 fn package(d: package_api.Definition) -> Value = {
   let make = d.grammar
-  let t = parser.to_tables(parser.compile(make()))
+  let c = parser.compile(make())
+  let t = parser.to_tables(c)
   value.object([
     ("id", value.str(d.id)),
     ("ops", ints(t.ops)),
-    ("texts", value.array(list.map(t.texts, (x) => value.str(x)))),
+    ("texts", value.array(list.map(texts_of(c.names), (x) => value.str(x)))),
     ("kids", ints(t.kids)),
     ("start", value.int(t.start)),
     ("extra", value.int(t.extra)),

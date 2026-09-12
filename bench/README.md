@@ -1747,3 +1747,50 @@ binary; [stdlib](../docs/evidence/grammar-tables-stdlib.json) unchanged at 721
 of 721. `outline`, `parse`, `symbols`, `tags`, `check` and `tokens` are
 byte-identical, diagnostics included — the table is the same arena, so it had
 better be.
+
+## One copy of the names
+
+`Compiled` carried the grammar's names twice: as `texts`, a list of 1,675
+strings, and as `names`, the same strings end to end in one blob with their
+bounds beside them. The blob is what every reader uses; `texts` was read by one
+function, the one that builds an error message.
+
+The table now ships the blob and nothing else — the bounds are one scan of it,
+which is how they were derived in the first place — and `Compiled` is one field
+shorter. That is 3,117 allocations per run on any file, because 1,675 string
+literals are 1,675 allocations before they are joined and thrown away:
+
+| File | Before | After |
+| --- | ---: | ---: |
+| inspect.py | 57,013 | 53,896 |
+| typing.py | 65,951 | 62,834 |
+| _pydecimal.py | 93,646 | 90,529 |
+| pydoc_data/topics.py | 6,373 | 3,256 |
+
+Timing is unchanged within the noise of 21 samples on the large files and about
+0.1 ms better on the small ones, where 3,117 allocations are a larger share of
+the run. The [board](../docs/evidence/one-name-table-timing.json) as it now
+stands, against tree-sitter:
+
+| File | gramide (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: |
+| pydoc_data/topics.py | 3.96 | 4.83 | **0.82x** |
+| dataclasses.py | 5.93 | 7.07 | **0.84x** |
+| _pydecimal.py | 12.96 | 14.58 | **0.89x** |
+| inspect.py | 9.07 | 9.92 | **0.91x** |
+| argparse.py | 8.32 | 8.87 | **0.94x** |
+| typing.py | 9.39 | 9.85 | **0.95x** |
+| ast.py | 3.72 | 3.71 | 1.00x |
+| tokenize.py | 3.754 | 3.756 | 1.00x |
+| reprlib.py | 3.09 | 2.86 | 1.08x |
+| textwrap.py | 3.28 | 3.05 | 1.08x |
+| genericpath.py | 2.73 | 2.48 | 1.10x |
+| keyword.py | 2.81 | 2.50 | 1.12x |
+| token.py | 2.66 | 2.38 | 1.12x |
+| copyreg.py | 3.29 | 2.82 | 1.17x |
+| stat.py | 3.03 | 2.54 | 1.19x |
+
+Six of fifteen are faster, two are level, and the seven that are not are the
+seven smallest — under 4 ms, where what separates them is no longer parsing.
+gramide's binary takes about 0.2 ms longer to load than tree-sitter's, and a
+2.5 ms run cannot hide that.

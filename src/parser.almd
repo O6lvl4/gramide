@@ -73,7 +73,7 @@ type Grammar = { start: String, rules: Map[String, Rule] }
 // terminal match is then an integer compare rather than a string compare, and
 // the few spellings the engine tests itself are pinned by `SEEDS`.
 type Op = { kind: Int, a: Int, b: Int }
-type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int,
+type Compiled = { ops: List[Op], kids: List[Int], start: Int,
   spelling: List[Int], spelling_start: List[Int], spelling_end: List[Int], bucket: List[Int], bucket_next: List[Int],
   lit_mask: List[Int], head_kinds: List[Int], head_mask: List[Int], head_start: List[Int], head_len: List[Int], head_run: List[Int],
   kind_of: List[Int], names: nametable.Names, extra: Int }
@@ -659,7 +659,7 @@ fn compile(g: Grammar) -> Compiled = {
   let heads = head_terminals(linked, linked_kids)
   let masks = lit_masks(linked, linked_kids)
   let index = head_index(linked, linked_kids, heads.0, heads.1, heads.2)
-  Compiled { ops: linked, texts: texts, kids: linked_kids,
+  Compiled { ops: linked, kids: linked_kids,
     start: target_of(resolved, start),
     spelling: spelling, spelling_start: spelling_start, spelling_end: spelling_end,
     bucket: bucket, bucket_next: bucket_next,
@@ -680,7 +680,7 @@ fn compile(g: Grammar) -> Compiled = {
 // The bucket table is the one thing not stored as it is used: it is 4,352
 // slots and nearly all of them are empty, so it travels as the slots that are
 // not, in order, and is spread out here.
-type Tables = { ops: List[Int], texts: List[String], kids: List[Int], start: Int, extra: Int,
+type Tables = { ops: List[Int], blob: String, kids: List[Int], start: Int, extra: Int,
   spelling: List[Int], spelling_start: List[Int], spelling_end: List[Int],
   bucket_at: List[Int], bucket_next: List[Int],
   lit_mask: List[Int], head_kinds: List[Int], head_mask: List[Int],
@@ -713,12 +713,13 @@ fn from_tables(t: Tables) -> Compiled = {
     })
     i = i + 3
   }
-  Compiled { ops: ops, texts: t.texts, kids: t.kids, start: t.start,
+  Compiled { ops: ops, kids: t.kids, start: t.start,
     spelling: t.spelling, spelling_start: t.spelling_start, spelling_end: t.spelling_end,
     bucket: spread_buckets(t.bucket_at), bucket_next: t.bucket_next,
     lit_mask: t.lit_mask, head_kinds: t.head_kinds, head_mask: t.head_mask,
     head_start: t.head_start, head_len: t.head_len, head_run: t.head_run,
-    kind_of: t.kind_of, names: nametable.names_of(t.texts), extra: t.extra }
+    kind_of: t.kind_of, extra: t.extra,
+    names: nametable.names_in(bytes.from_string(t.blob)) }
 }
 
 // The same arena, flattened, so a generator can write it down.
@@ -739,7 +740,8 @@ fn to_tables(c: Compiled) -> Tables = {
     } else ()
     slot = slot + 1
   }
-  Tables { ops: flat, texts: c.texts, kids: c.kids, start: c.start, extra: c.extra,
+  Tables { ops: flat, blob: bytes.to_string_lossy(c.names.blob),
+    kids: c.kids, start: c.start, extra: c.extra,
     spelling: c.spelling, spelling_start: c.spelling_start, spelling_end: c.spelling_end,
     bucket_at: pairs, bucket_next: c.bucket_next,
     lit_mask: c.lit_mask, head_kinds: c.head_kinds, head_mask: c.head_mask,
@@ -958,7 +960,7 @@ fn fold_kids(mut out: List[tree.Node], mark: Int, opmark: Int, rmark: Int, left:
   fwd
 }
 
-fn text_at(c: Compiled, id: Int) -> String = match list.get(c.texts, id) { some(t) => t, none => "" }
+fn text_at(c: Compiled, id: Int) -> String = nametable.name_at(c.names, id)
 fn kid_at(c: Compiled, i: Int) -> Int = match list.get(c.kids, i) { some(k) => k, none => 0 }
 // The number that stands for this node's spelling, the same for every node the
 // grammar spelled the same way.
