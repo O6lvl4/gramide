@@ -529,3 +529,51 @@ This is a consistent allocation reduction, not a universal timing improvement.
 The full regression suite, unchanged structural baseline and real hew integration
 pass. Full issue #37 reproduction, incremental performance and superiority across
 languages remain unresolved.
+
+## Full installed Python stdlib outline survey
+
+Run the correctness survey independently of timing:
+
+```sh
+python3 bench/python_stdlib.py --gramide ./gramide \
+  --tree-sitter /tmp/gramide-tree-sitter-python-outline \
+  --references ../almide-references --output /tmp/python-full-stdlib.json
+```
+
+The harness uses the running interpreter's stdlib and excludes directory components
+`test`, `tests`, `lib2to3`, `site-packages` and `__pycache__`. It reads source using
+Python's declared-encoding rules, renders CPython AST using the same shared oracle
+as `python_outline.py`, and requires exact outline text, zero exit status and empty
+stderr. It records every file's raw source hash and byte size, oracle/output hashes,
+failures, binary hashes and reference revisions. Oracle errors and gramide mismatches
+fail the command after saving the report; comparator mismatches are retained in the
+report without hiding otherwise valid gramide results. An empty corpus fails.
+
+The [Python 3.14.4 result](../docs/evidence/python-full-stdlib.json), using gramide
+from PR #43, covers **721 files / 12,175,027 bytes** with no oracle errors:
+
+| Implementation | Exact CPython outline matches |
+| --- | ---: |
+| gramide | 721 / 721 |
+| tree-sitter Python + repository outline adapter | 720 / 721 |
+
+The difference is `unittest/mock.py`: its two `type(mock).attribute = value`
+assignments become extra type declarations in the tree-sitter result. A minimized
+`type(mock).__signature__ = sig` parses in CPython as an `Assign` to an `Attribute`
+whose object is a `Call`, and gramide produces no outline declaration. Dumping the
+pinned tree-sitter root with `ts_node_string` produces:
+
+```text
+(module (type_alias_statement left: (type (attribute object: (parenthesized_expression (identifier)) attribute: (identifier))) right: (type (identifier))))
+```
+
+Thus the incorrect type-alias classification already exists in the pinned grammar's
+tree, and the adapter exposes it as `L1-1 type mock`. The corpus report retains both
+extra lines rather than suppressing this case. This finding concerns the pinned
+`tree-sitter-python` revision, not every release or every tree-sitter consumer.
+
+The 15-file timing harness still passes after extracting its AST renderer into
+`python_outline_oracle.py`. This survey proves outline equality on valid source,
+not full semantic equivalence, malformed-input recovery, incremental reuse or
+performance. It is Python 3.14.4, not the exact 700-file Python 3.13 workload in
+issue #37; that issue remains open.

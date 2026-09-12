@@ -1,24 +1,8 @@
 """Full-file outline timing with a CPython AST display oracle; startup included."""
 from pathlib import Path
-import argparse,ast,hashlib,json,platform,random,statistics,subprocess,sysconfig,time
+import argparse,hashlib,json,platform,random,statistics,subprocess,sysconfig,time
 
-def expected(source):
- rows=[]
- def visit(node,depth=0,owner=''):
-  function=isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef))
-  cls=isinstance(node,ast.ClassDef)
-  alias=isinstance(node,ast.TypeAlias)
-  if function or cls or alias:
-   name=node.name.id if alias else node.name
-   kind='method' if function and owner else 'function' if function else 'class' if cls else 'type'
-   start=min([node.lineno]+[d.lineno for d in getattr(node,'decorator_list',[])])
-   rows.append('  '*depth+f'L{start}-{node.end_lineno} {kind} '+(owner+'.' if function and owner else '')+name)
-   if function or cls:
-    for child in node.body:visit(child,depth+1,name if cls else '')
-  else:
-   for child in ast.iter_child_nodes(node):visit(child,depth,owner)
- visit(ast.parse(source))
- return ''.join(r+'\n' for r in rows)
+from python_outline_oracle import expected
 
 ap=argparse.ArgumentParser(description=__doc__)
 for name in ['gramide','before','tree-sitter','references','output']:ap.add_argument('--'+name,type=Path,required=True)
@@ -28,7 +12,7 @@ report=dict(python=platform.python_version(),platform=platform.platform(),
  mode='fresh process, read + full parse + identical outline text; startup included, five shuffled samples, no incremental reuse or startup subtraction; uninstrumented binaries',
  scope='15 Python 3.14 stdlib files, including three code-heavy issue #37 examples and a string-heavy control. This is not the reported 700-file Python 3.13 corpus or ctxgate-outline binary.',
  binary_sha256={k:hashlib.sha256(p.read_bytes()).hexdigest() for k,p in bins.items()},
- source_sha256={n:hashlib.sha256((Path(__file__).parent/n).read_bytes()).hexdigest() for n in ['python_outline.py','tree_sitter_python.c']},
+ source_sha256={n:hashlib.sha256((Path(__file__).parent/n).read_bytes()).hexdigest() for n in ['python_outline.py','python_outline_oracle.py','tree_sitter_python.c']},
  reference_commits={n:subprocess.check_output(['git','rev-parse','HEAD'],cwd=args.references/n,text=True).strip() for n in ['tree-sitter','tree-sitter-python']},cases=[])
 files=['keyword.py','token.py','stat.py','copyreg.py','genericpath.py','reprlib.py','textwrap.py','inspect.py','tokenize.py','ast.py','dataclasses.py','typing.py','argparse.py','_pydecimal.py','pydoc_data/topics.py']
 for name in files:
