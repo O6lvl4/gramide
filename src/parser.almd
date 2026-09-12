@@ -209,6 +209,14 @@ let K_NEST = 21
 // it stands instead of calling a rule that does nothing else.
 let K_WRAP_SEQ = 22
 let K_NEST_SEQ = 23
+// A negation of a terminal, and a sequence of nothing but terminal tests. Both
+// are leaves the engine used to reach by calling itself: `name` is
+// `seq([nott(lits(HARD_KEYWORDS)), tok("identifier")])`, four visits to decide
+// that an identifier is not a keyword, and it is a fifth of every visit a
+// Python file costs.
+let K_NOT_LIT = 24
+let K_NOT_TOK = 25
+let K_TERMS = 26
 
 // The engine names six things the grammar does not: a kept operator, a
 // recovered range, the three parts of a fold, and the absence of a name. They
@@ -356,6 +364,39 @@ fn fuse_wraps(ops: List[Op]) -> List[Op] = {
   out
 }
 
+fn leafy(kind: Int) -> Bool = kind == K_TOK or kind == K_LIT or kind == K_KEEP or kind == K_NOT_LIT or kind == K_NOT_TOK
+
+// Two rewrites, in this order because the second reads what the first wrote.
+// A negation of a terminal is one op, and a sequence whose every member is a
+// terminal test — negated or not — is one op that runs them where it stands.
+fn fuse_leaves(ops: List[Op], kids: List[Int]) -> List[Op] = {
+  var once: List[Op] = list.with_capacity(list.len(ops))
+  var i = 0
+  while i < list.len(ops) {
+    let op = match list.get(ops, i) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+    let body = match list.get(ops, op.a) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+    if op.kind == K_NOT and body.kind == K_LIT then list.push(once, Op { kind: K_NOT_LIT, a: body.a, b: body.b })
+    else if op.kind == K_NOT and body.kind == K_TOK then list.push(once, Op { kind: K_NOT_TOK, a: op.a, b: body.b })
+    else list.push(once, op)
+    i = i + 1
+  }
+  var out: List[Op] = list.with_capacity(list.len(once))
+  var j = 0
+  while j < list.len(once) {
+    let op = match list.get(once, j) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+    var all = op.kind == K_SEQ and op.b > 0
+    var m = 0
+    while all and m < op.b {
+      let child = match list.get(kids, op.a + m) { some(v) => v, none => -1 }
+      all = leafy(match list.get(once, child) { some(o) => o.kind, none => -1 })
+      m = m + 1
+    }
+    list.push(out, if all then Op { kind: K_TERMS, a: op.a, b: op.b } else op)
+    j = j + 1
+  }
+  out
+}
+
 fn shortcut_ops(resolved: List[Op]) -> List[Op] = {
   var out: List[Op] = list.with_capacity(list.len(resolved))
   for op in resolved {
@@ -387,7 +428,7 @@ fn head_through(op: Op, kids: List[Int]) -> Int =
   if op.kind == K_WRAP or op.kind == K_NEST or op.kind == K_FIELD or op.kind == K_REP1 or op.kind == K_LEFT then op.a
   // a sequence, a fused wrap and a ladder all keep their first child in the
   // child list, where `a` is an index into it rather than a node of its own
-  else if ((op.kind == K_SEQ or op.kind == K_WRAP_SEQ or op.kind == K_NEST_SEQ) and op.b > 0) or op.kind == K_PREC then
+  else if ((op.kind == K_SEQ or op.kind == K_WRAP_SEQ or op.kind == K_NEST_SEQ or op.kind == K_TERMS) and op.b > 0) or op.kind == K_PREC then
     match list.get(kids, op.a) { some(v) => v, none => -1 }
   else -1
 
@@ -589,8 +630,8 @@ fn compile(g: Grammar) -> Compiled = {
   let extra = list.len(texts)
   for name in ["", "op", "ERROR", "left", "operator", "right"] { list.push(texts, name) }
   let kinds = canonical_kinds(texts, extra + X_NONE)
-  let linked = fuse_wraps(shortcut_ops(resolved))
   let linked_kids = shortcut_kids(resolved, kids, arena_kids)
+  let linked = fuse_leaves(fuse_wraps(shortcut_ops(resolved)), linked_kids)
   let heads = head_terminals(linked, linked_kids)
   let index = head_index(linked, linked_kids, heads.0, heads.1, heads.2)
   Compiled { ops: linked, texts: texts, kids: linked_kids,
@@ -1052,6 +1093,52 @@ fn wrapped_seq_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut e
   }
 }
 
+// A negation of a terminal. The terminal itself never builds a node the
+// negation keeps and never names an expectation it keeps either, so what is
+// left of it is the test and its answer, inverted.
+fn not_lit_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, op: Op, pos: Int) -> Out = {
+  let emark = list.len(exp)
+  let o = literal_here(c, num, out, exp, far, mode, Op { kind: K_LIT, a: op.a, b: op.b }, pos)
+  untrack(exp, emark)
+  if o.ok then bad(pos) else good(pos)
+}
+
+fn not_tok_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, op: Op, pos: Int) -> Out = {
+  let mark = list.len(out)
+  let emark = list.len(exp)
+  let o = token_here(c, num, out, exp, far, mode, op.a, Op { kind: K_TOK, a: -1, b: op.b }, pos)
+  rollback(out, mark)
+  untrack(exp, emark)
+  if o.ok then bad(pos) else good(pos)
+}
+
+fn leaf_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out =
+  if op.kind == K_LIT or op.kind == K_KEEP then literal_here(c, num, out, exp, far, mode, op, pos)
+  else if op.kind == K_TOK then token_here(c, num, out, exp, far, mode, id, op, pos)
+  else if op.kind == K_NOT_LIT then not_lit_here(c, num, out, exp, far, mode, op, pos)
+  else not_tok_here(c, num, out, exp, far, mode, op, pos)
+
+// A sequence of nothing but terminal tests, run where it stands. Like any
+// sequence it builds no node of its own: what its members left behind belongs
+// to whatever wraps it.
+fn terms_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, op: Op, pos: Int) -> Out = {
+  let mark = list.len(out)
+  var p = pos
+  var failed = false
+  var i = 0
+  while not failed and i < op.b {
+    let cid = kid_at(c, op.a + i)
+    let co = match list.get(c.ops, cid) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+    let o = leaf_here(c, num, out, exp, far, mode, cid, co, p)
+    if o.ok then { p = o.pos } else { failed = true }
+    i = i + 1
+  }
+  if failed then {
+    rollback(out, mark)
+    bad(pos)
+  } else good(p)
+}
+
 fn wrapped_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
   let mark = list.len(out)
   let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
@@ -1067,24 +1154,127 @@ fn wrapped_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: 
   }
 }
 
-fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, pos: Int) -> Out = {
-  let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
-  if op.kind == K_SEQ then {
+// The rest of the ladder. Every kind below carries less than one visit in a
+// hundred on a Python file, and leaving them in front of `parse_rule`'s common
+// arms cost every visit the compares to walk past them.
+fn uncommon_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
+  if op.kind == K_RECOVER_LINES then recover_lines_here(c, num, out, exp, far, mode, id, op, pos)
+  else if op.kind == K_NEEDS then (if wants(mode, M_COLLECT) or needs_here(c, num, match list.get(c.ops, op.a) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }, pos) then good(pos) else miss(exp, far, mode, pos, id))
+  else if op.kind == K_NOT_TOK then not_tok_here(c, num, out, exp, far, mode, op, pos)
+  // the body of a macro is a balanced run of tokens the grammar has no reading
+  // of; `any` consumes one and leaves nothing behind
+  else if op.kind == K_FIELD then {
     let mark = list.len(out)
-    var p = pos
-    var failed = false
-    var i = 0
-    while not failed and i < op.b {
-      let o = parse_rule(c, num, out, exp, far, mode, kid_at(c, op.a + i), p)
-      if o.ok then { p = o.pos } else { failed = true }
-      i = i + 1
-    }
-    if failed then {
+    let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
+    if o.ok then {
+      label_from(out, mark, kind_at(c, id))
+      good(o.pos)
+    } else {
       rollback(out, mark)
       Out { ok: false, pos: pos }
-    } else good(p)
+    }
   }
-  else if op.kind == K_ALT then {
+  else if op.kind == K_REF then {
+    if op.a < 0 then miss(exp, far, mode, pos, id)
+    else parse_rule(c, num, out, exp, far, mode, op.a, pos)
+  }
+  // the collecting pass never refuses here, so a file that fails is described
+  // by the branches themselves and the message is the same message
+  else if op.kind == K_LEFT then {
+    let mark = list.len(out)
+    let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
+    if not o.ok then {
+      rollback(out, mark)
+      Out { ok: false, pos: pos }
+    } else {
+      var p = o.pos
+      var go = true
+      while go {
+        // out holds the left operand from `mark`; the operator lands at
+        // `opmark` and the right operand at `rmark`, so one drain can name
+        // all three and fold them into a single node
+        let opmark = list.len(out)
+        let oo = parse_rule(c, num, out, exp, far, mode, op.b, p)
+        if not oo.ok then {
+          rollback(out, opmark)
+          go = false
+        } else {
+          let rmark = list.len(out)
+          let rr = parse_rule(c, num, out, exp, far, mode, op.a, oo.pos)
+          if not rr.ok then {
+            rollback(out, opmark)
+            go = false
+          } else {
+            if wants(mode, M_BUILD) then {
+              let kids = fold_kids(out, mark, opmark, rmark, c.extra + X_LEFT, c.extra + X_OPERATOR, c.extra + X_RIGHT)
+              list.push(out, tree.node(kind_at(c, id), kids, pos, rr.pos))
+            } else ()
+            p = rr.pos
+          }
+        }
+      }
+      good(p)
+    }
+  }
+  else if op.kind == K_AHEAD then {
+    let mark = list.len(out)
+    let emark = list.len(exp)
+    let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
+    rollback(out, mark)
+    untrack(exp, emark)
+    if o.ok then good(pos) else Out { ok: false, pos: pos }
+  }
+  else if op.kind == K_EPS then good(pos)
+  else if op.kind == K_ANY then {
+    match list.get(num, pos * 2) {
+      some(k) => if k == tree.T_EOF then miss(exp, far, mode, pos, id) else good(pos + 1),
+      none => miss(exp, far, mode, pos, id),
+    }
+  }
+  else {            // K_RECOVER and K_RECOVER_ALL: the rarest arm carries the chain
+    let mark = list.len(out)
+    let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
+    if o.ok then o
+    else {
+      rollback(out, mark)
+      if not wants(mode, M_RECOVER) then Out { ok: false, pos: pos }
+      else {
+        // find the next place the rule reads, and give up the tokens between
+        let limit = skip_limit(num, pos, op.kind == K_RECOVER)
+        var q = pos + 1
+        var resume = -1
+        while resume < 0 and q < limit {
+          let a = parse_rule(c, num, out, exp, far, mode, op.a, q)
+          rollback(out, mark)
+          if a.ok then resume = q else q = q + 1
+        }
+        // where the tokens given up end: at the next item, or at the end of
+        // what this list may reach
+        let stop = if resume >= 0 then resume else limit
+        if resume < 0 and not real_between(num, pos, limit) then Out { ok: false, pos: pos }
+        else {
+          // keep whatever of the failed item is readable on its own
+          let h = parse_rule(c, num, out, exp, far, mode, op.b, pos)
+          let kept = h.ok and h.pos > pos and h.pos <= stop
+          if not kept then rollback(out, mark) else ()
+          let from = if kept then h.pos else pos
+          if real_between(num, from, stop) then list.push(out, tree.node(c.extra + X_ERROR, [], from, stop)) else ()
+          if resume >= 0 then {
+            let a = parse_rule(c, num, out, exp, far, mode, op.a, resume)
+            if a.ok then Out { ok: true, pos: a.pos } else {
+              rollback(out, mark)
+              Out { ok: false, pos: pos }
+            }
+          } else Out { ok: true, pos: limit }
+        }
+      }
+    }
+  }
+}
+
+fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, pos: Int) -> Out = {
+  let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+  if op.kind == K_ALT then {
     let mark = list.len(out)
     var p = pos
     var done = false
@@ -1101,10 +1291,53 @@ fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
     }
     Out { ok: done, pos: p }
   }
+  else if op.kind == K_WRAP_SEQ or op.kind == K_NEST_SEQ then wrapped_seq_here(c, num, out, exp, far, mode, id, op, pos)
+  else if op.kind == K_OPT then {
+    if not (wants(mode, M_COLLECT) or may_start(c, op.a, num, pos)) then good(pos)
+    else {
+      let mark = list.len(out)
+      let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
+      if o.ok then o else {
+        rollback(out, mark)
+        good(pos)
+      }
+    }
+  }
   else if op.kind == K_LIT or op.kind == K_KEEP then literal_here(c, num, out, exp, far, mode, op, pos)
-  // the body of a macro is a balanced run of tokens the grammar has no reading
-  // of; `any` consumes one and leaves nothing behind
-  else if op.kind == K_TOK then token_here(c, num, out, exp, far, mode, id, op, pos)
+  else if op.kind == K_SEQ then {
+    let mark = list.len(out)
+    var p = pos
+    var failed = false
+    var i = 0
+    while not failed and i < op.b {
+      let o = parse_rule(c, num, out, exp, far, mode, kid_at(c, op.a + i), p)
+      if o.ok then { p = o.pos } else { failed = true }
+      i = i + 1
+    }
+    if failed then {
+      rollback(out, mark)
+      Out { ok: false, pos: pos }
+    } else good(p)
+  }
+  else if op.kind == K_REP or op.kind == K_REP1 then {
+    var p = pos
+    var count = 0
+    var go = true
+    while go {
+      if not (wants(mode, M_COLLECT) or may_start(c, op.a, num, p)) then go = false
+      else {
+        let mark = list.len(out)
+        let o = parse_rule(c, num, out, exp, far, mode, op.a, p)
+        if o.ok and o.pos != p then { p = o.pos; count = count + 1 }
+        else {
+          rollback(out, mark)
+          go = false
+        }
+      }
+    }
+    if op.kind == K_REP1 and count == 0 then Out { ok: false, pos: pos } else good(p)
+  }
+  else if op.kind == K_TERMS then terms_here(c, num, out, exp, far, mode, op, pos)
   else if op.kind == K_PREC then {
     // One pass over the levels rather than one rule per level: the operand is
     // parsed once, and each operator found is held on a stack until an
@@ -1163,91 +1396,9 @@ fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
       good(p)
     }
   }
-  else if op.kind == K_LEFT then {
-    let mark = list.len(out)
-    let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
-    if not o.ok then {
-      rollback(out, mark)
-      Out { ok: false, pos: pos }
-    } else {
-      var p = o.pos
-      var go = true
-      while go {
-        // out holds the left operand from `mark`; the operator lands at
-        // `opmark` and the right operand at `rmark`, so one drain can name
-        // all three and fold them into a single node
-        let opmark = list.len(out)
-        let oo = parse_rule(c, num, out, exp, far, mode, op.b, p)
-        if not oo.ok then {
-          rollback(out, opmark)
-          go = false
-        } else {
-          let rmark = list.len(out)
-          let rr = parse_rule(c, num, out, exp, far, mode, op.a, oo.pos)
-          if not rr.ok then {
-            rollback(out, opmark)
-            go = false
-          } else {
-            if wants(mode, M_BUILD) then {
-              let kids = fold_kids(out, mark, opmark, rmark, c.extra + X_LEFT, c.extra + X_OPERATOR, c.extra + X_RIGHT)
-              list.push(out, tree.node(kind_at(c, id), kids, pos, rr.pos))
-            } else ()
-            p = rr.pos
-          }
-        }
-      }
-      good(p)
-    }
-  }
+  else if op.kind == K_NOT_LIT then not_lit_here(c, num, out, exp, far, mode, op, pos)
   else if op.kind == K_WRAP or op.kind == K_NEST then wrapped_here(c, num, out, exp, far, mode, id, op, pos)
-  else if op.kind == K_WRAP_SEQ or op.kind == K_NEST_SEQ then wrapped_seq_here(c, num, out, exp, far, mode, id, op, pos)
-  else if op.kind == K_OPT then {
-    if not (wants(mode, M_COLLECT) or may_start(c, op.a, num, pos)) then good(pos)
-    else {
-      let mark = list.len(out)
-      let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
-      if o.ok then o else {
-        rollback(out, mark)
-        good(pos)
-      }
-    }
-  }
-  else if op.kind == K_REP or op.kind == K_REP1 then {
-    var p = pos
-    var count = 0
-    var go = true
-    while go {
-      if not (wants(mode, M_COLLECT) or may_start(c, op.a, num, p)) then go = false
-      else {
-        let mark = list.len(out)
-        let o = parse_rule(c, num, out, exp, far, mode, op.a, p)
-        if o.ok and o.pos != p then { p = o.pos; count = count + 1 }
-        else {
-          rollback(out, mark)
-          go = false
-        }
-      }
-    }
-    if op.kind == K_REP1 and count == 0 then Out { ok: false, pos: pos } else good(p)
-  }
-  else if op.kind == K_FIELD then {
-    let mark = list.len(out)
-    let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
-    if o.ok then {
-      label_from(out, mark, kind_at(c, id))
-      good(o.pos)
-    } else {
-      rollback(out, mark)
-      Out { ok: false, pos: pos }
-    }
-  }
-  else if op.kind == K_REF then {
-    if op.a < 0 then miss(exp, far, mode, pos, id)
-    else parse_rule(c, num, out, exp, far, mode, op.a, pos)
-  }
-  // the collecting pass never refuses here, so a file that fails is described
-  // by the branches themselves and the message is the same message
-  else if op.kind == K_NEEDS then (if wants(mode, M_COLLECT) or needs_here(c, num, match list.get(c.ops, op.a) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }, pos) then good(pos) else miss(exp, far, mode, pos, id))
+  else if op.kind == K_TOK then token_here(c, num, out, exp, far, mode, id, op, pos)
   else if op.kind == K_NOT then {
     let mark = list.len(out)
     let emark = list.len(exp)
@@ -1256,61 +1407,7 @@ fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
     untrack(exp, emark)
     if o.ok then Out { ok: false, pos: pos } else good(pos)
   }
-  else if op.kind == K_AHEAD then {
-    let mark = list.len(out)
-    let emark = list.len(exp)
-    let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
-    rollback(out, mark)
-    untrack(exp, emark)
-    if o.ok then good(pos) else Out { ok: false, pos: pos }
-  }
-  else if op.kind == K_EPS then good(pos)
-  else if op.kind == K_ANY then {
-    match list.get(num, pos * 2) {
-      some(k) => if k == tree.T_EOF then miss(exp, far, mode, pos, id) else good(pos + 1),
-      none => miss(exp, far, mode, pos, id),
-    }
-  }
-  else if op.kind == K_RECOVER_LINES then recover_lines_here(c, num, out, exp, far, mode, id, op, pos)
-  else {            // K_RECOVER and K_RECOVER_ALL: the rarest arm carries the chain
-    let mark = list.len(out)
-    let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
-    if o.ok then o
-    else {
-      rollback(out, mark)
-      if not wants(mode, M_RECOVER) then Out { ok: false, pos: pos }
-      else {
-        // find the next place the rule reads, and give up the tokens between
-        let limit = skip_limit(num, pos, op.kind == K_RECOVER)
-        var q = pos + 1
-        var resume = -1
-        while resume < 0 and q < limit {
-          let a = parse_rule(c, num, out, exp, far, mode, op.a, q)
-          rollback(out, mark)
-          if a.ok then resume = q else q = q + 1
-        }
-        // where the tokens given up end: at the next item, or at the end of
-        // what this list may reach
-        let stop = if resume >= 0 then resume else limit
-        if resume < 0 and not real_between(num, pos, limit) then Out { ok: false, pos: pos }
-        else {
-          // keep whatever of the failed item is readable on its own
-          let h = parse_rule(c, num, out, exp, far, mode, op.b, pos)
-          let kept = h.ok and h.pos > pos and h.pos <= stop
-          if not kept then rollback(out, mark) else ()
-          let from = if kept then h.pos else pos
-          if real_between(num, from, stop) then list.push(out, tree.node(c.extra + X_ERROR, [], from, stop)) else ()
-          if resume >= 0 then {
-            let a = parse_rule(c, num, out, exp, far, mode, op.a, resume)
-            if a.ok then Out { ok: true, pos: a.pos } else {
-              rollback(out, mark)
-              Out { ok: false, pos: pos }
-            }
-          } else Out { ok: true, pos: limit }
-        }
-      }
-    }
-  }
+  else uncommon_here(c, num, out, exp, far, mode, id, op, pos)
 }
 
 type Parsed = { root: tree.Node, toks: List[tree.Token], names: nametable.Names }

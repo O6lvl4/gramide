@@ -1594,3 +1594,43 @@ the remaining time was going into, and the 25,014 requests `take_from` makes for
 node children are worth more than the 13,321 removed here. The change stands
 because it is strictly less work for the same answer, not because it moved a
 median.
+
+## A leaf is not a visit, and the ladder was in the wrong order
+
+`("name", seq([nott(lits(HARD_KEYWORDS)), tok("identifier")]))` is how a Python
+grammar says an identifier is not a keyword, and the engine spent four visits on
+it — the sequence, the negation, the keyword set, the token. It is the most
+common rule in the language: 118,214 visits on inspect.py, a fifth of every
+visit the file costs, to decide something a single pass over two integers
+decides.
+
+`compile` now folds both shapes. A negation of a terminal becomes one op, and a
+sequence whose every member is a terminal test — negated or not — becomes one op
+that runs them where it stands. Visits fall from 577,266 to **472,089**, and
+failed visits from 167,600 to 115,979.
+
+Then the dispatch. `parse_rule` is an if-ladder, and every visit pays for the
+kinds it walks past. Counting what actually arrives says the order was wrong:
+alternation is 26 per cent of visits and was second, the fused wrap-sequences
+are 21 per cent and were eleventh, option and repetition are another 17 and were
+twelfth and thirteenth. The ladder is now in the order the visits arrive, and
+everything under one per cent moved into `uncommon_here` behind it. That second
+part is worth as much as the first — and it takes `parse_rule`, the worst
+function in this repository, from 65 to 35 on the complexity ratchet.
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 11.67 | 11.19 | 10.41 | 1.07x |
+| typing.py | 12.01 | 11.45 | 10.29 | 1.11x |
+| argparse.py | 10.80 | 10.39 | 9.28 | 1.12x |
+| _pydecimal.py | 16.48 | 15.46 | 15.15 | 1.02x |
+| dataclasses.py | 7.57 | 7.28 | 7.38 | **0.99x** |
+| pydoc_data/topics.py | 4.90 | 4.94 | 5.17 | **0.96x** |
+
+Two of the fifteen files are now read faster than tree-sitter reads them, and
+_pydecimal.py — 220 KB of code — is within two per cent.
+[Timing](../docs/evidence/leaf-ops-timing.json), 21 shuffled samples per binary;
+[stdlib](../docs/evidence/leaf-ops-stdlib.json) unchanged at 721 of 721;
+[allocations](../docs/evidence/leaf-ops-allocations.json) unchanged, which is
+expected — no node is built or skipped that was not before, and `outline`,
+`parse`, `symbols`, `tags` and `check` are byte-identical, diagnostics included.

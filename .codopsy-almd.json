@@ -30,7 +30,7 @@
   "src/packages/python/statements.almd": 1,
   "src/packages/python/string_expressions.almd": 6,
   "src/packages/python/strings.almd": 12,
-  "src/parser.almd": 65,
+  "src/parser.almd": 35,
   "src/registry.almd": 2,
   "src/symbols.almd": 3,
   "src/tags.almd": 16,
