@@ -1391,3 +1391,26 @@ shuffled samples per binary, all 945 timed outputs matching CPython:
 Eleven of the fifteen medians improve, the code-heavy files by 1.4% to 3.8%.
 Messages are unchanged: the collecting pass computes the same farthest
 position and the same expectation set, and `check` prints what it printed.
+
+## A token's two numbers side by side
+
+The engine numbered a token stream into two arrays — the kinds in one, the
+literal spellings in the other — and carried both into every rule. The two
+were always read at the same position, a cache line apart, and they were two of
+the nine arguments a rule takes, which is one more than the registers hold.
+
+They are one array now, a token's kind at `2i` and its spelling number at
+`2i + 1`.
+
+[Timing](../docs/evidence/interleaved-numbering-timing.json), 21 shuffled
+samples per binary, all 945 timed outputs matching CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 18.17 | 17.32 | 11.03 | 1.6x |
+| typing.py | 18.57 | 18.00 | 10.95 | 1.6x |
+| argparse.py | 16.75 | 16.13 | 10.31 | 1.6x |
+| _pydecimal.py | 26.47 | 25.27 | 16.31 | 1.5x |
+| dataclasses.py | 11.38 | 10.81 | 8.32 | 1.3x |
+
+Thirteen of the fifteen medians improve, the code-heavy files by 1.5% to 5.0%.
