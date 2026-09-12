@@ -1069,3 +1069,49 @@ Thirteen of the fifteen medians improve, by 1.2% to 5.7%. A CPU sample of a
 2.5 MB parse no longer shows `miss` at all — the alternation branches that
 used to call it are gone — and `parse_rule` is now 79% of the time on its own,
 with malloc and free together at 12%.
+
+## A reference is followed once, at compile time
+
+A grammar reference does nothing but stand in front of the rule it names. The
+engine visited it, dispatched on its kind, and called `parse_rule` again on its
+target: one full visit per `r("...")`, and the Python expression ladder is
+fourteen levels of them before an atom is reached.
+
+`compile` now follows them once, at the end, when every target is known. Each
+field that pointed at a reference points at what the reference pointed at,
+through a chain of aliases to its end — capped, so a cycle cannot spin. The
+reference ops stay in the arena, unreferenced; a reference to a rule the
+grammar never defines keeps its place, because its failure is what names the
+missing rule. Only the child lists the rule trees emitted are followed:
+`arena_kids` marks where those end, and the literal runs `compile` appends
+after it hold atom numbers, not children.
+
+Messages are unchanged. A reference's own failure never reached the
+expectation set, because the reference delegated before it could fail.
+
+[Allocation profiles](../docs/evidence/reference-shortcut-allocations.json)
+move by three requests on each file — 256,817 → 256,820 on inspect.py — which
+is the arena being rebuilt once at compile time.
+
+[Timing](../docs/evidence/reference-shortcut-timing.json), 21 shuffled samples
+per binary, startup included, all 945 timed outputs matching CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 35.15 | 31.47 | 11.36 | 2.8x |
+| typing.py | 35.16 | 31.24 | 11.38 | 2.7x |
+| argparse.py | 32.58 | 29.29 | 9.81 | 3.0x |
+| _pydecimal.py | 49.90 | 44.82 | 16.23 | 2.8x |
+| tokenize.py | 10.19 | 8.97 | 4.40 | 2.0x |
+
+Thirteen of the fifteen medians improve; the code-heavy files by 9.9% to 12.0%.
+The machine was not quiet — another build held the one-minute load average
+between 5 and 10 through the run — so the tree-sitter column is the control:
+at 11.36, 11.38, 9.81 and 16.23 ms it is within a few percent of the same
+binary's medians in the quiet runs above, which is the reason to read this
+comparison at all.
+
+Since the session's first change, inspect.py has gone from 48.98 ms and
+635,940 allocation requests to 31.47 ms and 256,820, and from 4.3x tree-sitter
+to 2.8x. The engine is still an interpreter walking an arena, and that walk is
+now nearly all of the remaining time.
