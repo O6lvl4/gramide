@@ -73,7 +73,7 @@ type Grammar = { start: String, rules: Map[String, Rule] }
 // terminal match is then an integer compare rather than a string compare, and
 // the few spellings the engine tests itself are pinned by `SEEDS`.
 type Op = { kind: Int, a: Int, b: Int }
-type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int, atoms: Map[String, Int], name: String,
+type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int,
   spelling: List[Int], spelling_start: List[Int], spelling_end: List[Int], bucket: List[Int], bucket_next: List[Int],
   lit_mask: List[Int], head_kinds: List[Int], head_mask: List[Int], head_start: List[Int], head_len: List[Int], head_run: List[Int],
   kind_of: List[Int], names: nametable.Names, extra: Int }
@@ -660,12 +660,90 @@ fn compile(g: Grammar) -> Compiled = {
   let masks = lit_masks(linked, linked_kids)
   let index = head_index(linked, linked_kids, heads.0, heads.1, heads.2)
   Compiled { ops: linked, texts: texts, kids: linked_kids,
-    start: target_of(resolved, start), atoms: atoms, name: g.start,
+    start: target_of(resolved, start),
     spelling: spelling, spelling_start: spelling_start, spelling_end: spelling_end,
     bucket: bucket, bucket_next: bucket_next,
     lit_mask: masks, head_kinds: index.0, head_mask: index.1,
     head_start: index.2, head_len: index.3, head_run: index.4,
     kind_of: kinds, names: nametable.names_of(texts), extra: extra }
+}
+
+// ── a grammar compiled ahead of time ─────────────────────────────────────
+//
+// Compiling the grammar is 0.8 ms, and it is 0.8 ms of every run, before a
+// byte of the file has been read. The arena it produces is a pile of integers
+// and a list of names, so it can be written down instead: `Tables` is exactly
+// that arena, flat enough to be a literal, and this turns it back into what
+// the engine runs on. `scripts/gen_grammar_tables.py` writes them and checks
+// they still match the grammar, which stays the source of truth.
+//
+// The bucket table is the one thing not stored as it is used: it is 4,352
+// slots and nearly all of them are empty, so it travels as the slots that are
+// not, in order, and is spread out here.
+type Tables = { ops: List[Int], texts: List[String], kids: List[Int], start: Int, extra: Int,
+  spelling: List[Int], spelling_start: List[Int], spelling_end: List[Int],
+  bucket_at: List[Int], bucket_next: List[Int],
+  lit_mask: List[Int], head_kinds: List[Int], head_mask: List[Int],
+  head_start: List[Int], head_len: List[Int], head_run: List[Int], kind_of: List[Int] }
+
+fn spread_buckets(pairs: List[Int]) -> List[Int] = {
+  var bucket: List[Int] = list.with_capacity(ATOM_SLOTS)
+  var at = 0
+  var slot = 0
+  while slot < ATOM_SLOTS {
+    var v = -1
+    while at + 1 < list.len(pairs) and (match list.get(pairs, at) { some(x) => x, none => -1 }) == slot {
+      v = match list.get(pairs, at + 1) { some(x) => x, none => -1 }
+      at = at + 2
+    }
+    list.push(bucket, v)
+    slot = slot + 1
+  }
+  bucket
+}
+
+fn from_tables(t: Tables) -> Compiled = {
+  var ops: List[Op] = list.with_capacity(list.len(t.ops) / 3)
+  var i = 0
+  while i + 2 < list.len(t.ops) {
+    list.push(ops, Op {
+      kind: match list.get(t.ops, i) { some(v) => v, none => K_EPS },
+      a: match list.get(t.ops, i + 1) { some(v) => v, none => 0 },
+      b: match list.get(t.ops, i + 2) { some(v) => v, none => 0 },
+    })
+    i = i + 3
+  }
+  Compiled { ops: ops, texts: t.texts, kids: t.kids, start: t.start,
+    spelling: t.spelling, spelling_start: t.spelling_start, spelling_end: t.spelling_end,
+    bucket: spread_buckets(t.bucket_at), bucket_next: t.bucket_next,
+    lit_mask: t.lit_mask, head_kinds: t.head_kinds, head_mask: t.head_mask,
+    head_start: t.head_start, head_len: t.head_len, head_run: t.head_run,
+    kind_of: t.kind_of, names: nametable.names_of(t.texts), extra: t.extra }
+}
+
+// The same arena, flattened, so a generator can write it down.
+fn to_tables(c: Compiled) -> Tables = {
+  var flat: List[Int] = list.with_capacity(list.len(c.ops) * 3)
+  for op in c.ops {
+    list.push(flat, op.kind)
+    list.push(flat, op.a)
+    list.push(flat, op.b)
+  }
+  var pairs: List[Int] = []
+  var slot = 0
+  while slot < ATOM_SLOTS {
+    let v = match list.get(c.bucket, slot) { some(x) => x, none => -1 }
+    if v >= 0 then {
+      list.push(pairs, slot)
+      list.push(pairs, v)
+    } else ()
+    slot = slot + 1
+  }
+  Tables { ops: flat, texts: c.texts, kids: c.kids, start: c.start, extra: c.extra,
+    spelling: c.spelling, spelling_start: c.spelling_start, spelling_end: c.spelling_end,
+    bucket_at: pairs, bucket_next: c.bucket_next,
+    lit_mask: c.lit_mask, head_kinds: c.head_kinds, head_mask: c.head_mask,
+    head_start: c.head_start, head_len: c.head_len, head_run: c.head_run, kind_of: c.kind_of }
 }
 
 // Keep the owned token stream available for Parsed/failure output while

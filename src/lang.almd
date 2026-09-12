@@ -7,6 +7,7 @@ import self.lex
 import self.parser
 import self.package_api
 import self.registry
+import self.packages.tables
 
 fn known(path: String) -> Bool = registry.known(path)
 fn supports(path: String, capability: String) -> Bool = registry.supports(path, capability)
@@ -16,10 +17,20 @@ fn lex_error(path: String, e: lex.LexError) -> String = path + ":" + int.to_stri
 type Language = { definition: package_api.Definition, tokenize: package_api.Tokenizer, grammar: parser.Compiled, sep: String }
 type Engines = { loaded: List[Language] }
 
+// A package that ships a compiled grammar is read from it; compiling the rule
+// tree instead is 0.8 ms, and it is 0.8 ms before the file has been opened.
+// `scripts/gen_grammar_tables.py --check` is what keeps the two the same.
+fn grammar_of(d: package_api.Definition) -> parser.Compiled = match tables.compiled_for(d.id) {
+  some(c) => c,
+  none => {
+    let make_grammar = d.grammar
+    parser.compile(make_grammar())
+  },
+}
+
 fn compile(d: package_api.Definition) -> Language = {
   let make_lexer = d.lexer
-  let make_grammar = d.grammar
-  Language { definition: d, tokenize: make_lexer(), grammar: parser.compile(make_grammar()), sep: d.sep }
+  Language { definition: d, tokenize: make_lexer(), grammar: grammar_of(d), sep: d.sep }
 }
 fn language_of(path: String) -> Result[Language, String] = ok(compile(registry.resolve(path)!))
 fn tokens_for(path: String, src: String) -> Result[List[tree.Token], String] = {

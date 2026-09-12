@@ -11,6 +11,7 @@ python3 ci/python_layout.py
 python3 ci/python_strings.py
 python3 ci/python_numbers.py
 python3 scripts/gen_python_identifiers.py --check
+python3 scripts/gen_grammar_tables.py --check
 python3 ci/python_identifiers.py
 python3 ci/python_lexer.py
 python3 ci/python_lexer_diagnostics.py

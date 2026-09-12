@@ -1,0 +1,36 @@
+// Generator-only: print every registered package's compiled grammar as data,
+// so `scripts/gen_grammar_tables.py` can write it down as Almide source. This
+// is the one place that still compiles a grammar from its rule tree.
+import self.registry
+import self.parser
+import self.package_api
+import json
+
+fn ints(xs: List[Int]) -> Value = value.array(list.map(xs, (x) => value.int(x)))
+
+fn package(d: package_api.Definition) -> Value = {
+  let make = d.grammar
+  let t = parser.to_tables(parser.compile(make()))
+  value.object([
+    ("id", value.str(d.id)),
+    ("ops", ints(t.ops)),
+    ("texts", value.array(list.map(t.texts, (x) => value.str(x)))),
+    ("kids", ints(t.kids)),
+    ("start", value.int(t.start)),
+    ("extra", value.int(t.extra)),
+    ("spelling", ints(t.spelling)),
+    ("spelling_start", ints(t.spelling_start)),
+    ("spelling_end", ints(t.spelling_end)),
+    ("bucket_at", ints(t.bucket_at)),
+    ("bucket_next", ints(t.bucket_next)),
+    ("lit_mask", ints(t.lit_mask)),
+    ("head_kinds", ints(t.head_kinds)),
+    ("head_mask", ints(t.head_mask)),
+    ("head_start", ints(t.head_start)),
+    ("head_len", ints(t.head_len)),
+    ("head_run", ints(t.head_run)),
+    ("kind_of", ints(t.kind_of)),
+  ])
+}
+
+effect fn main() -> Unit = println(json.stringify(value.array(list.map(registry.packages(), (d) => package(d)))))
