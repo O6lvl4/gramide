@@ -1028,3 +1028,44 @@ is left of it is the call itself, not the work it used to do inside.
 The [full stdlib survey](../docs/evidence/failure-tracking-stdlib.json) matches
 CPython outlines on 721/721 Python 3.14.4 files and full local CI passes,
 including the 21 diagnostic checks that pin the failure messages.
+
+## A literal terminal holds a set of spellings
+
+`name`, the rule behind every Python identifier, is
+`seq([nott(lits(HARD_KEYWORDS)), tok("identifier")])`, and `lits` is an
+alternation: 35 branches, each a `Lit`, each a call into `parse_rule` that
+compares one integer and returns. Every name in a file paid for all of them,
+and so did the operator ladders — `keeps(["==", "!=", "<=", "<", ">=", ">",
+"in", "is"])` and its neighbours.
+
+A literal op now carries a run rather than a single atom: `a` starts `b` atom
+numbers followed by the `b` node ids they came from, and `compile` folds an
+alternation whose every branch is a literal into one such op. Matching is a
+walk of `b` integers with no call per branch, and a literal that fails names
+each of its spellings through the ids in the second half of the run — the same
+expectations the branches used to note one by one, in the same order. An
+ordinary single literal is a run of one.
+
+Nothing about the messages changes. `check` prints the same
+"unexpected X (expected …)" for the same files, and the 21 diagnostic checks
+and 160 delimiter-recovery cases in CI pin that.
+
+[Allocation profiles](../docs/evidence/literal-sets-allocations.json) are
+unchanged at 256,817 requests on inspect.py; one extra reallocation is the
+arena's child list growing at compile time.
+
+[Timing](../docs/evidence/literal-sets-timing.json), 21 shuffled samples per
+binary, startup included, all 945 timed outputs matching CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 35.58 | 33.78 | 11.02 | 3.1x |
+| typing.py | 35.96 | 34.82 | 11.48 | 3.0x |
+| argparse.py | 33.73 | 31.85 | 9.90 | 3.2x |
+| _pydecimal.py | 53.40 | 50.37 | 16.74 | 3.0x |
+| ast.py | 10.29 | 9.85 | 4.55 | 2.2x |
+
+Thirteen of the fifteen medians improve, by 1.2% to 5.7%. A CPU sample of a
+2.5 MB parse no longer shows `miss` at all — the alternation branches that
+used to call it are gone — and `parse_rule` is now 79% of the time on its own,
+with malloc and free together at 12%.
