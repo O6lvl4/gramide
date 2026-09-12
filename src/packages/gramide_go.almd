@@ -15,6 +15,7 @@
 // trailing `{`, once (suffix `_nc`) not — which is the kind of thing a
 // grammar that is a value can do in five lines.
 
+import self.names as nametable
 import self.lex
 import self.tree
 import self.package_api
@@ -216,7 +217,7 @@ fn parse_src(src: String) -> Result[parser.Parsed, String] = {
 }
 
 fn top_kinds(src: String) -> List[String] = match parse_src(src) {
-  ok(p) => list.map(p.root.kids, (k) => k.kind),
+  ok(p) => list.map(p.root.kids, (k) => nametable.name_at(p.names, k.kind)),
   err(e) => ["ERROR " + e],
 }
 
@@ -224,7 +225,7 @@ fn top_kinds(src: String) -> List[String] = match parse_src(src) {
 fn recovered_kinds(src: String) -> List[String] = {
   let toks = lex.tokenize_recovering(src, spec())
   match parser.parse_recovering(parser.compile(go()), bytes.from_string(src), toks) {
-    ok(p) => list.map(p.root.kids, (k) => k.kind),
+    ok(p) => list.map(p.root.kids, (k) => nametable.name_at(p.names, k.kind)),
     err(_) => ["NOTHING"],
   }
 }

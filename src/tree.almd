@@ -1,3 +1,5 @@
+import self.names as nametable
+
 // tree — the syntax tree gramide produces, and the ways to look at it.
 //
 // A Node spans a range of TOKENS (start inclusive, end exclusive); byte and
@@ -8,7 +10,11 @@
 // literals); punctuation and keywords are matched and dropped unless a rule
 // keeps them on purpose.
 
-type Node = { kind: String, field: String, start: Int, end: Int, kids: List[Node] }
+// A node's kind and field are numbers into a name table the parse carries with
+// it: the same name always answers the same number, so a reader compares
+// integers, and building a node no longer copies two strings out of the
+// grammar for every node in the file.
+type Node = { kind: Int, field: Int, start: Int, end: Int, kids: List[Node] }
 
 // A token is a range, not a copy. `start` and `end` count bytes into the
 // source the lexer read, and the text is whatever those bytes are: no stage of
@@ -77,29 +83,31 @@ fn kind_id(name: String) -> Int = match list.index_of(kind_names(), name) {
   none => -1,
 }
 
-fn leaf(kind: String, at: Int) -> Node = {
+fn leaf(kind: Int, at: Int) -> Node = {
   let none_kids: List[Node] = []
-  Node { kind: kind, field: "", start: at, end: at + 1, kids: none_kids }
+  Node { kind: kind, field: -1, start: at, end: at + 1, kids: none_kids }
 }
 
-fn node(kind: String, kids: List[Node], start: Int, end: Int) -> Node =
-  Node { kind: kind, field: "", start: start, end: end, kids: kids }
+fn node(kind: Int, kids: List[Node], start: Int, end: Int) -> Node =
+  Node { kind: kind, field: -1, start: start, end: end, kids: kids }
 
-fn with_field(n: Node, field: String) -> Node =
+fn with_field(n: Node, field: Int) -> Node =
   Node { kind: n.kind, field: field, start: n.start, end: n.end, kids: n.kids }
 
 // The same, in place. `with_field` rebuilds the record, and the native
 // backend renders that as a copy of the node's whole subtree; a parser that
 // names a child on every match cannot afford one copy of the subtree per
 // name. Assigning through a `mut` binding writes the one field.
-fn set_field(mut n: Node, field: String) -> Unit = {
+fn set_field(mut n: Node, field: Int) -> Unit = {
   n.field = field
 }
 
 // The child a grammar named `field`, if the node has one.
-fn child(n: Node, field: String) -> Option[Node] = list.find(n.kids, (k) => k.field == field)
+// A name this grammar never uses is -1, and so is "this child has no name":
+// asking for one must not answer with the other.
+fn child(n: Node, field: Int) -> Option[Node] = if field < 0 then none else list.find(n.kids, (k) => k.field == field)
 
-fn children_of_kind(n: Node, kind: String) -> List[Node] = list.filter(n.kids, (k) => k.kind == kind)
+fn children_of_kind(n: Node, kind: Int) -> List[Node] = list.filter(n.kids, (k) => k.kind == kind)
 
 // The text a node spans, with the original gaps — the only way to get at
 // whitespace and comments, which the token stream drops.
@@ -151,10 +159,10 @@ fn end_line(n: Node, toks: List[Token]) -> Int = match list.get(toks, n.end - 1)
 // S-expression rendering, the form every parser test compares against.
 // `(kind field:(child) (child))` — leaves print their kind only, so a tree
 // stays stable across whitespace and renames of the text it covers.
-fn sexp(n: Node) -> String = {
-  let head = if n.field == "" then "(" + n.kind else n.field + ":(" + n.kind
+fn sexp(n: Node, table: nametable.Names) -> String = {
+  let head = if n.field < 0 then "(" + nametable.name_at(table, n.kind) else nametable.name_at(table, n.field) + ":(" + nametable.name_at(table, n.kind)
   if list.is_empty(n.kids) then head + ")"
-  else head + " " + list.join(list.map(n.kids, (k) => sexp(k)), " ") + ")"
+  else head + " " + list.join(list.map(n.kids, (k) => sexp(k, table)), " ") + ")"
 }
 
 fn count_nodes(n: Node) -> Int = 1 + list.sum(list.map(n.kids, (k) => count_nodes(k)))
@@ -166,17 +174,18 @@ fn collect(n: Node, keep: (Node) -> Bool) -> List[Node] = {
 }
 
 test "sexp renders fields and leaves" {
-  let name = with_field(leaf("identifier", 1), "name")
-  let f = node("function_declaration", [name, node("block", [], 2, 4)], 0, 4)
-  assert_eq(sexp(f), "(function_declaration name:(identifier) (block))")
+  let table = nametable.names_of(["identifier", "name", "function_declaration", "block"])
+  let name = with_field(leaf(0, 1), 1)
+  let f = node(2, [name, node(3, [], 2, 4)], 0, 4)
+  assert_eq(sexp(f, table), "(function_declaration name:(identifier) (block))")
   assert_eq(count_nodes(f), 3)
 }
 
 test "child by field" {
-  let name = with_field(leaf("identifier", 1), "name")
-  let f = node("function_declaration", [name], 0, 2)
-  assert_eq(option.map(child(f, "name"), (n) => n.kind), some("identifier"))
-  assert_eq(child(f, "body"), none)
+  let name = with_field(leaf(0, 1), 1)
+  let f = node(2, [name], 0, 2)
+  assert_eq(option.map(child(f, 1), (n) => n.kind), some(0))
+  assert_eq(child(f, 9), none)
 }
 
 test "a node's text is cut by bytes, not by characters" {
@@ -187,9 +196,9 @@ test "a node's text is cut by bytes, not by characters" {
     Token { kind: T_IDENTIFIER, start: 8, end: 15, line: 2, col: 1 },
     Token { kind: T_IDENTIFIER, start: 16, end: 17, line: 2, col: 9 },
   ]
-  let n = node("type_name", [], 0, 1)
+  let n = node(0, [], 0, 1)
   assert_eq(text_of(n, toks, source), "SpineDb")
-  assert_eq(span_text(node("path", [], 0, 2), toks, source), "SpineDbx")
+  assert_eq(span_text(node(1, [], 0, 2), toks, source), "SpineDbx")
 }
 
 test "kind names and ids are one table read both ways" {

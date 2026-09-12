@@ -6,7 +6,7 @@ assert unicodedata.unidata_version=='16.0.0','Use CPython 3.14 / Unicode 16 for 
 names=['name','_','x1','日本語','é','e\u0301','\u0301e','K','Ａ','变量1','x·y','·x','🪨','name🪨','1name','name\u200d','a\u00b2','\U00011f02','\U00001c89']
 with tempfile.TemporaryDirectory() as tmp:
     project=Path(tmp);(project/'src/packages/python').mkdir(parents=True)
-    for file in ['tree.almd','lex.almd','packages/python/identifiers.almd','packages/python/identifier_data.almd']:
+    for file in ['tree.almd','names.almd','lex.almd','packages/python/identifiers.almd','packages/python/identifier_data.almd']:
         shutil.copyfile(ROOT/'src'/file,project/'src'/file)
     shutil.copyfile(ROOT/'ci/python_identifiers_probe.almd',project/'src/main.almd')
     (project/'almide.toml').write_text('[package]\nname = "identifiers_probe"\nversion = "0.1.0"\nedition = "2026"\n')

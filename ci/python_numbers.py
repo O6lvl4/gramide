@@ -34,7 +34,7 @@ for source in invalid:
     cases.append(dict(source=source,start=0));expected.append(None)
 with tempfile.TemporaryDirectory() as tmp:
     project=Path(tmp);(project/'src/packages/python').mkdir(parents=True)
-    for file in ['tree.almd','lex.almd','packages/python/numbers.almd']:
+    for file in ['tree.almd','names.almd','lex.almd','packages/python/numbers.almd']:
         shutil.copyfile(ROOT/'src'/file,project/'src'/file)
     shutil.copyfile(ROOT/'ci/python_numbers_probe.almd',project/'src/main.almd')
     (project/'almide.toml').write_text('[package]\nname = "numbers_probe"\nversion = "0.1.0"\nedition = "2026"\n')

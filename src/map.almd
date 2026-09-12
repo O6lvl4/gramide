@@ -58,7 +58,7 @@ effect fn scan(root: String) -> Result[Scan, String] = {
           err(e) => list.push(errors, e + " [skipped]"),
           ok(d) => {
             match d.error { some(e) => list.push(errors, e + " [recovered]"), none => () }
-            list.push(files, FileTags { path: rel, tags: tags.of_tree(d.parsed.root, d.parsed.toks, bytes.from_string(src), d.sep, d.symbols) })
+            list.push(files, FileTags { path: rel, tags: tags.of_tree(d.parsed.root, d.parsed.toks, bytes.from_string(src), d.parsed.names, d.sep, d.symbols) })
           },
         },
       }

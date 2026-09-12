@@ -289,7 +289,7 @@ def act_stmt(n):
 with tempfile.TemporaryDirectory() as tmp:
     project=Path(tmp);(project/'src/packages').mkdir(parents=True)
     shutil.copytree(ROOT/'src/packages/python',project/'src/packages/python')
-    for name in ['tree.almd','lex.almd','parser.almd']:shutil.copyfile(ROOT/'src'/name,project/'src'/name)
+    for name in ['tree.almd','names.almd','lex.almd','parser.almd']:shutil.copyfile(ROOT/'src'/name,project/'src'/name)
     shutil.copyfile(ROOT/'ci/python_statements_probe.almd',project/'src/main.almd')
     (project/'almide.toml').write_text('[package]\nname = "statements_probe"\nversion = "0.1.0"\nedition = "2026"\n')
     binary=project/'probe';data=project/'cases.json'

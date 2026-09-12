@@ -19,6 +19,7 @@
 // `then`, `else`, before or after a binary operator); `sep` is what
 // separates statements and declarations.
 
+import self.names as nametable
 import self.lex
 import self.tree
 import self.package_api
@@ -261,7 +262,7 @@ fn parse_src(src: String) -> Result[parser.Parsed, String] = {
 }
 
 fn top_kinds(src: String) -> List[String] = match parse_src(src) {
-  ok(p) => list.map(p.root.kids, (k) => k.kind),
+  ok(p) => list.map(p.root.kids, (k) => nametable.name_at(p.names, k.kind)),
   err(e) => ["ERROR " + e],
 }
 
@@ -269,7 +270,7 @@ fn top_kinds(src: String) -> List[String] = match parse_src(src) {
 fn recovered_kinds(src: String) -> List[String] = {
   let toks = lex.tokenize_recovering(src, spec())
   match parser.parse_recovering(parser.compile(almide()), bytes.from_string(src), toks) {
-    ok(p) => list.map(p.root.kids, (k) => k.kind),
+    ok(p) => list.map(p.root.kids, (k) => nametable.name_at(p.names, k.kind)),
     err(_) => ["NOTHING"],
   }
 }
@@ -283,9 +284,9 @@ test "the tree carries names and bodies" {
   let src = "fn add(a: Int, b: Int) -> Int = a + b\n"
   let p = parse_src(src)!
   let f = list.first(p.root.kids)!
-  assert_eq(f.kind, "function_declaration")
-  assert_eq(option.map(tree.child(f, "name"), (n) => tree.leaf_text(n, p.toks, bytes.from_string(src))), some("add"))
-  assert_eq(option.map(tree.child(f, "body"), (n) => tree.sexp(n)), some("body:(binary left:(identifier) operator:(op) right:(identifier))"))
+  assert_eq(nametable.name_at(p.names, f.kind), "function_declaration")
+  assert_eq(option.map(tree.child(f, nametable.id_of(p.names, "name")), (n) => tree.leaf_text(n, p.toks, bytes.from_string(src))), some("add"))
+  assert_eq(option.map(tree.child(f, nametable.id_of(p.names, "body")), (n) => tree.sexp(n, p.names)), some("body:(binary left:(identifier) operator:(op) right:(identifier))"))
 }
 
 test "blocks, statements, control flow, lambdas, records, maps" {

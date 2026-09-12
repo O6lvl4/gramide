@@ -1299,3 +1299,66 @@ binary (load average 3.3), all 945 timed outputs matching CPython:
 Twelve of the fifteen medians improve, the code-heavy files by 6.5% to 15.3%.
 The three that do not are 3.6 to 5.3 ms files, where startup is most of the
 measurement.
+
+## A node's kind is a number too
+
+Every node the parser built copied two strings out of the grammar — its kind
+and, where the rule named it, its field. On inspect.py that was 102,032
+requests for the kind alone, and it made every reader's test of what a node is
+a string comparison.
+
+A node now carries numbers. `compile` gives every distinct spelling in its text
+table one number — the first entry that spells it answers for all of them — so
+two nodes the grammar spelled the same compare equal without a string being
+touched. `tags` resolves the names a language package states (its declarations,
+scopes, namespaces, callables, envelopes, and the fields it reads) once per
+file, and compares integers from then on.
+
+The table travels with the parse, and how it is stored matters more than it
+looks: a `List[String]` is copied string by string at every hand-off, and the
+first version of this change cost 1,045 allocations each time a parse passed
+from the engine to a reader — five hand-offs, and 0.3 ms of startup a file that
+parses in 3 ms cannot afford. `names.almd` stores the table the way the lexer
+stores a token stream: the names joined into one byte string, with their bounds
+beside them. Copying it is three allocations, and reading a name out of it is
+one — paid only where a name is actually printed.
+
+Two things the tree is now careful about. A name the grammar never uses answers
+-1, and so does "this child has no name": `child` and `named_child` refuse -1
+rather than matching a positional child with it. And the module is imported
+under an alias, because a parameter named `names` shadows a module named
+`names` — the same resolution hazard that renamed `node` to `node_value` in the
+probes earlier in this file.
+
+[Allocations](../docs/evidence/node-kind-ids-allocations.json):
+
+| File | Total allocations before → after | Fewer |
+| --- | ---: | ---: |
+| inspect.py | 239,227 → 145,486 | 39.2% |
+| typing.py | 251,347 → 156,979 | 37.5% |
+| argparse.py | 218,323 → 135,961 | 37.7% |
+| _pydecimal.py | 377,115 → 220,267 | 41.6% |
+| pydoc_data/topics.py | 31,567 → 30,510 | 3.3% |
+
+`text_at` falls from 102,032 requests to none: nothing reads a name out of the
+grammar while parsing any more.
+
+[Timing](../docs/evidence/node-kind-ids-timing.json), 21 shuffled samples per
+binary, all 945 timed outputs matching CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 21.19 | 18.22 | 10.60 | 1.7x |
+| typing.py | 21.07 | 18.39 | 10.40 | 1.8x |
+| argparse.py | 18.54 | 16.32 | 9.43 | 1.7x |
+| _pydecimal.py | 31.44 | 26.45 | 15.23 | 1.7x |
+| dataclasses.py | 12.17 | 10.89 | 7.53 | 1.4x |
+
+The code-heavy files improve by 10.5% to 15.9%. The small ones read 0.3% to
+6.3% slower in this run, which was taken at load average 6.75; measured on its
+own, against the same binary and interleaved, startup is 3.42 ms before and
+3.43 ms after.
+
+The complexity baseline records three changes, all of them falls or a new file:
+`parser.almd` 74 → 65, where the terminal, recovery and ladder arms moved out
+of the dispatch; `layout.almd` 28 → 27; and `names.almd` at 7.

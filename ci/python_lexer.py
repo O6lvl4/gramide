@@ -57,7 +57,7 @@ def oracle(source):
 with tempfile.TemporaryDirectory() as tmp:
     project=Path(tmp);(project/'src/packages').mkdir(parents=True)
     shutil.copytree(ROOT/'src/packages/python',project/'src/packages/python')
-    for file in ['tree.almd','lex.almd']:shutil.copyfile(ROOT/'src'/file,project/'src'/file)
+    for file in ['tree.almd','names.almd','lex.almd']:shutil.copyfile(ROOT/'src'/file,project/'src'/file)
     shutil.copyfile(ROOT/'ci/python_lexer_probe.almd',project/'src/main.almd')
     (project/'almide.toml').write_text('[package]\nname = "lexer_probe"\nversion = "0.1.0"\nedition = "2026"\n')
     binary=project/'probe';data=project/'cases.json'
