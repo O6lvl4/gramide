@@ -27,6 +27,28 @@ fn make(source: Bytes, kind: String, start: Int, end: Int, line: Int, line_start
 fn newline_byte(b: Int) -> Bool = b == 10 or b == 13
 fn newline_end(source: Bytes, at: Int) -> Int = at + (if bytes.get_or(source, at, -1) == 13 and bytes.get_or(source, at + 1, -1) == 10 then 2 else 1)
 
+// A string prefix is one or two ASCII letters glued to an opening quote: `f"`,
+// `rt'`, `TR"""`. Reading it from the bytes keeps every ordinary identifier —
+// most of the tokens in a file — off the allocating path, where testing the
+// name against a list of spellings built that list and a lowered copy of the
+// name for every identifier in the file.
+let P_NONE = 0
+let P_F = 1
+let P_FR = 2
+let P_T = 3
+let P_TR = 4
+fn prefix_code(buffer: Bytes, start: Int, end: Int) -> Int = {
+  let width = if strings.quote(bytes.get_or(buffer, end, -1)) then end - start else 0
+  let first = strings.lower(bytes.get_or(buffer, start, -1))
+  if width == 1 then (if first == 102 then P_F else if first == 116 then P_T else P_NONE)
+  else if width == 2 then {
+    let second = strings.lower(bytes.get_or(buffer, start + 1, -1))
+    if (first == 102 and second == 114) or (first == 114 and second == 102) then P_FR
+    else if (first == 116 and second == 114) or (first == 114 and second == 116) then P_TR
+    else P_NONE
+  } else P_NONE
+}
+
 // Roll back the complete outer interpolation, including replacement tokens.
 // Keeping a partial opening would leave layout with fabricated unmatched braces.
 fn discard_interpolation(mut tokens: List[tree.Token], checkpoint: Int, head: tree.Token, buffer: Bytes, end: Int) -> Unit = {
@@ -134,17 +156,17 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
       match identifiers.scan(classes, buffer, i, line, i - line_start + 1) {
         ok(end) => { i = end }, err(e) => { failure = some(e) },
       }
-      let name = string.to_lower(bytes.to_string_lossy(bytes.slice(buffer, start, i)))
-      if list.contains(["f", "fr", "rf", "t", "tr", "rt"], name) and strings.quote(bytes.get_or(buffer, i, -1)) then {
+      let prefix = prefix_code(buffer, start, i)
+      if prefix != P_NONE then {
         let q = bytes.get_or(buffer, i, -1)
         let width = if bytes.get_or(buffer, i + 1, -1) == q and bytes.get_or(buffer, i + 2, -1) == q then 3 else 1
-        let family = if string.contains(name, "f") then "fstring" else "tstring"
+        let family = if prefix == P_F or prefix == P_FR then "fstring" else "tstring"
         guard list.len(frames) < 200 else err(lex.LexError { line: first_line, col: start - first_line_start + 1, message: "too many nested interpolated strings" })
         if list.is_empty(frames) then {
           checkpoint = list.len(tokens)
           head = make(buffer, "error", start, i + width, first_line, first_line_start)
         } else ()
-        list.push(frames, interpolation.Frame { family: family, quote: q, width: width, raw: string.contains(name, "r"), mode: "literal", depth: 0 })
+        list.push(frames, interpolation.Frame { family: family, quote: q, width: width, raw: prefix == P_FR or prefix == P_TR, mode: "literal", depth: 0 })
         kind = family + "_start"
         i = i + width
       } else ()
@@ -223,4 +245,21 @@ test "Python lexer joins lines and does not invent code inside strings" {
   assert_eq(list.len(list.filter(ts, (t) => t.kind == "newline")), 3)
   assert_eq(list.len(list.filter(ts, (t) => t.kind == "string")), 1)
   assert(result.is_ok(scan_source("x = f\"{value}\"\n")))
+}
+
+test "a string prefix is only f or t, in either order with r, before a quote" {
+  assert_eq(prefix_code(bytes.from_string("f'"), 0, 1), P_F)
+  assert_eq(prefix_code(bytes.from_string("F'"), 0, 1), P_F)
+  assert_eq(prefix_code(bytes.from_string("rf'"), 0, 2), P_FR)
+  assert_eq(prefix_code(bytes.from_string("FR'"), 0, 2), P_FR)
+  assert_eq(prefix_code(bytes.from_string("t'"), 0, 1), P_T)
+  assert_eq(prefix_code(bytes.from_string("Rt'"), 0, 2), P_TR)
+  // Byte and unicode prefixes are ordinary strings; the scanner reads them
+  // through `strings.opening`, not through an interpolation frame.
+  assert_eq(prefix_code(bytes.from_string("b'"), 0, 1), P_NONE)
+  assert_eq(prefix_code(bytes.from_string("rb'"), 0, 2), P_NONE)
+  assert_eq(prefix_code(bytes.from_string("ft'"), 0, 2), P_NONE)
+  assert_eq(prefix_code(bytes.from_string("frf'"), 0, 3), P_NONE)
+  // A name is only a prefix when the quote is glued to it.
+  assert_eq(prefix_code(bytes.from_string("f "), 0, 1), P_NONE)
 }
