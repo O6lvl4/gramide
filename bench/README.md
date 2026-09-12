@@ -1455,3 +1455,44 @@ per binary, all 945 timed outputs matching CPython:
 | dataclasses.py | 10.12 | 9.18 | 7.58 | 1.2x |
 
 Thirteen of the fifteen medians improve, the code-heavy files by 7.1% to 12.6%.
+
+## Two cuts to what the engine walks
+
+A visit costs about ten nanoseconds and inspect.py took 788,325 of them — 46
+per token. Two changes take that to 577,266, and the count is the measure here
+because it is exact where a median on a shared machine is not.
+
+**A wrap over a sequence is one node, not two.** Nearly every rule that names
+something is `wrap(kind, seq([…]))`, and the engine visited the wrap, which
+called the sequence, which did the work. `compile` now fuses the pair: the
+fused op carries the child run itself and the arm walks it where it stands.
+That is 112,412 visits on inspect.py, and it has to be taught to the head
+table, which reads a sequence's first child — the first version of this change
+forgot to, the table went blank, and the parse got *slower* by a third.
+
+**A rule begins with a set of terminals, not one.** The head table held one
+terminal per rule, which meant a branch beginning with an alternation could not
+be skipped. It now holds a run: an alternation's set is the union of its
+branches', and a set that cannot be known, or grows past 48, is empty, which
+means "walk in and see". `strings` is the case that pays: every atom in a
+Python file tried it and failed, 14,364 times in inspect.py, because its head
+was three token kinds and not one.
+
+Neither changes what the engine accepts. `outline`, `parse`, `symbols`, `tags`
+and `check` are byte-identical on five stdlib files, and the diagnostics are
+the same diagnostics: the collecting pass still walks every branch.
+
+[Timing](../docs/evidence/visit-cuts-timing.json), 21 shuffled samples per
+binary, all 945 timed outputs matching CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 15.47 | 14.25 | 10.96 | 1.3x |
+| typing.py | 15.64 | 14.77 | 10.89 | 1.4x |
+| argparse.py | 14.40 | 13.38 | 10.12 | 1.3x |
+| _pydecimal.py | 22.20 | 20.74 | 15.97 | 1.3x |
+| ast.py | 5.98 | 5.63 | 4.26 | 1.3x |
+
+The code-heavy files improve by 4.7% to 7.8% — less than the 27% of visits
+removed, which says the engine's remaining time is not in the visits it makes
+but in what each one touches.

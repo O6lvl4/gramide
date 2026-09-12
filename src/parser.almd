@@ -75,7 +75,8 @@ type Grammar = { start: String, rules: Map[String, Rule] }
 type Op = { kind: Int, a: Int, b: Int }
 type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int, atoms: Map[String, Int], name: String,
   spelling: List[Int], spelling_start: List[Int], spelling_end: List[Int], bucket: Map[Int, Int], bucket_next: Map[Int, Int],
-  head: List[Int], kind_of: List[Int], names: nametable.Names, extra: Int }
+  head_start: List[Int], head_len: List[Int], head_run: List[Int],
+  kind_of: List[Int], names: nametable.Names, extra: Int }
 
 // Every terminal spelling, byte by byte and end to end, in atom order, plus a
 // bucket chain keyed by a spelling's first byte and its length. Numbering the
@@ -167,6 +168,10 @@ let K_RECOVER_LINES = 18
 let K_PREC = 19
 let K_NEEDS = 20
 let K_NEST = 21
+// A wrap whose body is a sequence, fused: the engine walks the children where
+// it stands instead of calling a rule that does nothing else.
+let K_WRAP_SEQ = 22
+let K_NEST_SEQ = 23
 
 // The engine names six things the grammar does not: a kept operator, a
 // recovered range, the three parts of a fold, and the absence of a name. They
@@ -300,6 +305,20 @@ fn shortcut_kids(resolved: List[Op], kids: List[Int], upto: Int) -> List[Int] = 
   out
 }
 
+fn fuse_wraps(ops: List[Op]) -> List[Op] = {
+  var out: List[Op] = list.with_capacity(list.len(ops))
+  var i = 0
+  while i < list.len(ops) {
+    let op = match list.get(ops, i) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+    let body = match list.get(ops, op.a) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+    if (op.kind == K_WRAP or op.kind == K_NEST) and body.kind == K_SEQ then
+      list.push(out, Op { kind: if op.kind == K_WRAP then K_WRAP_SEQ else K_NEST_SEQ, a: body.a, b: body.b })
+    else list.push(out, op)
+    i = i + 1
+  }
+  out
+}
+
 fn shortcut_ops(resolved: List[Op]) -> List[Op] = {
   var out: List[Op] = list.with_capacity(list.len(resolved))
   for op in resolved {
@@ -321,40 +340,87 @@ fn shortcut_ops(resolved: List[Op]) -> List[Op] = {
 // rule emitted later, so the passes repeat until nothing moves. Walking the
 // chain recursively instead costs the whole table at every node — 2.7 ms of
 // startup on a file that has none to spare.
-fn head_pass(resolved: List[Op], kids: List[Int], prev: List[Int]) -> List[Int] = {
-  var out: List[Int] = list.with_capacity(list.len(resolved))
+// A head set: the terminals a rule can begin with, when they are all known. A
+// sequence answers for its first element, an alternation for the union of its
+// branches, and anything that can match nothing answers the empty set, which
+// means "no idea, walk in and see". The sets live as runs in one shared list.
+let HEAD_LIMIT = 48
+
+fn head_through(op: Op, kids: List[Int]) -> Int =
+  if op.kind == K_WRAP or op.kind == K_NEST or op.kind == K_FIELD or op.kind == K_REP1 or op.kind == K_LEFT then op.a
+  // a sequence, a fused wrap and a ladder all keep their first child in the
+  // child list, where `a` is an index into it rather than a node of its own
+  else if ((op.kind == K_SEQ or op.kind == K_WRAP_SEQ or op.kind == K_NEST_SEQ) and op.b > 0) or op.kind == K_PREC then
+    match list.get(kids, op.a) { some(v) => v, none => -1 }
+  else -1
+
+fn copy_head(mut run: List[Int], start: List[Int], width: List[Int], prev_start: List[Int], prev_len: List[Int], prev_run: List[Int], here: Int, child: Int) -> Bool = {
+  let known = if child < here then (match list.get(width, child) { some(v) => v, none => 0 })
+    else (match list.get(prev_len, child) { some(v) => v, none => 0 })
+  if known == 0 then false
+  else {
+    let at = if child < here then (match list.get(start, child) { some(v) => v, none => 0 })
+      else (match list.get(prev_start, child) { some(v) => v, none => 0 })
+    var m = 0
+    while m < known {
+      list.push(run, if child < here then (match list.get(run, at + m) { some(v) => v, none => -1 })
+        else (match list.get(prev_run, at + m) { some(v) => v, none => -1 }))
+      m = m + 1
+    }
+    true
+  }
+}
+
+fn heads_pass(resolved: List[Op], kids: List[Int], prev_start: List[Int], prev_len: List[Int], prev_run: List[Int]) -> (List[Int], List[Int], List[Int]) = {
+  var start: List[Int] = list.with_capacity(list.len(resolved))
+  var width: List[Int] = list.with_capacity(list.len(resolved))
+  var run: List[Int] = []
   var i = 0
   while i < list.len(resolved) {
     let op = match list.get(resolved, i) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
-    let through = if op.kind == K_WRAP or op.kind == K_FIELD or op.kind == K_REP1 or op.kind == K_LEFT then op.a
-      // a sequence and a ladder both keep their first child in the child list,
-      // where `a` is an index into it rather than a node of its own
-      else if (op.kind == K_SEQ and op.b > 0) or op.kind == K_PREC then match list.get(kids, op.a) { some(v) => v, none => -1 }
-      else -1
-    if op.kind == K_LIT or op.kind == K_KEEP or op.kind == K_TOK then list.push(out, i)
-    else if through < 0 then list.push(out, -1)
-    // a child emitted before its parent is already answered in this pass, so
-    // a whole chain resolves in one of them
-    else if through < i then list.push(out, match list.get(out, through) { some(v) => v, none => -1 })
-    else list.push(out, match list.get(prev, through) { some(v) => v, none => -1 })
+    let from = list.len(run)
+    if op.kind == K_LIT or op.kind == K_KEEP or op.kind == K_TOK then list.push(run, i)
+    else if op.kind == K_ALT then {
+      var known = op.b > 0
+      var j = 0
+      while known and j < op.b {
+        known = copy_head(run, start, width, prev_start, prev_len, prev_run, i, match list.get(kids, op.a + j) { some(v) => v, none => -1 })
+        j = j + 1
+      }
+      if not known or list.len(run) - from > HEAD_LIMIT then {
+        while list.len(run) > from { let _ = list.pop(run) }
+      } else ()
+    }
+    else {
+      let through = head_through(op, kids)
+      if through >= 0 then {
+        let _ = copy_head(run, start, width, prev_start, prev_len, prev_run, i, through)
+      } else ()
+    }
+    list.push(start, from)
+    list.push(width, list.len(run) - from)
     i = i + 1
   }
-  out
+  (start, width, run)
 }
 
-fn head_terminals(resolved: List[Op], kids: List[Int]) -> List[Int] = {
-  var heads: List[Int] = list.with_capacity(list.len(resolved))
+fn head_terminals(resolved: List[Op], kids: List[Int]) -> (List[Int], List[Int], List[Int]) = {
+  var start: List[Int] = []
+  var width: List[Int] = []
+  var run: List[Int] = []
   var i = 0
-  while i < list.len(resolved) { list.push(heads, -1); i = i + 1 }
+  while i < list.len(resolved) { list.push(start, 0); list.push(width, 0); i = i + 1 }
   var round = 0
   var moving = true
-  while moving and round < 32 {
-    let next = head_pass(resolved, kids, heads)
-    moving = next != heads
-    heads = next
+  while moving and round < 16 {
+    let (s2, w2, r2) = heads_pass(resolved, kids, start, width, run)
+    moving = w2 != width or r2 != run
+    start = s2
+    width = w2
+    run = r2
     round = round + 1
   }
-  heads
+  (start, width, run)
 }
 
 // Every node kind and field name is a number: the first entry that spells a
@@ -439,12 +505,14 @@ fn compile(g: Grammar) -> Compiled = {
   let extra = list.len(texts)
   for name in ["", "op", "ERROR", "left", "operator", "right"] { list.push(texts, name) }
   let kinds = canonical_kinds(texts, extra + X_NONE)
-  let linked = shortcut_ops(resolved)
+  let linked = fuse_wraps(shortcut_ops(resolved))
   let linked_kids = shortcut_kids(resolved, kids, arena_kids)
+  let heads = head_terminals(linked, linked_kids)
   Compiled { ops: linked, texts: texts, kids: linked_kids,
     start: target_of(resolved, start), atoms: atoms, name: g.start,
     spelling: spelling, spelling_start: spelling_start, spelling_end: spelling_end,
-    bucket: bucket, bucket_next: bucket_next, head: head_terminals(linked, linked_kids),
+    bucket: bucket, bucket_next: bucket_next,
+    head_start: heads.0, head_len: heads.1, head_run: heads.2,
     kind_of: kinds, names: nametable.names_of(texts), extra: extra }
 }
 
@@ -720,14 +788,22 @@ fn reduce_top(c: Compiled, mut out: List[tree.Node], mut marks: List[Int], mut o
 // certainly fail. The collecting pass never asks, so the expectations a
 // skipped branch would have named are still named when a message needs them.
 fn may_start(c: Compiled, id: Int, num: List[Int], pos: Int) -> Bool = {
-  let h = match list.get(c.head, id) { some(v) => v, none => -1 }
-  if h < 0 then true
+  let n = match list.get(c.head_len, id) { some(v) => v, none => 0 }
+  if n == 0 then true
   else {
-    let op = match list.get(c.ops, h) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
     let k = match list.get(num, pos * 2) { some(v) => v, none => -1 }
-    if op.kind == K_TOK then k == op.b
-    else if k == tree.T_STRING or k == tree.T_NEG then false
-    else spelled(c, op, match list.get(num, pos * 2 + 1) { some(v) => v, none => -1 })
+    let x = match list.get(num, pos * 2 + 1) { some(v) => v, none => -1 }
+    let at = match list.get(c.head_start, id) { some(v) => v, none => 0 }
+    var i = 0
+    var can = false
+    while not can and i < n {
+      let h = match list.get(c.head_run, at + i) { some(v) => v, none => -1 }
+      let op = match list.get(c.ops, h) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+      if op.kind == K_TOK then can = k == op.b
+      else if k != tree.T_STRING and k != tree.T_NEG then can = spelled(c, op, x) else ()
+      i = i + 1
+    }
+    can
   }
 }
 
@@ -863,6 +939,28 @@ fn recover_lines_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut
 // A rule that names what it matched. `K_NEST` keeps quiet when the rule left
 // exactly one node behind, because a node with one child and a name that only
 // says which rule ran says nothing a reader can use.
+fn wrapped_seq_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
+  let mark = list.len(out)
+  var p = pos
+  var failed = false
+  var i = 0
+  while not failed and i < op.b {
+    let o = parse_rule(c, num, out, exp, far, mode, kid_at(c, op.a + i), p)
+    if o.ok then { p = o.pos } else { failed = true }
+    i = i + 1
+  }
+  if failed then {
+    rollback(out, mark)
+    bad(pos)
+  } else {
+    if wants(mode, M_BUILD) and (op.kind == K_WRAP_SEQ or list.len(out) - mark != 1) then {
+      let kids = take_from(out, mark)
+      list.push(out, tree.node(kind_at(c, id), kids, pos, p))
+    } else ()
+    good(p)
+  }
+}
+
 fn wrapped_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
   let mark = list.len(out)
   let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
@@ -1011,6 +1109,7 @@ fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
     }
   }
   else if op.kind == K_WRAP or op.kind == K_NEST then wrapped_here(c, num, out, exp, far, mode, id, op, pos)
+  else if op.kind == K_WRAP_SEQ or op.kind == K_NEST_SEQ then wrapped_seq_here(c, num, out, exp, far, mode, id, op, pos)
   else if op.kind == K_OPT then {
     if not (wants(mode, M_COLLECT) or may_start(c, op.a, num, pos)) then good(pos)
     else {
