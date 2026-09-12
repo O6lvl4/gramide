@@ -75,7 +75,7 @@ type Grammar = { start: String, rules: Map[String, Rule] }
 type Op = { kind: Int, a: Int, b: Int }
 type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int, atoms: Map[String, Int], name: String,
   spelling: List[Int], spelling_start: List[Int], spelling_end: List[Int], bucket: List[Int], bucket_next: List[Int],
-  head_kinds: List[Int], head_mask: List[Int], head_start: List[Int], head_len: List[Int], head_run: List[Int],
+  lit_mask: List[Int], head_kinds: List[Int], head_mask: List[Int], head_start: List[Int], head_len: List[Int], head_run: List[Int],
   kind_of: List[Int], names: nametable.Names, extra: Int }
 
 // Every terminal spelling, byte by byte and end to end, in atom order, plus a
@@ -364,6 +364,30 @@ fn fuse_wraps(ops: List[Op]) -> List[Op] = {
   out
 }
 
+// A literal set answers "is the token spelled one of these" by walking the
+// set, and the set that decides an identifier is not a keyword has 35 members
+// — walked in full every time, because an ordinary name matches none of them.
+// One 64-bit sketch per set turns every one of those misses into a shift and
+// a test; only a hit is worth walking.
+fn lit_masks(ops: List[Op], kids: List[Int]) -> List[Int] = {
+  var out: List[Int] = list.with_capacity(list.len(ops))
+  var i = 0
+  while i < list.len(ops) {
+    let op = match list.get(ops, i) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+    var mask = 0
+    if op.kind == K_LIT or op.kind == K_KEEP or op.kind == K_NOT_LIT then {
+      var j = 0
+      while j < op.b {
+        mask = int.bor(mask, int.bshl(1, int.band(match list.get(kids, op.a + j) { some(v) => v, none => 0 }, 63)))
+        j = j + 1
+      }
+    } else ()
+    list.push(out, mask)
+    i = i + 1
+  }
+  out
+}
+
 fn leafy(kind: Int) -> Bool = kind == K_TOK or kind == K_LIT or kind == K_KEEP or kind == K_NOT_LIT or kind == K_NOT_TOK
 
 // Two rewrites, in this order because the second reads what the first wrote.
@@ -633,12 +657,13 @@ fn compile(g: Grammar) -> Compiled = {
   let linked_kids = shortcut_kids(resolved, kids, arena_kids)
   let linked = fuse_leaves(fuse_wraps(shortcut_ops(resolved)), linked_kids)
   let heads = head_terminals(linked, linked_kids)
+  let masks = lit_masks(linked, linked_kids)
   let index = head_index(linked, linked_kids, heads.0, heads.1, heads.2)
   Compiled { ops: linked, texts: texts, kids: linked_kids,
     start: target_of(resolved, start), atoms: atoms, name: g.start,
     spelling: spelling, spelling_start: spelling_start, spelling_end: spelling_end,
     bucket: bucket, bucket_next: bucket_next,
-    head_kinds: index.0, head_mask: index.1,
+    lit_mask: masks, head_kinds: index.0, head_mask: index.1,
     head_start: index.2, head_len: index.3, head_run: index.4,
     kind_of: kinds, names: nametable.names_of(texts), extra: extra }
 }
@@ -876,6 +901,14 @@ fn spelled(c: Compiled, op: Op, x: Int) -> Bool = {
   hit
 }
 
+// A token no terminal spells carries -1 and matches nothing; a token whose
+// number is not in the set's sketch matches nothing either. Both answers are
+// exact, and both are reached without touching the set.
+fn spelled_at(c: Compiled, id: Int, op: Op, x: Int) -> Bool =
+  if x < 0 then false
+  else if int.band(int.bshr(match list.get(c.lit_mask, id) { some(v) => v, none => -1 }, int.band(x, 63)), 1) == 0 then false
+  else spelled(c, op, x)
+
 // Which level's operator stands at `pos`, or -1 for none. The token is read,
 // not consumed: a level whose operator is not a literal terminal can never be
 // found here, which is why `prec` asks for literals.
@@ -1000,9 +1033,9 @@ fn token_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
     }
 }
 
-fn literal_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, op: Op, pos: Int) -> Out = {
+fn literal_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
   match list.get(num, pos * 2 + 1) {
-    some(x) => if not spelled(c, op, x) then missed(c, exp, far, mode, pos, op)
+    some(x) => if not spelled_at(c, id, op, x) then missed(c, exp, far, mode, pos, op)
       else match list.get(num, pos * 2) {
         some(k) => if k == tree.T_STRING or k == tree.T_NEG then missed(c, exp, far, mode, pos, op)
           else if op.kind == K_LIT then good(pos + 1)
@@ -1096,9 +1129,9 @@ fn wrapped_seq_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut e
 // A negation of a terminal. The terminal itself never builds a node the
 // negation keeps and never names an expectation it keeps either, so what is
 // left of it is the test and its answer, inverted.
-fn not_lit_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, op: Op, pos: Int) -> Out = {
+fn not_lit_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
   let emark = list.len(exp)
-  let o = literal_here(c, num, out, exp, far, mode, Op { kind: K_LIT, a: op.a, b: op.b }, pos)
+  let o = literal_here(c, num, out, exp, far, mode, id, Op { kind: K_LIT, a: op.a, b: op.b }, pos)
   untrack(exp, emark)
   if o.ok then bad(pos) else good(pos)
 }
@@ -1113,9 +1146,9 @@ fn not_tok_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: 
 }
 
 fn leaf_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out =
-  if op.kind == K_LIT or op.kind == K_KEEP then literal_here(c, num, out, exp, far, mode, op, pos)
+  if op.kind == K_LIT or op.kind == K_KEEP then literal_here(c, num, out, exp, far, mode, id, op, pos)
   else if op.kind == K_TOK then token_here(c, num, out, exp, far, mode, id, op, pos)
-  else if op.kind == K_NOT_LIT then not_lit_here(c, num, out, exp, far, mode, op, pos)
+  else if op.kind == K_NOT_LIT then not_lit_here(c, num, out, exp, far, mode, id, op, pos)
   else not_tok_here(c, num, out, exp, far, mode, op, pos)
 
 // A sequence of nothing but terminal tests, run where it stands. Like any
@@ -1303,7 +1336,7 @@ fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
       }
     }
   }
-  else if op.kind == K_LIT or op.kind == K_KEEP then literal_here(c, num, out, exp, far, mode, op, pos)
+  else if op.kind == K_LIT or op.kind == K_KEEP then literal_here(c, num, out, exp, far, mode, id, op, pos)
   else if op.kind == K_SEQ then {
     let mark = list.len(out)
     var p = pos
@@ -1396,7 +1429,7 @@ fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
       good(p)
     }
   }
-  else if op.kind == K_NOT_LIT then not_lit_here(c, num, out, exp, far, mode, op, pos)
+  else if op.kind == K_NOT_LIT then not_lit_here(c, num, out, exp, far, mode, id, op, pos)
   else if op.kind == K_WRAP or op.kind == K_NEST then wrapped_here(c, num, out, exp, far, mode, id, op, pos)
   else if op.kind == K_TOK then token_here(c, num, out, exp, far, mode, id, op, pos)
   else if op.kind == K_NOT then {
