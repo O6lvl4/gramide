@@ -257,7 +257,7 @@ fn almide() -> parser.Grammar = grammar("source_file", [
 // ── tests ──────────────────────────────────────────────────────────────
 fn parse_src(src: String) -> Result[parser.Parsed, String] = {
   let toks = lex.tokenize(src, spec()) |> result.map_err((e) => "lex " + int.to_string(e.line) + ":" + int.to_string(e.col) + " " + e.message)!
-  parser.parse(almide(), toks) |> result.map_err((f) => parser.format_failure(f))
+  parser.parse(almide(), bytes.from_string(src), toks) |> result.map_err((f) => parser.format_failure(f))
 }
 
 fn top_kinds(src: String) -> List[String] = match parse_src(src) {
@@ -268,7 +268,7 @@ fn top_kinds(src: String) -> List[String] = match parse_src(src) {
 // what a reader gets from a file that does not parse
 fn recovered_kinds(src: String) -> List[String] = {
   let toks = lex.tokenize_recovering(src, spec())
-  match parser.parse_recovering(parser.compile(almide()), toks) {
+  match parser.parse_recovering(parser.compile(almide()), bytes.from_string(src), toks) {
     ok(p) => list.map(p.root.kids, (k) => k.kind),
     err(_) => ["NOTHING"],
   }
@@ -280,10 +280,11 @@ test "declarations of every kind parse" {
 }
 
 test "the tree carries names and bodies" {
-  let p = parse_src("fn add(a: Int, b: Int) -> Int = a + b\n")!
+  let src = "fn add(a: Int, b: Int) -> Int = a + b\n"
+  let p = parse_src(src)!
   let f = list.first(p.root.kids)!
   assert_eq(f.kind, "function_declaration")
-  assert_eq(option.map(tree.child(f, "name"), (n) => tree.leaf_text(n, p.toks)), some("add"))
+  assert_eq(option.map(tree.child(f, "name"), (n) => tree.leaf_text(n, p.toks, bytes.from_string(src))), some("add"))
   assert_eq(option.map(tree.child(f, "body"), (n) => tree.sexp(n)), some("body:(binary left:(identifier) operator:(op) right:(identifier))"))
 }
 
@@ -344,19 +345,22 @@ test "a file that parses recovers to exactly the same tree" {
 // ── lexing ────────────────────────────────────────────────────────────────
 
 test "words, keywords, numbers, operators" {
-  let toks = lex.tokenize("fn add(x: Int) -> Int = x + 0x1F", spec())!
-  assert_eq(lex.texts(toks), ["fn", "add", "(", "x", ":", "Int", ")", "->", "Int", "=", "x", "+", "0x1F", "", ""])
+  let src = "fn add(x: Int) -> Int = x + 0x1F"
+  let toks = lex.tokenize(src, spec())!
+  assert_eq(lex.texts(bytes.from_string(src), toks), ["fn", "add", "(", "x", ":", "Int", ")", "->", "Int", "=", "x", "+", "0x1F", "", ""])
   assert_eq(lex.kinds(toks), ["keyword", "identifier", "punct", "identifier", "punct", "type_name", "punct", "punct", "type_name", "punct", "identifier", "punct", "integer", "newline", "eof"])
 }
 
 test "floats and ranges do not eat each other" {
-  assert_eq(lex.texts(lex.tokenize("1.5 1..5 xs.0 2e3", spec())!), ["1.5", "1", "..", "5", "xs", ".", "0", "2e3", "", ""])
+  let src = "1.5 1..5 xs.0 2e3"
+  assert_eq(lex.texts(bytes.from_string(src), lex.tokenize(src, spec())!), ["1.5", "1", "..", "5", "xs", ".", "0", "2e3", "", ""])
 }
 
 test "strings: escapes, interpolation with nested braces and quotes, heredoc, raw" {
-  let toks = lex.tokenize("\"a\\\"b\" \"x \${ f({y: \"}\"}) } z\" \"\"\"\nmulti\n\"\"\" r\"\"\"raw \\ \"\"\" 'q'", spec())!
+  let src = "\"a\\\"b\" \"x \${ f({y: \"}\"}) } z\" \"\"\"\nmulti\n\"\"\" r\"\"\"raw \\ \"\"\" 'q'"
+  let toks = lex.tokenize(src, spec())!
   assert_eq(lex.kinds(list.take(toks, 5)), ["string", "string", "string", "string", "string"])
-  assert_eq(list.get(lex.texts(toks), 1), some("\"x \${ f({y: \"}\"}) } z\""))
+  assert_eq(list.get(lex.texts(bytes.from_string(src), toks), 1), some("\"x \${ f({y: \"}\"}) } z\""))
 }
 
 test "an unterminated string is an error with a position" {
@@ -365,14 +369,17 @@ test "an unterminated string is an error with a position" {
 }
 
 test "comments vanish, newlines collapse, `?` is always its own token, backtick names" {
-  let toks = lex.tokenize("// c\nfn f() = 1 /* a /* b */ c */\n\n\nfn is_ok?(x: Int) -> Bool = x?\nlet `type` = 1\n", spec())!
-  assert_eq(lex.texts(toks), ["fn", "f", "(", ")", "=", "1", "", "fn", "is_ok", "?", "(", "x", ":", "Int", ")", "->", "Bool", "=", "x", "?", "", "let", "`type`", "=", "1", "", ""])
+  let src = "// c\nfn f() = 1 /* a /* b */ c */\n\n\nfn is_ok?(x: Int) -> Bool = x?\nlet `type` = 1\n"
+  let toks = lex.tokenize(src, spec())!
+  assert_eq(lex.texts(bytes.from_string(src), toks), ["fn", "f", "(", ")", "=", "1", "", "fn", "is_ok", "?", "(", "x", ":", "Int", ")", "->", "Bool", "=", "x", "?", "", "let", "`type`", "=", "1", "", ""])
   assert_eq(list.get(lex.kinds(toks), 22), some("identifier"))
 }
 
 test "line and column are 1-based and survive a heredoc" {
-  let toks = lex.tokenize("a\n\"\"\"\nx\n\"\"\"\nb", spec())!
-  let b = list.find(toks, (t) => t.text == "b")
+  let src = "a\n\"\"\"\nx\n\"\"\"\nb"
+  let source = bytes.from_string(src)
+  let toks = lex.tokenize(src, spec())!
+  let b = list.find(toks, (t) => tree.token_text(source, t) == "b")
   assert_eq(option.map(b, (t) => t.line), some(5))
   assert_eq(option.map(b, (t) => t.col), some(1))
 }

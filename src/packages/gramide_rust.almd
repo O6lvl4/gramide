@@ -346,7 +346,7 @@ fn rust() -> parser.Grammar = grammar("source_file", tt_rules() + expr_rules("",
 
 fn parse_src(src: String) -> Result[parser.Parsed, String] = {
   let toks = lex.tokenize(src, spec()) |> result.map_err((e) => "lex " + int.to_string(e.line) + ":" + int.to_string(e.col) + " " + e.message)!
-  parser.parse(rust(), toks) |> result.map_err((f) => parser.format_failure(f))
+  parser.parse(rust(), bytes.from_string(src), toks) |> result.map_err((f) => parser.format_failure(f))
 }
 
 // Envelopes preserve modifiers/attributes without changing declaration kinds.
@@ -360,7 +360,7 @@ fn top_kinds(src: String) -> List[String] = match parse_src(src) {
 
 fn recovered_kinds(src: String) -> List[String] = {
   let toks = lex.tokenize_recovering(src, spec())
-  match parser.parse_recovering(parser.compile(rust()), toks) {
+  match parser.parse_recovering(parser.compile(rust()), bytes.from_string(src), toks) {
     ok(p) => item_kinds(p.root.kids),
     err(_) => ["NOTHING"],
   }
@@ -376,9 +376,10 @@ test "a lifetime and a character are told apart by what closes them" {
 }
 
 test "raw strings end only at the hashes they opened with" {
-  let toks = lex.tokenize("let a = r#\"one \" two\"#; let b = b\"bytes\";", spec())!
+  let src = "let a = r#\"one \" two\"#; let b = b\"bytes\";"
+  let toks = lex.tokenize(src, spec())!
   assert_eq(list.len(list.filter(toks, (t) => t.kind == tree.T_STRING)), 2)
-  assert_eq(list.get(lex.texts(toks), 3), some("r#\"one \" two\"#"))
+  assert_eq(list.get(lex.texts(bytes.from_string(src), toks), 3), some("r#\"one \" two\"#"))
 }
 
 test "numbers carry their type suffix, and `1.` is a float but `1.max` is not" {

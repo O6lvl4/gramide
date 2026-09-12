@@ -53,30 +53,33 @@ fn tokenize(l: Language, src: String, recover: Bool) -> Result[List[tree.Token],
 // method with its type.
 type Reading = { parsed: parser.Parsed, error: Option[String], errors: Int, sep: String, language: String, symbols: package_api.SymbolRules }
 
-fn recovered(c: parser.Compiled, toks: List[tree.Token], msg: String, l: Language) -> Result[Reading, String] =
-  match parser.parse_recovering(c, toks) {
+fn recovered(c: parser.Compiled, source: Bytes, toks: List[tree.Token], msg: String, l: Language) -> Result[Reading, String] =
+  match parser.parse_recovering(c, source, toks) {
     ok(p) => ok(Reading { parsed: p, error: some(msg), errors: parser.error_nodes(p.root), sep: l.sep, language: l.definition.id, symbols: l.definition.symbols }),
     err(_) => err(msg),
   }
 
-fn read_lang(l: Language, path: String, src: String) -> Result[Reading, String] =
+fn read_lang(l: Language, path: String, src: String) -> Result[Reading, String] = {
+  // The tokens are ranges into this; every reader that wants a name reads it.
+  let source = bytes.from_string(src)
   match tokenize(l, src, false) {
     // it lexes; the parser decides whether it also parses
-    ok(toks) => match parser.parse_with(l.grammar, toks) {
+    ok(toks) => match parser.parse_with(l.grammar, source, toks) {
       ok(p) => ok(Reading { parsed: p, error: none, errors: 0, sep: l.sep, language: l.definition.id, symbols: l.definition.symbols }),
-      err(f) => recovered(l.grammar, toks, path + ":" + parser.format_failure(f), l),
+      err(f) => recovered(l.grammar, source, toks, path + ":" + parser.format_failure(f), l),
     },
     // it does not even lex, which is the ordinary state of a half-typed
     // string: lex again turning what it cannot read into `error` tokens
     err(e) => {
       let toks = tokenize(l, src, true) |> result.map_err((failure) => lex_error(path, failure))!
-      recovered(l.grammar, toks, lex_error(path, e), l)
+      recovered(l.grammar, source, toks, lex_error(path, e), l)
     },
   }
+}
 
 fn parse_lang(l: Language, path: String, src: String) -> Result[parser.Parsed, String] = {
   let toks = tokenize(l, src, false) |> result.map_err((e) => lex_error(path, e))!
-  parser.parse_with(l.grammar, toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
+  parser.parse_with(l.grammar, bytes.from_string(src), toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
 }
 
 // The gate's own path: the verdict and nothing else, so the engine builds no
@@ -85,7 +88,7 @@ fn parse_lang(l: Language, path: String, src: String) -> Result[parser.Parsed, S
 fn verify_lang(l: Language, path: String, src: String) -> Result[Unit, String] = {
   guard list.contains(l.definition.capabilities, "check") else err(path + ": language package does not provide check")
   let toks = tokenize(l, src, false) |> result.map_err((e) => lex_error(path, e))!
-  parser.verify(l.grammar, toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
+  parser.verify(l.grammar, bytes.from_string(src), toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
 }
 
 // One file, compiling its grammar for this call alone.

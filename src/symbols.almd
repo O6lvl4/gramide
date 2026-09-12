@@ -13,22 +13,23 @@ fn document(path: String, source: String) -> Result[String, String] = {
     ok(json.stringify(value.object([
       ("schema_version", value.int(1)), ("complete", value.bool(true)),
       ("lang", value.str(language)), ("total_lines", value.int(list.len(string.lines(source)))),
-      ("symbols", value.array(collect(d.parsed.root, d.parsed.toks, "", d.sep, d.symbols)))
+      ("symbols", value.array(collect(d.parsed.root, d.parsed.toks, bytes.from_string(source), "", d.sep, d.symbols)))
     ])))
   } }
 }
 
 // One module boundary per document, rather than per node in the walk.
-fn collect(n: tree.Node, toks: List[tree.Token], scope: String, sep: String, rules: package_api.SymbolRules) -> List[Value] =
-  tags.symbol_rows(n, toks, scope, sep, rules)
+fn collect(n: tree.Node, toks: List[tree.Token], source: Bytes, scope: String, sep: String, rules: package_api.SymbolRules) -> List[Value] =
+  tags.symbol_rows(n, toks, source, scope, sep, rules)
 
 // Explicit opt-in: only Python's recovery policy currently supplies this contract.
 fn recovered_document(path: String, source: String) -> Result[String, String] = {
   guard lang.supports(path, "symbols-recovered") else err(path + ": language package does not provide recovered symbols")
   let d = lang.read_source(path, source)!
-  let ranges = tags.error_ranges(d.parsed.root, d.parsed.toks)
+  let bytes_source = bytes.from_string(source)
+  let ranges = tags.error_ranges(d.parsed.root, d.parsed.toks, bytes_source)
   guard option.is_none(d.error) or not list.is_empty(ranges) else err(path + ": recovered parse has no bounded error ranges")
-  let rows = collect(d.parsed.root, d.parsed.toks, "", d.sep, d.symbols)
+  let rows = collect(d.parsed.root, d.parsed.toks, bytes_source, "", d.sep, d.symbols)
   ok(json.stringify(value.object([
     ("schema_version", value.int(1)), ("complete", value.bool(option.is_none(d.error))),
     ("recovery_policy", value.str("error-free-declarations-v1")),

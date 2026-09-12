@@ -40,8 +40,8 @@ fn source_byte_at(buffer: Bytes, i: Int) -> Int = bytes.get_or(buffer, i, -1)
 fn text(buffer: Bytes, s: Int, e: Int) -> String =
   bytes.to_string_lossy(bytes.slice(buffer, s, e))
 
-fn mk(buffer: Bytes, kind: Int, s: Int, e: Int, line: Int, line_start: Int) -> tree.Token =
-  tree.Token { kind: kind, text: text(buffer, s, e), start: s, end: e, line: line, col: s - line_start + 1 }
+fn mk(kind: Int, s: Int, e: Int, line: Int, line_start: Int) -> tree.Token =
+  tree.Token { kind: kind, start: s, end: e, line: line, col: s - line_start + 1 }
 
 type LexError = { line: Int, col: Int, message: String }
 
@@ -376,18 +376,27 @@ fn scan_operator(buffer: Bytes, start: Int, ops: List[String], patterns: List[By
   list.get(ops, found)
 }
 
+// The operators a statement may end on, read from the source: `++`, `--` and
+// the three closing delimiters, and nothing else one or two bytes long.
+fn ends_punct(buffer: Bytes, t: tree.Token) -> Bool = {
+  let first = source_byte_at(buffer, t.start)
+  if t.end - t.start == 1 then first == 41 or first == 93 or first == 125
+  else if t.end - t.start == 2 then (first == 43 or first == 45) and source_byte_at(buffer, t.start + 1) == first
+  else false
+}
+
 // NL_SEMI: does a newline after this token become a separator?
-fn ends_statement(t: tree.Token, ends_kw: List[String]) -> Bool =
+fn ends_statement(buffer: Bytes, t: tree.Token, ends_kw: List[String]) -> Bool =
   t.kind == tree.T_IDENTIFIER or t.kind == tree.T_INTEGER or t.kind == tree.T_FLOAT or t.kind == tree.T_IMAGINARY
   or t.kind == tree.T_STRING or t.kind == tree.T_RUNE
-  or (t.kind == tree.T_KEYWORD and list.contains(ends_kw, t.text))
-  or (t.kind == tree.T_PUNCT and (t.text == "++" or t.text == "--" or t.text == ")" or t.text == "]" or t.text == "}"))
+  or (t.kind == tree.T_KEYWORD and list.contains(ends_kw, text(buffer, t.start, t.end)))
+  or (t.kind == tree.T_PUNCT and ends_punct(buffer, t))
 
 // Whether the newline about to be passed should be emitted as a token.
-fn wants_newline(toks: List[tree.Token], policy: Int, ends_kw: List[String]) -> Bool =
+fn wants_newline(buffer: Bytes, toks: List[tree.Token], policy: Int, ends_kw: List[String]) -> Bool =
   if policy == NL_NONE then false
   else match list.last(toks) {
-    some(t) => if policy == NL_SEMI then ends_statement(t, ends_kw) else t.kind != tree.T_NEWLINE,
+    some(t) => if policy == NL_SEMI then ends_statement(buffer, t, ends_kw) else t.kind != tree.T_NEWLINE,
     none => false,
   }
 
@@ -425,7 +434,7 @@ fn tokenize_with(source: String, spec: Spec, recover: Bool) -> Result[List[tree.
     let b = source_byte_at(buffer, i)
     if is_space(b) then i = i + 1
     else if b == 10 then {
-      if wants_newline(toks, spec.newlines, spec.ends_kw) then list.push(toks, mk(buffer, tree.T_NEWLINE, i, i, line, line_start)) else ()
+      if wants_newline(buffer, toks, spec.newlines, spec.ends_kw) then list.push(toks, mk(tree.T_NEWLINE, i, i, line, line_start)) else ()
       i = i + 1
       line = line + 1
       line_start = i
@@ -451,17 +460,17 @@ fn tokenize_with(source: String, spec: Spec, recover: Bool) -> Result[List[tree.
       if depth > 0 then {
         // unterminated. The nested form has already run to the end of the
         // file, so there is nothing left to give up on.
-        if recover and not spec.nested_block then list.push(toks, mk(buffer, tree.T_ERROR, s, n, line, line_start))
+        if recover and not spec.nested_block then list.push(toks, mk(tree.T_ERROR, s, n, line, line_start))
         else if not recover then failure = some(LexError { line: line, col: (if spec.nested_block then i else s) - line_start + 1, message: "unterminated block comment" })
         else ()
-      } else if spec.block_comment_newline and had_newline and wants_newline(toks, spec.newlines, spec.ends_kw) then
-        list.push(toks, mk(buffer, tree.T_NEWLINE, s, s, line, line_start))
+      } else if spec.block_comment_newline and had_newline and wants_newline(buffer, toks, spec.newlines, spec.ends_kw) then
+        list.push(toks, mk(tree.T_NEWLINE, s, s, line, line_start))
       else ()
     }
     else if starts_string(buffer, i, spec.strings) then {
       match scan_string(buffer, i, spec.strings) {
         some(e) => {
-          list.push(toks, mk(buffer, literal_kind(buffer, i, spec.strings), i, e, line, line_start))
+          list.push(toks, mk(literal_kind(buffer, i, spec.strings), i, e, line, line_start))
           // a literal may span lines; keep the line counter honest
           var k = i
           while k < e { if source_byte_at(buffer, k) == 10 then { line = line + 1; line_start = k + 1 } else (); k = k + 1 }
@@ -469,14 +478,14 @@ fn tokenize_with(source: String, spec: Spec, recover: Bool) -> Result[List[tree.
         },
         none => if recover then {
           let e = to_eol(buffer, i)
-          list.push(toks, mk(buffer, tree.T_ERROR, i, e, line, line_start))
+          list.push(toks, mk(tree.T_ERROR, i, e, line, line_start))
           i = e
         } else { failure = some(LexError { line: line, col: i - line_start + 1, message: "unterminated string" }) },
       }
     }
     else if starts_number(buffer, i, spec.numbers) then {
       let (e, kind) = scan_number(buffer, i, spec.numbers)
-      list.push(toks, mk(buffer, kind, i, e, line, line_start))
+      list.push(toks, mk(kind, i, e, line, line_start))
       i = e
     }
     else if is_alpha(b) or b >= 128 then {
@@ -485,18 +494,18 @@ fn tokenize_with(source: String, spec: Spec, recover: Bool) -> Result[List[tree.
       let kind = if list.contains(spec.keywords, word) then tree.T_KEYWORD
         else if spec.upper_is_type and is_upper(b) then tree.T_TYPE_NAME
         else tree.T_IDENTIFIER
-      list.push(toks, mk(buffer, kind, i, e, line, line_start))
+      list.push(toks, mk(kind, i, e, line, line_start))
       i = e
     }
     else if spec.backtick_ident and b == 96 then {
       let e = scan_backtick(buffer, i)
       if e == i and recover then {
-        list.push(toks, mk(buffer, tree.T_ERROR, i, i + 1, line, line_start))
+        list.push(toks, mk(tree.T_ERROR, i, i + 1, line, line_start))
         i = i + 1
       }
       else if e == i then { failure = some(LexError { line: line, col: i - line_start + 1, message: "empty backtick name" }) }
       else {
-        list.push(toks, mk(buffer, if spec.upper_is_type and is_upper(source_byte_at(buffer, i + 1)) then tree.T_TYPE_NAME else tree.T_IDENTIFIER, i, e, line, line_start))
+        list.push(toks, mk(if spec.upper_is_type and is_upper(source_byte_at(buffer, i + 1)) then tree.T_TYPE_NAME else tree.T_IDENTIFIER, i, e, line, line_start))
         i = e
       }
     }
@@ -506,11 +515,11 @@ fn tokenize_with(source: String, spec: Spec, recover: Bool) -> Result[List[tree.
         // it never continues the line above as a binary minus
         let at_line_start = match list.last(toks) { some(t) => t.kind == tree.T_NEWLINE, none => true }
         let glued = spec.neg_token and op == "-" and at_line_start and not is_space(source_byte_at(buffer, i + 1)) and source_byte_at(buffer, i + 1) != 10
-        list.push(toks, mk(buffer, if glued then tree.T_NEG else tree.T_PUNCT, i, i + string.len(op), line, line_start))
+        list.push(toks, mk(if glued then tree.T_NEG else tree.T_PUNCT, i, i + string.len(op), line, line_start))
         i = i + string.len(op)
       },
       none => if recover then {
-        list.push(toks, mk(buffer, tree.T_ERROR, i, i + 1, line, line_start))
+        list.push(toks, mk(tree.T_ERROR, i, i + 1, line, line_start))
         i = i + 1
       } else { failure = some(LexError { line: line, col: i - line_start + 1, message: "unexpected character " + string.from_bytes([b]) }) },
     }
@@ -518,8 +527,8 @@ fn tokenize_with(source: String, spec: Spec, recover: Bool) -> Result[List[tree.
   match failure {
     some(e) => err(e),
     none => {
-      if wants_newline(toks, spec.newlines, spec.ends_kw) then list.push(toks, mk(buffer, tree.T_NEWLINE, n, n, line, line_start)) else ()
-      list.push(toks, mk(buffer, tree.T_EOF, n, n, line, line_start))
+      if wants_newline(buffer, toks, spec.newlines, spec.ends_kw) then list.push(toks, mk(tree.T_NEWLINE, n, n, line, line_start)) else ()
+      list.push(toks, mk(tree.T_EOF, n, n, line, line_start))
       ok(toks)
     },
   }
@@ -529,7 +538,7 @@ fn kinds(toks: List[tree.Token]) -> List[String] = {
   let names = tree.kind_names()
   list.map(toks, (t) => tree.kind_name_in(names, t.kind))
 }
-fn texts(toks: List[tree.Token]) -> List[String] = list.map(toks, (t) => t.text)
+fn texts(buffer: Bytes, toks: List[tree.Token]) -> List[String] = list.map(toks, (t) => tree.token_text(buffer, t))
 
 // A language this build does not have, written only as data: `#` to end of
 // line, `<# … #>` blocks that do not nest, its own words and operators. If a
@@ -552,10 +561,11 @@ fn toy() -> Spec = Spec {
 }
 
 test "a language the module has never heard of, given as data" {
-  let toks = tokenize("when x -> y # a comment\n<# a block #> do 1 + 2", toy())!
+  let src = "when x -> y # a comment\n<# a block #> do 1 + 2"
+  let toks = tokenize(src, toy())!
   assert_eq(kinds(toks), ["keyword", "identifier", "punct", "identifier", "newline",
     "keyword", "integer", "punct", "integer", "newline", "eof"])
-  assert_eq(texts(list.take(toks, 4)), ["when", "x", "->", "y"])
+  assert_eq(texts(bytes.from_string(src), list.take(toks, 4)), ["when", "x", "->", "y"])
 }
 
 test "the newline policies differ, and nothing else has to" {
