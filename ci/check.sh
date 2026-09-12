@@ -2,6 +2,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 compiler="${ALMIDE_BIN:-almide}"
+
+# The Python package is checked against CPython itself, and which CPython is not
+# a detail: its tokenizer changed in 3.12 (a line continuation alone on a line no
+# longer swallows the indentation after it), and the identifier oracle is pinned
+# to Unicode 16, which is 3.14's. On an older interpreter these checks fail with
+# a token diff that looks like a gramide bug and is not one. Say so first.
+python3 -c 'import sys
+v = sys.version_info
+assert v[:2] == (3, 14), (
+    "ci: the Python package oracles are CPython 3.14 — its tokenizer, its stdlib "
+    "and its Unicode 16 tables. python3 here is %d.%d; a failure below would be "
+    "that difference, not a defect." % (v.major, v.minor))'
+
 "$compiler" test
 "$compiler" build --release
 python3 ci/smoke.py
