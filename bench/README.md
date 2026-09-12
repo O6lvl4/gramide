@@ -1851,3 +1851,38 @@ diagnostics on stderr, and that order is part of the output.
 [Correctness](../docs/evidence/one-write-stdlib.json) is unchanged: 721 of 721
 stdlib outlines match CPython, against tree-sitter's 720, and `outline`,
 `tokens`, `tags` and `parse` are byte-identical to the previous binary.
+
+## What a run costs before the parser sees a byte
+
+The seven smallest files on the board lose by less than half a millisecond, and
+the note under them said gramide's binary takes about 0.2 ms longer to load.
+That was a guess about a mechanism, and it was wrong.
+
+[`bench/startup_floor.py`](startup_floor.py) builds controls that differ in one
+thing at a time and reports the minimum of 151 shuffled runs each, because a
+floor is what a startup cost is and the median only adds this machine's load:
+
+| | ms over `/usr/bin/true` | |
+| --- | ---: | --- |
+| C, 33 KB, one `puts` | +0.116 | |
+| the same C binary padded past 400 KB | +0.135 | mach-o size is not a startup cost |
+| Rust, `write(2)` only, no `std::rt::init` | +0.106 | Rust itself is free |
+| Rust, ordinary `main`, one `println!` | +0.350 | **+0.244** for the std runtime |
+| Almide, one `println` | +0.337 | the same, to within this measurement |
+| gramide, no arguments | +0.380 | +0.043 for its own 2.4 MB |
+| gramide, a one-line file | +0.555 | +0.175 of its own work |
+| tree-sitter, the same one-line file | +0.237 | +0.121 of its own work |
+
+So the gap on a file with nothing in it is 0.32 ms, and 0.24 of it is the Rust
+standard library starting up: `std::rt::init`, and the first `println!` building
+the `Stdout` it flushes through. It is not the binary's size — 400 KB of padding
+costs a C binary nothing — and it is not Almide, which is level with Rust to
+within the noise here. It is what every binary the compiler emits pays before
+`main` runs, and it is out of gramide's reach from Almide source.
+
+The files that still lose are 1 KB to 25 KB and finish in about 4 ms or less.
+Their gaps run from 0.17 ms to 0.51 ms, and 0.32 ms of every one of them is
+already there before either program has read a byte. For six of the eight the
+gap is smaller than that: gramide reads those files faster than tree-sitter
+does and still loses, because it started later. It starts later on the files it
+wins, too.
