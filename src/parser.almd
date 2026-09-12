@@ -74,8 +74,8 @@ type Grammar = { start: String, rules: Map[String, Rule] }
 // the few spellings the engine tests itself are pinned by `SEEDS`.
 type Op = { kind: Int, a: Int, b: Int }
 type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int, atoms: Map[String, Int], name: String,
-  spelling: List[Int], spelling_start: List[Int], spelling_end: List[Int], bucket: Map[Int, Int], bucket_next: Map[Int, Int],
-  head_start: List[Int], head_len: List[Int], head_run: List[Int],
+  spelling: List[Int], spelling_start: List[Int], spelling_end: List[Int], bucket: List[Int], bucket_next: List[Int],
+  head_kinds: List[Int], head_mask: List[Int], head_start: List[Int], head_len: List[Int], head_run: List[Int],
   kind_of: List[Int], names: nametable.Names, extra: Int }
 
 // Every terminal spelling, byte by byte and end to end, in atom order, plus a
@@ -83,15 +83,18 @@ type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: In
 // token stream then reads the source where the token sits: an ordinary name —
 // most of the tokens in a file — lands in an empty bucket and answers -1
 // without a string being cut out of the source to hash.
+// A byte and a width, which is every key the bucket table can be asked for:
+// 256 first bytes by 17 widths. The table is that size and is read by index —
+// a hash of the same two numbers would cost more than the answer.
 fn atom_key(first: Int, width: Int) -> Int = first * 17 + (if width > 16 then 16 else width)
+let ATOM_SLOTS = 4352
+let ATOM_IDS = 65536
 
-fn pack_atoms(spellings: List[String]) -> (List[Int], List[Int], List[Int], Map[Int, Int], Map[Int, Int]) = {
+fn pack_atoms(spellings: List[String]) -> (List[Int], List[Int], List[Int], List[Int], List[Int]) = {
   var data: List[Int] = []
   var starts: List[Int] = []
   var ends: List[Int] = []
-  var head: Map[Int, Int] = [:]
-  var chain: Map[Int, Int] = [:]
-  var id = 0
+  var slots: List[Int] = list.with_capacity(list.len(spellings))
   for text in spellings {
     let raw = bytes.from_string(text)
     let width = bytes.len(raw)
@@ -102,10 +105,43 @@ fn pack_atoms(spellings: List[String]) -> (List[Int], List[Int], List[Int], Map[
       k = k + 1
     }
     list.push(ends, list.len(data))
-    let slot = atom_key(bytes.get_or(raw, 0, -1), width)
-    map.insert(chain, id, match map.get(head, slot) { some(v) => v, none => -1 })
-    map.insert(head, slot, id)
+    list.push(slots, atom_key(bytes.get_or(raw, 0, 0), width))
+  }
+  // Both tables are filled by appending, never by writing at an index:
+  // `list.set` on this backend copies the whole list, and a 4,352-slot table
+  // written 249 times that way is a millisecond of startup on its own.
+  // The chain looks backward for the last spelling in the same slot, and the
+  // heads are read off one sorted pass, slot by slot.
+  var chain: List[Int] = list.with_capacity(list.len(slots))
+  var id = 0
+  while id < list.len(slots) {
+    let mine = match list.get(slots, id) { some(v) => v, none => -1 }
+    var back = id - 1
+    var prev = -1
+    while prev < 0 and back >= 0 {
+      if (match list.get(slots, back) { some(v) => v, none => -1 }) == mine then prev = back else back = back - 1
+    }
+    list.push(chain, prev)
     id = id + 1
+  }
+  var keys: List[Int] = list.with_capacity(list.len(slots))
+  var n = 0
+  while n < list.len(slots) {
+    list.push(keys, (match list.get(slots, n) { some(v) => v, none => 0 }) * ATOM_IDS + n)
+    n = n + 1
+  }
+  let sorted = list.sort(keys)
+  var head: List[Int] = list.with_capacity(ATOM_SLOTS)
+  var at = 0
+  var slot = 0
+  while slot < ATOM_SLOTS {
+    var last = -1
+    while at < list.len(sorted) and (match list.get(sorted, at) { some(v) => v, none => 0 }) / ATOM_IDS == slot {
+      last = (match list.get(sorted, at) { some(v) => v, none => 0 }) % ATOM_IDS
+      at = at + 1
+    }
+    list.push(head, last)
+    slot = slot + 1
   }
   (data, starts, ends, head, chain)
 }
@@ -125,13 +161,14 @@ fn same_span(spelling: List[Int], at: Int, source: Bytes, start: Int, width: Int
 fn atom_at(c: Compiled, source: Bytes, start: Int, end: Int) -> Int = {
   let width = end - start
   if width <= 0 then -1 else {
-    var id = match map.get(c.bucket, atom_key(bytes.get_or(source, start, -1), width)) { some(v) => v, none => -1 }
+    let first = bytes.get_or(source, start, -1)
+    var id = if first < 0 then -1 else (match list.get(c.bucket, atom_key(first, width)) { some(v) => v, none => -1 })
     var found = -1
     while id >= 0 and found < 0 {
       let at = match list.get(c.spelling_start, id) { some(v) => v, none => 0 }
       let stop = match list.get(c.spelling_end, id) { some(v) => v, none => 0 }
       if stop - at == width and same_span(c.spelling, at, source, start, width) then found = id
-      else id = match map.get(c.bucket_next, id) { some(v) => v, none => -1 }
+      else id = match list.get(c.bucket_next, id) { some(v) => v, none => -1 }
     }
     found
   }
@@ -423,6 +460,53 @@ fn head_terminals(resolved: List[Op], kids: List[Int]) -> (List[Int], List[Int],
   (start, width, run)
 }
 
+// The fixpoint answers in op indices, which is what it needs to compare one
+// round against the last. The engine wants something it can test in a couple
+// of reads, so the table is turned once, at the end, into what a token is
+// actually compared against: a bitmask of the kinds a rule can begin with, a
+// 64-bit sketch of the spellings it can begin with, and the spellings
+// themselves for the test that has to be exact.
+//
+// A rule with no known head answers -1 for its kinds, so the first test
+// already says yes and nothing else is read.
+fn head_index(ops: List[Op], kids: List[Int], start: List[Int], width: List[Int], run: List[Int]) -> (List[Int], List[Int], List[Int], List[Int], List[Int]) = {
+  var kinds: List[Int] = list.with_capacity(list.len(ops))
+  var mask: List[Int] = list.with_capacity(list.len(ops))
+  var vstart: List[Int] = list.with_capacity(list.len(ops))
+  var vlen: List[Int] = list.with_capacity(list.len(ops))
+  var vals: List[Int] = []
+  var i = 0
+  while i < list.len(ops) {
+    let n = match list.get(width, i) { some(v) => v, none => 0 }
+    let at = match list.get(start, i) { some(v) => v, none => 0 }
+    let from = list.len(vals)
+    var bits = 0
+    var sketch = 0
+    var m = 0
+    while m < n {
+      let h = match list.get(run, at + m) { some(v) => v, none => -1 }
+      let op = match list.get(ops, h) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+      if op.kind == K_TOK then bits = int.bor(bits, int.bshl(1, op.b))
+      else {
+        var j = 0
+        while j < op.b {
+          let atom = match list.get(kids, op.a + j) { some(v) => v, none => -1 }
+          list.push(vals, atom)
+          sketch = int.bor(sketch, int.bshl(1, int.band(atom, 63)))
+          j = j + 1
+        }
+      }
+      m = m + 1
+    }
+    list.push(kinds, if n == 0 then -1 else bits)
+    list.push(mask, sketch)
+    list.push(vstart, from)
+    list.push(vlen, list.len(vals) - from)
+    i = i + 1
+  }
+  (kinds, mask, vstart, vlen, vals)
+}
+
 // Every node kind and field name is a number: the first entry that spells a
 // name answers for every later one, so two nodes the grammar spelled the same
 // compare equal without a string ever being copied out of the arena.
@@ -508,11 +592,13 @@ fn compile(g: Grammar) -> Compiled = {
   let linked = fuse_wraps(shortcut_ops(resolved))
   let linked_kids = shortcut_kids(resolved, kids, arena_kids)
   let heads = head_terminals(linked, linked_kids)
+  let index = head_index(linked, linked_kids, heads.0, heads.1, heads.2)
   Compiled { ops: linked, texts: texts, kids: linked_kids,
     start: target_of(resolved, start), atoms: atoms, name: g.start,
     spelling: spelling, spelling_start: spelling_start, spelling_end: spelling_end,
     bucket: bucket, bucket_next: bucket_next,
-    head_start: heads.0, head_len: heads.1, head_run: heads.2,
+    head_kinds: index.0, head_mask: index.1,
+    head_start: index.2, head_len: index.3, head_run: index.4,
     kind_of: kinds, names: nametable.names_of(texts), extra: extra }
 }
 
@@ -788,22 +874,27 @@ fn reduce_top(c: Compiled, mut out: List[tree.Node], mut marks: List[Int], mut o
 // certainly fail. The collecting pass never asks, so the expectations a
 // skipped branch would have named are still named when a message needs them.
 fn may_start(c: Compiled, id: Int, num: List[Int], pos: Int) -> Bool = {
-  let n = match list.get(c.head_len, id) { some(v) => v, none => 0 }
-  if n == 0 then true
+  let kinds = match list.get(c.head_kinds, id) { some(v) => v, none => -1 }
+  let k = match list.get(num, pos * 2) { some(v) => v, none => -1 }
+  if k < 0 or int.band(int.bshr(kinds, k), 1) == 1 then true
+  // a string or a negation marker is never read as punctuation, so it can
+  // only ever begin a rule by its kind
+  else if k == tree.T_STRING or k == tree.T_NEG then false
   else {
-    let k = match list.get(num, pos * 2) { some(v) => v, none => -1 }
     let x = match list.get(num, pos * 2 + 1) { some(v) => v, none => -1 }
-    let at = match list.get(c.head_start, id) { some(v) => v, none => 0 }
-    var i = 0
-    var can = false
-    while not can and i < n {
-      let h = match list.get(c.head_run, at + i) { some(v) => v, none => -1 }
-      let op = match list.get(c.ops, h) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
-      if op.kind == K_TOK then can = k == op.b
-      else if k != tree.T_STRING and k != tree.T_NEG then can = spelled(c, op, x) else ()
-      i = i + 1
+    let mask = match list.get(c.head_mask, id) { some(v) => v, none => 0 }
+    if x < 0 or int.band(int.bshr(mask, int.band(x, 63)), 1) == 0 then false
+    else {
+      let at = match list.get(c.head_start, id) { some(v) => v, none => 0 }
+      let n = match list.get(c.head_len, id) { some(v) => v, none => 0 }
+      var i = 0
+      var can = false
+      while not can and i < n {
+        can = (match list.get(c.head_run, at + i) { some(v) => v, none => -1 }) == x
+        i = i + 1
+      }
+      can
     }
-    can
   }
 }
 
