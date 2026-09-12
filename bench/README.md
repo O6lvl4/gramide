@@ -1699,3 +1699,51 @@ Four of the fifteen files now win, and the token stream is byte-identical:
 [Timing](../docs/evidence/operator-index-timing.json), 21 shuffled samples per
 binary; [stdlib](../docs/evidence/operator-index-stdlib.json) unchanged at 721
 of 721 against tree-sitter's 720.
+||||||| parent of 04f601b (perf: write each grammar's compiled arena down instead of rebuilding it per run)
+## The grammar is compiled once, not once per run
+
+Every run of gramide built the Python grammar's rule tree and compiled it into
+the engine's arena before opening the file: 0.18 ms to build the value, 0.63 ms
+to compile it, measured in a fresh process and measured again on the second and
+sixth compile in one process — it is work, not a cold start. On a 4 KB file
+that was a quarter of the whole run.
+
+The arena is a pile of integers and a list of names, so it can be written down.
+`scripts/gen_grammar_tables.py` compiles each package's grammar once and writes
+`src/packages/tables/<id>.almd`; `--check` regenerates and fails if what is
+committed is no longer what the grammar compiles to, and `ci/check.sh` runs it.
+The grammar value in `src/packages` is still the source of truth and still the
+only thing anyone edits. This is what tree-sitter has always done — `grammar.js`
+becomes `parser.c` — and there was never a reason for the arena to be rebuilt
+17,000 times a day.
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| keyword.py | 3.47 | 2.70 | 2.30 | 1.17x |
+| genericpath.py | 3.62 | 2.77 | 2.54 | 1.09x |
+| textwrap.py | 3.92 | 3.24 | 3.00 | 1.08x |
+| ast.py | 4.59 | 3.84 | 3.71 | 1.03x |
+| tokenize.py | 4.60 | 3.84 | 3.72 | 1.03x |
+| pydoc_data/topics.py | 4.65 | 4.05 | 4.84 | **0.84x** |
+| dataclasses.py | 6.85 | 6.08 | 7.19 | **0.85x** |
+| argparse.py | 9.54 | 8.81 | 9.05 | **0.97x** |
+| inspect.py | 10.48 | 9.67 | 10.28 | **0.94x** |
+| typing.py | 10.52 | 9.80 | 9.81 | **1.00x** |
+| _pydecimal.py | 14.36 | 13.56 | 14.69 | **0.92x** |
+
+Every file is 0.7 to 0.85 ms faster, which is the whole of what compiling the
+grammar cost. **Six of the fifteen are now read faster than tree-sitter reads
+them, and they are the six largest.** What is left are the small files, where
+the difference is no longer anything gramide does — it is the 0.4 ms more its
+binary takes to load.
+
+It costs build time: `almide build --release` goes from about 10 s to about
+36 s, because 300 KB of integer literals is 300 KB of integer literals. A
+parser generator paying that once per build to save 0.8 ms per run is the right
+side of the trade.
+
+[Timing](../docs/evidence/grammar-tables-timing.json), 21 shuffled samples per
+binary; [stdlib](../docs/evidence/grammar-tables-stdlib.json) unchanged at 721
+of 721. `outline`, `parse`, `symbols`, `tags`, `check` and `tokens` are
+byte-identical, diagnostics included — the table is the same arena, so it had
+better be.
