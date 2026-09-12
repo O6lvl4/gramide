@@ -50,7 +50,8 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
     "tokens" => {
       let toks = lang.tokens_for(path, src)!
       let names = tree.kind_names()
-      for t in toks { println(int.to_string(t.line) + ":" + int.to_string(t.col) + " " + tree.kind_name_in(names, t.kind) + " " + t.text) }
+      let source = bytes.from_string(src)
+      for t in toks { println(int.to_string(t.line) + ":" + int.to_string(t.col) + " " + tree.kind_name_in(names, t.kind) + " " + tree.token_text(source, t)) }
       ok(())
     },
     // the readers answer about the file they were given even when it does not
@@ -58,8 +59,8 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
     "parse" => { let d = lang.read_source(path, src)!; let _ = note(d); println(tree.sexp(d.parsed.root)); ok(()) },
     "symbols" => { println(symbols.document(path, src)!); ok(()) },
     "symbols-recovered" => { println(symbols.recovered_document(path, src)!); ok(()) },
-    "outline" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.outline(d.parsed.root, d.parsed.toks, d.sep, d.symbols) { println(l) }; ok(()) },
-    "tags" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.tags(d.parsed.root, d.parsed.toks, d.sep, d.symbols) { println(l) }; ok(()) },
+    "outline" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.outline(d.parsed.root, d.parsed.toks, bytes.from_string(src), d.sep, d.symbols) { println(l) }; ok(()) },
+    "tags" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.tags(d.parsed.root, d.parsed.toks, bytes.from_string(src), d.sep, d.symbols) { println(l) }; ok(()) },
     // the gate. strict, and the only command whose exit code is a verdict
     "check" => { let _ = lang.verify_source(path, src)!; println(path + ": ok"); ok(()) },
     // no grammar needed, and no false rejection possible: valid code balances

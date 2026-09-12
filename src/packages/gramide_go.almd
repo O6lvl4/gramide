@@ -212,7 +212,7 @@ fn go() -> parser.Grammar = grammar("source_file", [
 // ── tests ──────────────────────────────────────────────────────────────
 fn parse_src(src: String) -> Result[parser.Parsed, String] = {
   let toks = lex.tokenize(src, spec()) |> result.map_err((e) => "lex " + int.to_string(e.line) + ":" + int.to_string(e.col) + " " + e.message)!
-  parser.parse(go(), toks) |> result.map_err((f) => parser.format_failure(f))
+  parser.parse(go(), bytes.from_string(src), toks) |> result.map_err((f) => parser.format_failure(f))
 }
 
 fn top_kinds(src: String) -> List[String] = match parse_src(src) {
@@ -223,7 +223,7 @@ fn top_kinds(src: String) -> List[String] = match parse_src(src) {
 // what a reader gets from a file that does not parse
 fn recovered_kinds(src: String) -> List[String] = {
   let toks = lex.tokenize_recovering(src, spec())
-  match parser.parse_recovering(parser.compile(go()), toks) {
+  match parser.parse_recovering(parser.compile(go()), bytes.from_string(src), toks) {
     ok(p) => list.map(p.root.kids, (k) => k.kind),
     err(_) => ["NOTHING"],
   }
@@ -314,14 +314,16 @@ test "a file that parses recovers to exactly the same tree" {
 // ── lexing ────────────────────────────────────────────────────────────────
 
 test "semicolons are inserted only after statement-ending tokens" {
-  let toks = lex.tokenize("package p\n\nimport (\n\t\"fmt\"\n)\n\nfunc f(a,\n\tb int) int {\n\treturn a +\n\t\tb\n}\n", spec())!
-  assert_eq(lex.texts(toks), ["package", "p", "", "import", "(", "\"fmt\"", "", ")", "", "func", "f", "(", "a", ",", "b", "int", ")", "int", "{", "return", "a", "+", "b", "", "}", "", ""])
+  let src = "package p\n\nimport (\n\t\"fmt\"\n)\n\nfunc f(a,\n\tb int) int {\n\treturn a +\n\t\tb\n}\n"
+  let toks = lex.tokenize(src, spec())!
+  assert_eq(lex.texts(bytes.from_string(src), toks), ["package", "p", "", "import", "(", "\"fmt\"", "", ")", "", "func", "f", "(", "a", ",", "b", "int", ")", "int", "{", "return", "a", "+", "b", "", "}", "", ""])
 }
 
 test "numbers, runes, raw strings, operators" {
-  let toks = lex.tokenize("x := 0x1p-2 + 1e3 + 2i + 'a' + `raw\nstring` &^ y", spec())!
+  let src = "x := 0x1p-2 + 1e3 + 2i + 'a' + `raw\nstring` &^ y"
+  let toks = lex.tokenize(src, spec())!
   assert_eq(lex.kinds(list.take(toks, 12)), ["identifier", "punct", "float", "punct", "float", "punct", "imaginary", "punct", "rune", "punct", "string", "punct"])
-  assert_eq(list.get(lex.texts(toks), 11), some("&^"))
+  assert_eq(list.get(lex.texts(bytes.from_string(src), toks), 11), some("&^"))
 }
 
 fn symbol_rules() -> package_api.SymbolRules = package_api.SymbolRules {

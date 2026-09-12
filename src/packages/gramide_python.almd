@@ -9,7 +9,7 @@ import self.packages.python.statements
 
 fn scan(source: String, recovering: Bool) -> Result[List[tree.Token], lex.LexError] = {
   let tokens = lexer.scan_source_with(source, recovering)!
-  string_expressions.prepare(tokens) |> result.map_err((f) => lex.LexError {
+  string_expressions.prepare(bytes.from_string(source), tokens) |> result.map_err((f) => lex.LexError {
     line: f.line, col: f.col, message: parser.format_failure(f)
   })
 }

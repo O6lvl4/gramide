@@ -29,8 +29,8 @@ fn family_start(family: String) -> Int = if family == "fstring" then tree.T_FSTR
 fn family_middle(family: String) -> Int = if family == "fstring" then tree.T_FSTRING_MIDDLE else tree.T_TSTRING_MIDDLE
 fn family_end(family: String) -> Int = if family == "fstring" then tree.T_FSTRING_END else tree.T_TSTRING_END
 
-fn make(source: Bytes, kind: Int, start: Int, end: Int, line: Int, line_start: Int) -> tree.Token =
-  tree.Token { kind: kind, text: bytes.to_string_lossy(bytes.slice(source, start, end)), start: start, end: end, line: line, col: start - line_start + 1 }
+fn make(kind: Int, start: Int, end: Int, line: Int, line_start: Int) -> tree.Token =
+  tree.Token { kind: kind, start: start, end: end, line: line, col: start - line_start + 1 }
 fn newline_byte(b: Int) -> Bool = b == 10 or b == 13
 fn newline_end(source: Bytes, at: Int) -> Int = at + (if bytes.get_or(source, at, -1) == 13 and bytes.get_or(source, at + 1, -1) == 10 then 2 else 1)
 
@@ -60,7 +60,7 @@ fn prefix_code(buffer: Bytes, start: Int, end: Int) -> Int = {
 // Keeping a partial opening would leave layout with fabricated unmatched braces.
 fn discard_interpolation(mut tokens: List[tree.Token], checkpoint: Int, head: tree.Token, buffer: Bytes, end: Int) -> Unit = {
   while list.len(tokens) > checkpoint { let _ = list.pop(tokens) }
-  list.push(tokens, tree.Token { ...head, kind: tree.T_ERROR, text: bytes.to_string_lossy(bytes.slice(buffer, head.start, end)), end: end })
+  list.push(tokens, tree.Token { ...head, kind: tree.T_ERROR, end: end })
 }
 
 // Scalar dispatch avoids allocating a default string and option-map closure
@@ -89,7 +89,7 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
   var tokens: List[tree.Token] = []
   var frames: List[interpolation.Frame] = []
   var checkpoint = 0
-  var head = make(buffer, tree.T_ERROR, 0, 0, 1, 0)
+  var head = make(tree.T_ERROR, 0, 0, 1, 0)
   var i = 0
   var line = 1
   var line_start = 0
@@ -171,7 +171,7 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
         guard list.len(frames) < 200 else err(lex.LexError { line: first_line, col: start - first_line_start + 1, message: "too many nested interpolated strings" })
         if list.is_empty(frames) then {
           checkpoint = list.len(tokens)
-          head = make(buffer, tree.T_ERROR, start, i + width, first_line, first_line_start)
+          head = make(tree.T_ERROR, start, i + width, first_line, first_line_start)
         } else ()
         list.push(frames, interpolation.Frame { family: family, quote: q, width: width, raw: prefix == P_FR or prefix == P_TR, mode: "literal", depth: 0 })
         kind = family_start(family)
@@ -224,7 +224,7 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
         list.push(frames, interpolation.Frame { ...f, depth: f.depth + (if list.contains(["(", "[", "{"], text) then 1 else -1) })
       } else ()
     } else ()
-    if kind != tree.T_NONE then list.push(tokens, make(buffer, kind, start, if token_end < 0 then i else token_end, first_line, first_line_start)) else ()
+    if kind != tree.T_NONE then list.push(tokens, make(kind, start, if token_end < 0 then i else token_end, first_line, first_line_start)) else ()
     // Count physical lines once, including those inside multiline strings.
     var at = start
     while at < i {
@@ -239,7 +239,7 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
     guard recovering else err(lex.LexError { line: line, col: i - line_start + 1, message: "unterminated interpolated string" })
     discard_interpolation(tokens, checkpoint, head, buffer, i)
   } else ()
-  list.push(tokens, make(buffer, tree.T_EOF, i, i, line, line_start))
+  list.push(tokens, make(tree.T_EOF, i, i, line, line_start))
   ok(tokens)
 }
 fn physical(source: String) -> Result[List[tree.Token], lex.LexError] = physical_with(source, false)

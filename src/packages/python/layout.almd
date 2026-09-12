@@ -32,7 +32,7 @@ fn opens_bracket(b: Int) -> Bool = b == 40 or b == 91 or b == 123
 fn opener_of(b: Int) -> Int = if b == 41 then 40 else if b == 93 then 91 else if b == 125 then 123 else -1
 
 fn marker(kind: Int, at: tree.Token) -> tree.Token =
-  tree.Token { kind: kind, text: "", start: at.start, end: at.start, line: at.line, col: at.col }
+  tree.Token { kind: kind, start: at.start, end: at.start, line: at.line, col: at.col }
 
 fn fail(at: tree.Token, message: String) -> lex.LexError =
   lex.LexError { line: at.line, col: at.col, message: message }
@@ -94,7 +94,7 @@ fn apply_with(source: String, physical: List[tree.Token], recovering: Bool) -> R
         // that entire tail opaque; never promote its apparent declarations.
         let opening = list.get(brackets, 0) ?? t
         while list.len(out) > bracket_start { let _ = list.pop(out) }
-        list.push(out, tree.Token { ...opening, kind: tree.T_ERROR, text: bytes.to_string_lossy(bytes.slice(buffer, opening.start, t.start)), end: t.start })
+        list.push(out, tree.Token { ...opening, kind: tree.T_ERROR, end: t.start })
       } else ()
       if code then list.push(out, marker(tree.T_NEWLINE, t)) else ()
       while list.len(levels) > 1 {
@@ -145,10 +145,10 @@ test "indentation follows Python tab stops and formfeed resets" {
 
 test "a delimiter is decided by one byte of the source" {
   let src = bytes.from_string("([{)]}+")
-  let open_paren = tree.Token { kind: tree.T_PUNCT, text: "", start: 0, end: 1, line: 1, col: 1 }
-  let close_bracket = tree.Token { kind: tree.T_PUNCT, text: "", start: 4, end: 5, line: 1, col: 5 }
-  let plus = tree.Token { kind: tree.T_PUNCT, text: "", start: 6, end: 7, line: 1, col: 7 }
-  let two_bytes = tree.Token { kind: tree.T_PUNCT, text: "", start: 0, end: 2, line: 1, col: 1 }
+  let open_paren = tree.Token { kind: tree.T_PUNCT, start: 0, end: 1, line: 1, col: 1 }
+  let close_bracket = tree.Token { kind: tree.T_PUNCT, start: 4, end: 5, line: 1, col: 5 }
+  let plus = tree.Token { kind: tree.T_PUNCT, start: 6, end: 7, line: 1, col: 7 }
+  let two_bytes = tree.Token { kind: tree.T_PUNCT, start: 0, end: 2, line: 1, col: 1 }
   assert_eq(opens_bracket(single_byte(src, open_paren)), true)
   assert_eq(opens_bracket(single_byte(src, close_bracket)), false)
   assert_eq(opener_of(single_byte(src, close_bracket)), 91)

@@ -55,5 +55,5 @@ fn expression_grammar() -> parser.Grammar = grammar("evaluation", [
 ] + rules())
 
 // Package entry point applies source-sensitive literal checks before PEG parsing.
-fn parse_with(compiled: parser.Compiled, tokens: List[tree.Token]) -> Result[parser.Parsed, parser.Failure] =
-  parser.parse_with(compiled, string_expressions.prepare(tokens)!)
+fn parse_with(compiled: parser.Compiled, source: Bytes, tokens: List[tree.Token]) -> Result[parser.Parsed, parser.Failure] =
+  parser.parse_with(compiled, source, string_expressions.prepare(source, tokens)!)

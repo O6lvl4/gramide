@@ -179,9 +179,9 @@ fn compile(g: Grammar) -> Compiled = {
 // The token stream's texts, numbered against the grammar's literals. A text
 // the grammar never names gets -1, which no terminal asks for. Kinds need no
 // pass: the lexer wrote each token's kind number already.
-fn text_ids(c: Compiled, toks: List[tree.Token]) -> List[Int] = {
+fn text_ids(c: Compiled, source: Bytes, toks: List[tree.Token]) -> List[Int] = {
   var out: List[Int] = []
-  for t in toks { list.push(out, map.get(c.atoms, t.text) ?? -1) }
+  for t in toks { list.push(out, map.get(c.atoms, tree.token_text(source, t)) ?? -1) }
   out
 }
 
@@ -189,12 +189,12 @@ fn text_ids(c: Compiled, toks: List[tree.Token]) -> List[Int] = {
 // numbering through a borrowed record, without copying the stream twice.
 type TokenInput = { tokens: List[tree.Token] }
 type NumberedTokens = { kinds: List[Int], texts: List[Int] }
-fn number_tokens(c: Compiled, input: TokenInput) -> NumberedTokens = {
+fn number_tokens(c: Compiled, source: Bytes, input: TokenInput) -> NumberedTokens = {
   var kinds: List[Int] = list.with_capacity(list.len(input.tokens))
   var texts: List[Int] = list.with_capacity(list.len(input.tokens))
   for t in input.tokens {
     list.push(kinds, t.kind)
-    list.push(texts, map.get(c.atoms, t.text) ?? -1)
+    list.push(texts, map.get(c.atoms, tree.token_text(source, t)) ?? -1)
   }
   NumberedTokens { kinds: kinds, texts: texts }
 }
@@ -664,12 +664,12 @@ fn expectation(c: Compiled, id: Int) -> String = {
   else "`" + text + "`"
 }
 
-fn failure_at(c: Compiled, toks: List[tree.Token], far: Int, exp: List[Int]) -> Failure = {
+fn failure_at(c: Compiled, source: Bytes, toks: List[tree.Token], far: Int, exp: List[Int]) -> Failure = {
   let t = list.get(toks, far)
   Failure {
     line: option.map(t, (x) => x.line) ?? 0,
     col: option.map(t, (x) => x.col) ?? 0,
-    found: match t { some(x) => if x.kind == tree.T_EOF then "end of file" else if x.kind == tree.T_NEWLINE then "end of line" else "`" + x.text + "`", none => "end of file" },
+    found: match t { some(x) => if x.kind == tree.T_EOF then "end of file" else if x.kind == tree.T_NEWLINE then "end of line" else "`" + tree.token_text(source, x) + "`", none => "end of file" },
     expected: list.map(exp, (id) => expectation(c, id)),
   }
 }
@@ -682,14 +682,14 @@ fn format_failure(f: Failure) -> String = {
 // Parse the whole token stream with the grammar's start rule. The start
 // rule must consume everything up to `eof`; anything left over is the
 // error, reported at the farthest point the grammar reached.
-fn parse(g: Grammar, toks: List[tree.Token]) -> Result[Parsed, Failure] = parse_with(compile(g), toks)
+fn parse(g: Grammar, source: Bytes, toks: List[tree.Token]) -> Result[Parsed, Failure] = parse_with(compile(g), source, toks)
 
 // The same, against a grammar that is already compiled. Compiling is a
 // per-grammar cost, not a per-file one: a tool that reads a whole repository
 // should pay it once.
-fn parse_with(c: Compiled, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
+fn parse_with(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
   let input = TokenInput { tokens: toks }
-  let numbered = number_tokens(c, input)
+  let numbered = number_tokens(c, source, input)
   var out: List[tree.Node] = []
   var exp: List[Int] = []
   let o = parse_rule(c, numbered.kinds, numbered.texts, out, exp, fresh(false), c.start, 0)
@@ -707,7 +707,7 @@ fn parse_with(c: Compiled, toks: List[tree.Token]) -> Result[Parsed, Failure] = 
     var again: List[tree.Node] = []
     var wanted: List[Int] = []
     let d = parse_rule(c, numbered.kinds, numbered.texts, again, wanted, fresh(true), c.start, 0)
-    err(failure_at(c, input.tokens, d.st.far, wanted))
+    err(failure_at(c, source, input.tokens, d.st.far, wanted))
   }
 }
 
@@ -716,9 +716,9 @@ fn parse_with(c: Compiled, toks: List[tree.Token]) -> Result[Parsed, Failure] = 
 // nodes it made — the tree is output. The failing path is unchanged: it runs
 // again to collect what was expected, and a file that fails is not the one
 // anybody is timing.
-fn verify(c: Compiled, toks: List[tree.Token]) -> Result[Unit, Failure] = {
+fn verify(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Result[Unit, Failure] = {
   let input = TokenInput { tokens: toks }
-  let numbered = number_tokens(c, input)
+  let numbered = number_tokens(c, source, input)
   var out: List[tree.Node] = []
   var exp: List[Int] = []
   let o = parse_rule(c, numbered.kinds, numbered.texts, out, exp, verifying(), c.start, 0)
@@ -727,7 +727,7 @@ fn verify(c: Compiled, toks: List[tree.Token]) -> Result[Unit, Failure] = {
     var again: List[tree.Node] = []
     var wanted: List[Int] = []
     let d = parse_rule(c, numbered.kinds, numbered.texts, again, wanted, fresh(true), c.start, 0)
-    err(failure_at(c, input.tokens, d.st.far, wanted))
+    err(failure_at(c, source, input.tokens, d.st.far, wanted))
   }
 }
 
@@ -737,9 +737,9 @@ fn verify(c: Compiled, toks: List[tree.Token]) -> Result[Unit, Failure] = {
 // file someone is halfway through editing still names the parts that are
 // whole. This never answers "does this file parse": `check` uses the strict
 // parse above, and a reader should run this only after that has said no.
-fn parse_recovering(c: Compiled, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
+fn parse_recovering(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
   let input = TokenInput { tokens: toks }
-  let numbered = number_tokens(c, input)
+  let numbered = number_tokens(c, source, input)
   var out: List[tree.Node] = []
   var exp: List[Int] = []
   let o = parse_rule(c, numbered.kinds, numbered.texts, out, exp, recovering(), c.start, 0)
@@ -753,7 +753,7 @@ fn parse_recovering(c: Compiled, toks: List[tree.Token]) -> Result[Parsed, Failu
     var again: List[tree.Node] = []
     var wanted: List[Int] = []
     let d = parse_rule(c, numbered.kinds, numbered.texts, again, wanted, fresh(true), c.start, 0)
-    err(failure_at(c, input.tokens, d.st.far, wanted))
+    err(failure_at(c, source, input.tokens, d.st.far, wanted))
   }
 }
 
@@ -809,32 +809,36 @@ fn arith() -> Grammar = grammar("expr", [
   ("atom", alt([tok("integer"), seq([lit("("), r("expr"), lit(")")])])),
 ])
 
+// A test writes a token stream as its spellings. `src_of` joins them into the
+// source those tokens' ranges point into, so the pair behaves like a real lex.
+fn src_of(texts: List[String]) -> Bytes = bytes.from_string(list.join(texts, ""))
+fn parse_texts(g: Grammar, texts: List[String]) -> Result[Parsed, Failure] = parse(g, src_of(texts), toks_of(texts))
 fn toks_of(texts: List[String]) -> List[tree.Token] = {
   var out: List[tree.Token] = []
   var i = 0
   for t in texts {
     let kind = if t == "" then tree.T_EOF else if string.is_digit(t) then tree.T_INTEGER else tree.T_PUNCT
-    list.push(out, tree.Token { kind: kind, text: t, start: i, end: i + 1, line: 1, col: i + 1 })
-    i = i + 1
+    list.push(out, tree.Token { kind: kind, start: i, end: i + string.len(t), line: 1, col: i + 1 })
+    i = i + string.len(t)
   }
   out
 }
 
 test "left fold builds ((1 + 2) - 3) and precedence nests * under +" {
-  let p = parse(arith(), toks_of(["1", "+", "2", "-", "3", ""]))!
+  let p = parse_texts(arith(), ["1", "+", "2", "-", "3", ""])!
   assert_eq(tree.sexp(p.root), "(binary left:(binary left:(integer) operator:(op) right:(integer)) operator:(op) right:(integer))")
-  let q = parse(arith(), toks_of(["1", "+", "2", "*", "3", ""]))!
+  let q = parse_texts(arith(), ["1", "+", "2", "*", "3", ""])!
   assert_eq(tree.sexp(q.root), "(binary left:(integer) operator:(op) right:(binary left:(integer) operator:(op) right:(integer)))")
 }
 
 test "parentheses and a lone atom" {
-  let p = parse(arith(), toks_of(["(", "1", "+", "2", ")", "*", "3", ""]))!
+  let p = parse_texts(arith(), ["(", "1", "+", "2", ")", "*", "3", ""])!
   assert_eq(tree.sexp(p.root), "(binary left:(binary left:(integer) operator:(op) right:(integer)) operator:(op) right:(integer))")
-  assert_eq(tree.sexp(parse(arith(), toks_of(["7", ""]))!.root), "(integer)")
+  assert_eq(tree.sexp(parse_texts(arith(), ["7", ""])!.root), "(integer)")
 }
 
 test "the error names the farthest point and what was expected there" {
-  match parse(arith(), toks_of(["1", "+", "", ""])) {
+  match parse_texts(arith(), ["1", "+", "", ""]) {
     ok(_) => assert(false),
     err(f) => {
       assert_eq(f.col, 3)
@@ -842,7 +846,7 @@ test "the error names the farthest point and what was expected there" {
       assert(list.contains(f.expected, "`(`"))
     },
   }
-  match parse(arith(), toks_of(["1", "2", ""])) {
+  match parse_texts(arith(), ["1", "2", ""]) {
     ok(_) => assert(false),
     err(f) => assert_eq(f.col, 2),
   }
@@ -855,11 +859,13 @@ test "a recovering parse skips what it cannot read and names the rest" {
     ("item", wrap("item", tok("integer"))),
   ])
   let c = compile(g)
-  let toks = toks_of(["1", ";", "!", "!", "2", ";", ""])
+  let spellings = ["1", ";", "!", "!", "2", ";", ""]
+  let source = src_of(spellings)
+  let toks = toks_of(spellings)
   // strict: the whole thing fails
-  match parse_with(c, toks) { ok(_) => assert(false), err(_) => () }
+  match parse_with(c, source, toks) { ok(_) => assert(false), err(_) => () }
   // recovering: both items survive, with one ERROR node over what was skipped
-  match parse_recovering(c, toks) {
+  match parse_recovering(c, source, toks) {
     err(_) => assert(false),
     ok(p) => {
       assert_eq(tree.sexp(p.root), "(list (item (integer)) (ERROR) (item (integer)))")
@@ -874,7 +880,7 @@ test "a Recover rule that matches leaves no trace of itself in the tree" {
     ("item", wrap("item", tok("integer"))),
   ])
   let c = compile(g)
-  match parse_with(c, toks_of(["1", ";", "2", ";", ""])) {
+  match parse_with(c, src_of(["1", ";", "2", ";", ""]), toks_of(["1", ";", "2", ";", ""])) {
     err(_) => assert(false),
     ok(p) => assert_eq(tree.sexp(p.root), "(list (item (integer)) (item (integer)))"),
   }

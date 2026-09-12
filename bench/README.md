@@ -851,3 +851,78 @@ adapter at its known 720/721. Full local CI passes — the four-language smoke
 check, the Go parser range oracle, and the CPython layout, string, number,
 identifier, lexer, expression, statement, symbol and recovery oracles — and
 the structural complexity baseline is unchanged.
+
+## A token is a range, not a copy
+
+Every construction site already wrote the same text: `lex.mk` and the Python
+scanner both cut `source[start..end]`, a layout marker is empty with
+`start == end`, and the two error tokens cover exactly the bytes they name. So
+the `text` field said nothing the offsets did not, and cost an allocation per
+token at every hand-off — the lexer built it, the layout pass rebuilt it, the
+reader's match arms cloned the stream, `prepare` rebuilt it again.
+
+`Token` is now `{ kind, start, end, line, col }`: five scalars, copied without
+touching the heap. `tree.token_text(source, t)` cuts the text when something
+actually wants it, and the source travels beside the tokens — the parser takes
+it so a failure can quote what it found, `tags` takes it so a declaration can
+be named, and the reader passes the bytes it already read.
+
+Two consequences worth naming. `escapes.validate` no longer copies a literal
+out of its token to index it: it reads the source where the token sits, so
+numeric escape validation allocates nothing at all. And `tags`'s local copies
+of the tree helpers now have their own names — `leaf_word`, `joined_words`,
+`last_line`, `first_line`, `named_child` — because they no longer share a
+signature with the module's, and a local function that merely shares a name
+with an imported one is not reliably the one an unqualified call resolves to.
+
+Same-runtime allocation profiles,
+[before](../docs/evidence/token-text-allocations-before.json) and
+[after](../docs/evidence/token-text-allocations.json), source and output hashes
+equal on every file:
+
+| File | Total allocations before → after | Fewer |
+| --- | ---: | ---: |
+| inspect.py | 391,165 → 304,479 | 22.2% |
+| typing.py | 397,189 → 310,693 | 21.8% |
+| argparse.py | 374,995 → 297,617 | 20.6% |
+| _pydecimal.py | 589,771 → 454,374 | 23.0% |
+| pydoc_data/topics.py | 35,468 → 32,148 | 9.4% |
+
+The passes over the stream now cost nothing to walk. On inspect.py `lexer_make`
+falls from 50,513 requests to 0, `apply_with` from 18,129 to 6,
+`escapes_validate` from 17,050 to 1, `number_tokens` from 15,496 to 2 and
+`read_lang` from 16,638 to 1,146. Against that, `token_text` is new and costs
+48,476: two requests for each of the 16,963 tokens the parser still numbers by
+its text, plus the names the outline cuts. Numbering a token without
+materialising its text is the next thing to do, and it is worth about 34,000
+requests on this file.
+
+The [full stdlib survey](../docs/evidence/token-text-stdlib.json) matches
+CPython outlines on 721/721 Python 3.14.4 files, with the pinned tree-sitter
+adapter at its known 720/721. Full local CI passes, including the byte-range
+oracle that checks every layout token still spans exactly the source it
+reports, and the structural complexity baseline is unchanged.
+
+[Timing](../docs/evidence/token-text-timing.json), 21 shuffled samples per
+binary, startup included, all 945 timed outputs matching CPython:
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) |
+| --- | ---: | ---: | ---: |
+| inspect.py | 43.95 | 41.26 | 11.25 |
+| typing.py | 43.31 | 40.95 | 11.22 |
+| argparse.py | 41.35 | 39.58 | 10.48 |
+| _pydecimal.py | 63.27 | 59.71 | 16.27 |
+| dataclasses.py | 23.49 | 22.32 | 8.16 |
+
+Fourteen of the fifteen medians improve, by 0.5% to 6.1%; textwrap.py reads
+0.5% slower and is a 7 ms file. The load average was 3.89 before the run and
+3.71 after. Medians on a shared machine are not a significance claim.
+
+Taken with the two changes before it, inspect.py has gone from 635,940
+allocation requests to 304,479 and from 48.98 ms to 41.26 ms, while
+tree-sitter has stayed at about 11.3 ms on the same measurement: 4.3x to 3.7x.
+The remaining requests are no longer about the token stream at all. `text_at`
+(102,032) clones a node's kind name out of the grammar for every leaf the
+parser keeps, `take_from` (74,657) builds each node's child list in two
+allocations, and `token_text` (48,476) is mostly the parser numbering tokens
+it could number from the bytes.
