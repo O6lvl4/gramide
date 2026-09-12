@@ -59,7 +59,67 @@ type Grammar = { start: String, rules: Map[String, Rule] }
 // terminal match is then an integer compare rather than a string compare, and
 // the few spellings the engine tests itself are pinned by `SEEDS`.
 type Op = { kind: Int, a: Int, b: Int }
-type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int, atoms: Map[String, Int], name: String }
+type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int, atoms: Map[String, Int], name: String,
+  spelling: List[Int], spelling_start: List[Int], spelling_end: List[Int], bucket: Map[Int, Int], bucket_next: Map[Int, Int] }
+
+// Every terminal spelling, byte by byte and end to end, in atom order, plus a
+// bucket chain keyed by a spelling's first byte and its length. Numbering the
+// token stream then reads the source where the token sits: an ordinary name —
+// most of the tokens in a file — lands in an empty bucket and answers -1
+// without a string being cut out of the source to hash.
+fn atom_key(first: Int, width: Int) -> Int = first * 17 + (if width > 16 then 16 else width)
+
+fn pack_atoms(spellings: List[String]) -> (List[Int], List[Int], List[Int], Map[Int, Int], Map[Int, Int]) = {
+  var data: List[Int] = []
+  var starts: List[Int] = []
+  var ends: List[Int] = []
+  var head: Map[Int, Int] = [:]
+  var chain: Map[Int, Int] = [:]
+  var id = 0
+  for text in spellings {
+    let raw = bytes.from_string(text)
+    let width = bytes.len(raw)
+    list.push(starts, list.len(data))
+    var k = 0
+    while k < width {
+      list.push(data, bytes.get_or(raw, k, 0))
+      k = k + 1
+    }
+    list.push(ends, list.len(data))
+    let slot = atom_key(bytes.get_or(raw, 0, -1), width)
+    map.insert(chain, id, match map.get(head, slot) { some(v) => v, none => -1 })
+    map.insert(head, slot, id)
+    id = id + 1
+  }
+  (data, starts, ends, head, chain)
+}
+
+fn same_span(spelling: List[Int], at: Int, source: Bytes, start: Int, width: Int) -> Bool = {
+  var i = 0
+  var same = true
+  while same and i < width {
+    same = (match list.get(spelling, at + i) { some(b) => b, none => -1 }) == bytes.get_or(source, start + i, -2)
+    i = i + 1
+  }
+  same
+}
+
+// The atom for the source between `start` and `end`, or -1 for a stretch of
+// source no terminal spells.
+fn atom_at(c: Compiled, source: Bytes, start: Int, end: Int) -> Int = {
+  let width = end - start
+  if width <= 0 then -1 else {
+    var id = match map.get(c.bucket, atom_key(bytes.get_or(source, start, -1), width)) { some(v) => v, none => -1 }
+    var found = -1
+    while id >= 0 and found < 0 {
+      let at = match list.get(c.spelling_start, id) { some(v) => v, none => 0 }
+      let stop = match list.get(c.spelling_end, id) { some(v) => v, none => 0 }
+      if stop - at == width and same_span(c.spelling, at, source, start, width) then found = id
+      else id = match map.get(c.bucket_next, id) { some(v) => v, none => -1 }
+    }
+    found
+  }
+}
 
 let A_LPAREN = 0
 let A_RPAREN = 1
@@ -144,9 +204,11 @@ fn compile(g: Grammar) -> Compiled = {
   let start = emit(Seq([Ref(g.start), Tok("eof")]), ops, texts, kids)
   // resolve every reference to its target, and number every terminal's text
   var atoms: Map[String, Int] = [:]
+  var spellings: List[String] = []
   var next = 0
   for s in SEEDS {
     map.insert(atoms, s, next)
+    list.push(spellings, s)
     next = next + 1
   }
   var resolved: List[Op] = []
@@ -166,6 +228,7 @@ fn compile(g: Grammar) -> Compiled = {
         some(_) => (),
         none => {
           map.insert(atoms, text, next)
+          list.push(spellings, text)
           next = next + 1
         },
       }
@@ -173,16 +236,10 @@ fn compile(g: Grammar) -> Compiled = {
     } else list.push(resolved, op)
     i = i + 1
   }
-  Compiled { ops: resolved, texts: texts, kids: kids, start: start, atoms: atoms, name: g.start }
-}
-
-// The token stream's texts, numbered against the grammar's literals. A text
-// the grammar never names gets -1, which no terminal asks for. Kinds need no
-// pass: the lexer wrote each token's kind number already.
-fn text_ids(c: Compiled, source: Bytes, toks: List[tree.Token]) -> List[Int] = {
-  var out: List[Int] = []
-  for t in toks { list.push(out, map.get(c.atoms, tree.token_text(source, t)) ?? -1) }
-  out
+  let (spelling, spelling_start, spelling_end, bucket, bucket_next) = pack_atoms(spellings)
+  Compiled { ops: resolved, texts: texts, kids: kids, start: start, atoms: atoms, name: g.start,
+    spelling: spelling, spelling_start: spelling_start, spelling_end: spelling_end,
+    bucket: bucket, bucket_next: bucket_next }
 }
 
 // Keep the owned token stream available for Parsed/failure output while
@@ -194,7 +251,7 @@ fn number_tokens(c: Compiled, source: Bytes, input: TokenInput) -> NumberedToken
   var texts: List[Int] = list.with_capacity(list.len(input.tokens))
   for t in input.tokens {
     list.push(kinds, t.kind)
-    list.push(texts, map.get(c.atoms, tree.token_text(source, t)) ?? -1)
+    list.push(texts, atom_at(c, source, t.start, t.end))
   }
   NumberedTokens { kinds: kinds, texts: texts }
 }
