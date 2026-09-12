@@ -577,3 +577,51 @@ The 15-file timing harness still passes after extracting its AST renderer into
 not full semantic equivalence, malformed-input recovery, incremental reuse or
 performance. It is Python 3.14.4, not the exact 700-file Python 3.13 workload in
 issue #37; that issue remains open.
+
+## Scalar outline depth and borrowed membership checks
+
+The outline walker previously passed and copied an indentation string at every
+syntax node. It now passes integer declaration depth and materializes indentation
+only when emitting a declaration. Scope/callable membership uses a direct borrowed
+scan: generated Rust accepts `&str` and iterates borrowed candidates, avoiding the
+owned-string argument required by the previous `list.contains` call. Membership
+is still boolean, including empty lists and duplicate entries. Owner rules,
+output formatting and declaration nesting are unchanged.
+
+Reference inspection: tree-sitter at `de98c6c970f4c5d3a725ee48199c478090d614af`
+uses an integer depth in `lib/src/tree_cursor.c:ts_tree_cursor_current_depth`.
+Its visible-node depth differs from gramide's declaration depth; the relevant
+representation choice is keeping traversal depth separate from output text.
+
+[Same-runtime allocation counts](../docs/evidence/outline-depth-allocations.json)
+compared with the single-child drain change:
+
+| File | Total allocations before → after | outline_walk before → after | scope_under before → after |
+| --- | ---: | ---: | ---: |
+| inspect.py | 815,957 → 700,856 | 88,306 → 32,072 | 59,269 → 564 |
+| typing.py | 810,229 → 701,023 | 84,995 → 32,995 | 57,873 → 920 |
+| argparse.py | 750,852 → 649,821 | 78,745 → 28,455 | 51,006 → 438 |
+| _pydecimal.py | 1,249,602 → 1,067,291 | 140,554 → 50,686 | 92,738 → 553 |
+| pydoc_data/topics.py | 41,731 → 39,635 | 1,047 → 1,047 | 2,096 → 0 |
+
+Source/output and diagnostic-runtime hashes agree with the baseline. Counts are
+exclusive generated-function Rust allocation requests, not exact call sites,
+live heap, RSS or all libc allocations. Instrumentation can affect optimization.
+
+The [full stdlib survey](../docs/evidence/outline-depth-stdlib.json) still matches
+CPython outlines on 721/721 Python 3.14.4 files. The pinned tree-sitter adapter is
+unchanged at 720/721, with the same mock.py mismatch. The full regression suite,
+unchanged structural baseline and real hew integration pass.
+
+[Python timing](../docs/evidence/outline-depth-timing.json) and
+[Go comparison](../docs/evidence/outline-depth-go.json) retain all raw samples
+and output equality checks, but **do not support a speedup or ranking claim**.
+The machine was under concurrent load: after the Python run, load average was
+14.42 and a process-name/CPU inspection showed another rustc plus busy system
+services; after the Go run the one-minute load average was 22.00. Both comparators
+showed large timing swings. For example, the tree-sitter Go 800-function median
+was 106.30 ms, compared with 6.48 ms in the preceding run. Do not present that
+as a gramide victory, discard regressions selectively or subtract a historical
+startup estimate. A quiet paired run is required for timing conclusions.
+This change is justified by native code inspection, allocation reduction and
+output equivalence; issue #37 and the broader tree-sitter goal remain open.
