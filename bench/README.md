@@ -625,3 +625,48 @@ as a gramide victory, discard regressions selectively or subtract a historical
 startup estimate. A quiet paired run is required for timing conclusions.
 This change is justified by native code inspection, allocation reduction and
 output equivalence; issue #37 and the broader tree-sitter goal remain open.
+
+## Borrowed, combined parser token numbering
+
+`parse_with`, `verify` and `parse_recovering` previously cloned the entire token
+stream for each of the kind/text numbering passes. A `TokenInput` record now
+owns the stream once; `number_tokens` borrows it and produces both exactly-sized
+integer arrays in one pass. Generated Rust borrows those arrays during parsing
+and moves the original tokens into `Parsed` on success. The old `kind_ids` and
+`text_ids` helpers remain available, but the three parser entry points no longer
+use their two-pass path. Unknown kind/text values still map to -1, independently.
+Map lookup key strings still clone; this is not a zero-allocation numbering pass.
+
+Reference inspection: tree-sitter at `de98c6c970f4c5d3a725ee48199c478090d614af`,
+`lib/src/parser.c`, consumes the lexer's numeric `result_symbol` and maps external
+scanner symbols to grammar symbols. Gramide still performs map-based numbering
+after lexing. This change removes redundant token ownership transfers around
+that numbering; direct lexer symbol IDs remain a separate design opportunity.
+
+[Same-runtime allocation profiles](../docs/evidence/token-numbering-allocations.json)
+compared with scalar outline depth preserve source/output hashes:
+
+| File | Total allocations before → after |
+| --- | ---: |
+| inspect.py | 700,856 → 635,940 |
+| typing.py | 701,023 → 637,707 |
+| argparse.py | 649,821 → 593,037 |
+| _pydecimal.py | 1,067,291 → 966,371 |
+| pydoc_data/topics.py | 39,635 → 38,331 |
+
+`parse_with` itself now accounts for one allocation on each file; numbering
+allocations move into `number_tokens` (32,459 on inspect.py). Total reductions,
+not changes in function attribution alone, establish the savings. Reallocation
+counts also decrease because the integer vectors have exact token-count capacity.
+These are exclusive generated-function Rust allocation requests using the same
+diagnostic runtime, not exact call sites, live heap, RSS or all libc allocations.
+Instrumentation may affect optimization.
+
+The [final-binary stdlib survey](../docs/evidence/token-numbering-stdlib.json)
+passes 721/721 CPython outlines, with the pinned tree-sitter adapter retaining its
+known 720/721 result. Full local CI, the unchanged structural complexity baseline
+and real hew integration pass. The normal binary hash matches between the corpus
+and allocation reports. No new wall-time result is claimed: the machine's load
+average remained elevated (12.35 after validation), following the noisy preceding
+run. Quiet paired timing, the exact issue #37 workload and incremental parsing
+remain unfinished.

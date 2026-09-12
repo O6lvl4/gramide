@@ -193,6 +193,20 @@ fn text_ids(c: Compiled, toks: List[tree.Token]) -> List[Int] = {
   out
 }
 
+// Keep the owned token stream available for Parsed/failure output while
+// numbering through a borrowed record, without copying the stream twice.
+type TokenInput = { tokens: List[tree.Token] }
+type NumberedTokens = { kinds: List[Int], texts: List[Int] }
+fn number_tokens(c: Compiled, input: TokenInput) -> NumberedTokens = {
+  var kinds: List[Int] = list.with_capacity(list.len(input.tokens))
+  var texts: List[Int] = list.with_capacity(list.len(input.tokens))
+  for t in input.tokens {
+    list.push(kinds, map.get(c.atoms, t.kind) ?? -1)
+    list.push(texts, map.get(c.atoms, t.text) ?? -1)
+  }
+  NumberedTokens { kinds: kinds, texts: texts }
+}
+
 // Parser state, threaded through every rule and returned with each result.
 // `far` is the farthest token index at which something failed to match, and
 // it only ever moves forward.
@@ -682,11 +696,11 @@ fn parse(g: Grammar, toks: List[tree.Token]) -> Result[Parsed, Failure] = parse_
 // per-grammar cost, not a per-file one: a tool that reads a whole repository
 // should pay it once.
 fn parse_with(c: Compiled, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
-  let tk = kind_ids(c, toks)
-  let tt = text_ids(c, toks)
+  let input = TokenInput { tokens: toks }
+  let numbered = number_tokens(c, input)
   var out: List[tree.Node] = []
   var exp: List[Int] = []
-  let o = parse_rule(c, tk, tt, out, exp, fresh(false), c.start, 0)
+  let o = parse_rule(c, numbered.kinds, numbered.texts, out, exp, fresh(false), c.start, 0)
   if o.ok then {
     // the start rule leaves one node; take it without copying it, which
     // means draining the list rather than reading its first element
@@ -694,14 +708,14 @@ fn parse_with(c: Compiled, toks: List[tree.Token]) -> Result[Parsed, Failure] = 
     while list.len(out) > 0 {
       match list.pop(out) { some(n) => list.push(rev, n), none => () }
     }
-    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(c.name, [], 0, list.len(toks)) }, toks: toks })
+    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(c.name, [], 0, list.len(input.tokens)) }, toks: input.tokens })
   } else {
     // the run above knows where it failed but not what it wanted there;
     // this second run collects that, and only a file that fails pays for it
     var again: List[tree.Node] = []
     var wanted: List[Int] = []
-    let d = parse_rule(c, tk, tt, again, wanted, fresh(true), c.start, 0)
-    err(failure_at(c, toks, d.st.far, wanted))
+    let d = parse_rule(c, numbered.kinds, numbered.texts, again, wanted, fresh(true), c.start, 0)
+    err(failure_at(c, input.tokens, d.st.far, wanted))
   }
 }
 
@@ -711,17 +725,17 @@ fn parse_with(c: Compiled, toks: List[tree.Token]) -> Result[Parsed, Failure] = 
 // again to collect what was expected, and a file that fails is not the one
 // anybody is timing.
 fn verify(c: Compiled, toks: List[tree.Token]) -> Result[Unit, Failure] = {
-  let tk = kind_ids(c, toks)
-  let tt = text_ids(c, toks)
+  let input = TokenInput { tokens: toks }
+  let numbered = number_tokens(c, input)
   var out: List[tree.Node] = []
   var exp: List[Int] = []
-  let o = parse_rule(c, tk, tt, out, exp, verifying(), c.start, 0)
+  let o = parse_rule(c, numbered.kinds, numbered.texts, out, exp, verifying(), c.start, 0)
   if o.ok then ok(())
   else {
     var again: List[tree.Node] = []
     var wanted: List[Int] = []
-    let d = parse_rule(c, tk, tt, again, wanted, fresh(true), c.start, 0)
-    err(failure_at(c, toks, d.st.far, wanted))
+    let d = parse_rule(c, numbered.kinds, numbered.texts, again, wanted, fresh(true), c.start, 0)
+    err(failure_at(c, input.tokens, d.st.far, wanted))
   }
 }
 
@@ -732,22 +746,22 @@ fn verify(c: Compiled, toks: List[tree.Token]) -> Result[Unit, Failure] = {
 // whole. This never answers "does this file parse": `check` uses the strict
 // parse above, and a reader should run this only after that has said no.
 fn parse_recovering(c: Compiled, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
-  let tk = kind_ids(c, toks)
-  let tt = text_ids(c, toks)
+  let input = TokenInput { tokens: toks }
+  let numbered = number_tokens(c, input)
   var out: List[tree.Node] = []
   var exp: List[Int] = []
-  let o = parse_rule(c, tk, tt, out, exp, recovering(), c.start, 0)
+  let o = parse_rule(c, numbered.kinds, numbered.texts, out, exp, recovering(), c.start, 0)
   if o.ok then {
     var rev: List[tree.Node] = []
     while list.len(out) > 0 {
       match list.pop(out) { some(n) => list.push(rev, n), none => () }
     }
-    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(c.name, [], 0, list.len(toks)) }, toks: toks })
+    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(c.name, [], 0, list.len(input.tokens)) }, toks: input.tokens })
   } else {
     var again: List[tree.Node] = []
     var wanted: List[Int] = []
-    let d = parse_rule(c, tk, tt, again, wanted, fresh(true), c.start, 0)
-    err(failure_at(c, toks, d.st.far, wanted))
+    let d = parse_rule(c, numbered.kinds, numbered.texts, again, wanted, fresh(true), c.start, 0)
+    err(failure_at(c, input.tokens, d.st.far, wanted))
   }
 }
 
