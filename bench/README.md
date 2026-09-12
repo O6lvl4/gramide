@@ -702,3 +702,73 @@ isolated benchmark environment, and these medians are not a statistical-signific
 claim. This is still the selected 15-file Python 3.14 corpus, not issue #37's exact
 Python 3.13 corpus, nor incremental or peak-memory evidence. The earlier noisy
 measurements remain valid records of those runs, not results to hide.
+
+## String prefixes and delimiters decided from the bytes
+
+Physical Python scanning lowered the text of every identifier and tested it
+against `["f", "fr", "rf", "t", "tr", "rt"]` before it looked for a quote, so
+each name in the file built that list of spellings and a lowered copy of
+itself. The layout pass did the same with punctuation, testing `t.text`
+against `["(", "[", "{"]` and then `[")", "]", "}"]`. Neither question needs
+the text. The prefix that opens an interpolated literal is one or two ASCII
+letters glued to a quote, and a delimiter is a single byte: `prefix_code`
+reads the letters and the quote, `single_byte`, `opens_bracket` and
+`opener_of` read the delimiter. The ordinary identifier and the ordinary
+operator — most of the tokens in a file — now leave the allocating path.
+
+The accepted language is unchanged. The prefix set is still `f` and `t`, in
+either order with `r`, case-insensitively, and byte and unicode prefixes stay
+with `strings.opening` where they were; the bracket pairs are the same three,
+and a token longer than one byte is still never a delimiter. Token kinds,
+byte ranges, diagnostics and the recovery rules are untouched.
+
+Same-runtime allocation profiles,
+[before](../docs/evidence/scanner-constants-allocations-before.json) and
+[after](../docs/evidence/scanner-constants-allocations.json), with equal
+source and output hashes on every file:
+
+| File | Total allocations before → after | Fewer |
+| --- | ---: | ---: |
+| inspect.py | 635,940 → 498,266 | 21.6% |
+| typing.py | 637,707 → 504,411 | 20.9% |
+| argparse.py | 593,037 → 469,911 | 20.8% |
+| _pydecimal.py | 966,371 → 756,727 | 21.7% |
+| pydoc_data/topics.py | 38,331 → 36,863 | 3.8% |
+
+The reduction sits where the change is. On inspect.py `physical_with` falls
+from 99,520 requests to 17,164 and `apply_with` from 90,284 to 36,256; no
+other function moves by more than 1,500. The string-heavy control barely
+moves, which is the shape of the thing: it is one enormous literal with
+almost no names and almost no punctuation. These are exclusive
+generated-function Rust allocation requests under the same diagnostic
+runtime, not exact call sites, live heap, RSS or all libc allocations, and
+instrumentation can affect optimization.
+
+[Timing](../docs/evidence/scanner-constants-timing.json): 21 shuffled samples
+per binary, fresh process, startup included, no incremental reuse. All 945
+timed outputs (15 files × 3 implementations × 21 samples) match CPython.
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) |
+| --- | ---: | ---: | ---: |
+| inspect.py | 47.80 | 45.49 | 10.81 |
+| typing.py | 46.71 | 44.68 | 10.73 |
+| argparse.py | 44.85 | 42.40 | 9.91 |
+| _pydecimal.py | 69.93 | 65.92 | 15.71 |
+| ast.py | 12.59 | 12.16 | 4.23 |
+
+Fourteen of the fifteen medians improve, by 1.5% to 5.7%; the string-heavy
+control is flat at 6.21 → 6.22 ms, which is what a file with almost no names
+and almost no punctuation should do. The share is smaller than the 21% of
+allocations removed because every median includes process startup, and on the
+small files that is most of the measurement. The one-minute load average was
+3.30 before the run and 3.19 after. These are medians on a shared machine, not
+a significance claim, and tree-sitter is still about four times faster on the
+same measurement.
+
+The [full stdlib survey](../docs/evidence/scanner-constants-stdlib.json) still
+matches CPython outlines on 721/721 Python 3.14.4 files, with the pinned
+tree-sitter adapter at its known 720/721 and the same mock.py mismatch. Full
+local CI passes, including the CPython oracles this change is nearest to:
+2,020 ordinary string boundaries, 409 lexer cases, and 25 layout cases with
+51 rejections. The structural complexity baseline is unchanged, and issue #37
+and the broader tree-sitter goal remain open.

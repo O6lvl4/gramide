@@ -23,6 +23,14 @@ fn indentation(source: Bytes, at: Int) -> Indent = {
   Indent { width: width, alternate: alternate }
 }
 
+// A delimiter is one byte. Reading it from the source decides bracket nesting
+// without copying the token's text or building a list of spellings for every
+// punctuation token in the file.
+fn single_byte(buffer: Bytes, t: tree.Token) -> Int =
+  if t.end - t.start == 1 then bytes.get_or(buffer, t.start, -1) else -1
+fn opens_bracket(b: Int) -> Bool = b == 40 or b == 91 or b == 123
+fn opener_of(b: Int) -> Int = if b == 41 then 40 else if b == 93 then 91 else if b == 125 then 123 else -1
+
 fn marker(kind: String, at: tree.Token) -> tree.Token =
   tree.Token { kind: kind, text: "", start: at.start, end: at.start, line: at.line, col: at.col }
 
@@ -104,16 +112,18 @@ fn apply_with(source: String, physical: List[tree.Token], recovering: Bool) -> R
         beginning = false
       } else ()
       if t.kind == "punct" then {
-        if list.contains(["(", "[", "{"], t.text) then {
+        let delimiter = single_byte(buffer, t)
+        let expected = opener_of(delimiter)
+        if opens_bracket(delimiter) then {
           guard list.len(brackets) < 200 else err(fail(t, "too many nested delimiters"))
           if list.is_empty(brackets) then bracket_start = list.len(out) else ()
           list.push(brackets, t)
         }
-        else if list.contains([")", "]", "}"], t.text) then {
-          let expected = if t.text == ")" then "(" else if t.text == "]" then "[" else "{"
+        else if expected >= 0 then {
           if recovering and list.is_empty(brackets) then stray_closer = true
           else {
-            guard option.map(list.pop(brackets), (opening) => opening.text) == some(expected) else err(fail(t, "mismatched closing delimiter"))
+            let opened = match list.pop(brackets) { some(opening) => single_byte(buffer, opening), none => -1 }
+            guard opened == expected else err(fail(t, "mismatched closing delimiter"))
           }
         } else ()
       } else ()
@@ -131,4 +141,17 @@ test "indentation follows Python tab stops and formfeed resets" {
   assert_eq(indentation(bytes.from_string(" \tx"), 0), Indent { width: 8, alternate: 2 })
   assert_eq(indentation(bytes.from_string("        x"), 0), Indent { width: 8, alternate: 8 })
   assert_eq(indentation(bytes.from_string("  \u{000c} x"), 0), Indent { width: 1, alternate: 1 })
+}
+
+test "a delimiter is decided by one byte of the source" {
+  let src = bytes.from_string("([{)]}+")
+  let open_paren = tree.Token { kind: "punct", text: "", start: 0, end: 1, line: 1, col: 1 }
+  let close_bracket = tree.Token { kind: "punct", text: "", start: 4, end: 5, line: 1, col: 5 }
+  let plus = tree.Token { kind: "punct", text: "", start: 6, end: 7, line: 1, col: 7 }
+  let two_bytes = tree.Token { kind: "punct", text: "", start: 0, end: 2, line: 1, col: 1 }
+  assert_eq(opens_bracket(single_byte(src, open_paren)), true)
+  assert_eq(opens_bracket(single_byte(src, close_bracket)), false)
+  assert_eq(opener_of(single_byte(src, close_bracket)), 91)
+  assert_eq(opener_of(single_byte(src, plus)), -1)
+  assert_eq(single_byte(src, two_bytes), -1)
 }
