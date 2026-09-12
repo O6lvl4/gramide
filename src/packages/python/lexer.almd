@@ -219,10 +219,17 @@ fn physical_with(source: String, recovering: Bool) -> Result[List[tree.Token], l
         let _ = list.pop(frames)
         list.push(frames, interpolation.Frame { ...f, mode: "format" })
       }
-      else if list.contains(["(", "[", "{"], text) or list.contains([")", "]", "}"], text) then {
-        let _ = list.pop(frames)
-        list.push(frames, interpolation.Frame { ...f, depth: f.depth + (if list.contains(["(", "[", "{"], text) then 1 else -1) })
-      } else ()
+      else {
+        // one byte, compared: a three-string list built here is three
+        // allocations for every bracket in every interpolation
+        let only = bytes.get_or(bytes.from_string(text), 0, -1)
+        let opens = string.len(text) == 1 and (only == 40 or only == 91 or only == 123)
+        let closes = string.len(text) == 1 and (only == 41 or only == 93 or only == 125)
+        if opens or closes then {
+          let _ = list.pop(frames)
+          list.push(frames, interpolation.Frame { ...f, depth: f.depth + (if opens then 1 else -1) })
+        } else ()
+      }
     } else ()
     if kind != tree.T_NONE then list.push(tokens, make(kind, start, if token_end < 0 then i else token_end, first_line, first_line_start)) else ()
     // Count physical lines once, including those inside multiline strings.

@@ -45,7 +45,7 @@ fn failed_literal_end(source: Bytes, start: Int, f: Frame) -> Int = {
   var i = start
   if f.width == 3 then bytes.len(source)
   else {
-    while i < bytes.len(source) and not list.contains([10, 13], bytes.get_or(source, i, -1)) {
+    while i < bytes.len(source) and bytes.get_or(source, i, -1) != 10 and bytes.get_or(source, i, -1) != 13 {
       if bytes.get_or(source, i, -1) == 92 then i = i + (if bytes.get_or(source, i + 1, -1) == 13 and bytes.get_or(source, i + 2, -1) == 10 then 3 else 2)
       else i = i + 1
     }

@@ -1570,3 +1570,27 @@ stdlib files and on malformed ones, diagnostics included.
 [Allocations](../docs/evidence/head-index-allocations.json) barely move —
 90,789 against 90,767 on inspect.py, the new tables — which is the point: this
 change is about what the engine reads, not what it allocates.
+
+## A list literal in a hot loop is an allocation
+
+`list.contains([114, 98, 117], a)` builds a three-element list, asks it one
+question and throws it away. The lexer did that on every string prefix, every
+number suffix, every bracket inside an interpolation and every byte of a failed
+literal's tail — 13,321 allocations on inspect.py, 22,002 on _pydecimal.py, all
+of them to compare a byte against three constants. They are comparisons now.
+
+| File | Allocations before | after |
+| --- | ---: | ---: |
+| inspect.py | 90,789 | 77,468 |
+| typing.py | 100,125 | 86,406 |
+| argparse.py | 88,618 | 76,267 |
+| _pydecimal.py | 136,103 | 114,101 |
+
+[The profile](../docs/evidence/no-literal-lists-allocations.json) is 15 per cent
+fewer allocations and [the timing](../docs/evidence/no-literal-lists-timing.json)
+does not move: 11.72 ms against 11.76 on inspect.py, inside the noise of 21
+samples. That is the finding, not a disappointment — the allocator was not what
+the remaining time was going into, and the 25,014 requests `take_from` makes for
+node children are worth more than the 13,321 removed here. The change stands
+because it is strictly less work for the same answer, not because it moved a
+median.
