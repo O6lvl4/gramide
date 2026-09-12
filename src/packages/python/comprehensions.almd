@@ -1,7 +1,7 @@
 // Python 3.14 comprehensions and their assignment-target grammar.
 import self.parser
 import self.packages.python.containers
-import self.parser.{ seq, nott, lits, wrap, r, opt, keep, alt, rep, lit }
+import self.parser.{ nest, seq, nott, lits, wrap, r, opt, keep, alt, rep, lit }
 
 fn ahead(rule: parser.Rule) -> parser.Rule = nott(nott(rule))
 fn rules() -> List[(String, parser.Rule)] = [
@@ -34,7 +34,7 @@ fn rules() -> List[(String, parser.Rule)] = [
   ("target_lookahead", lits(["(", "[", "."])),
   // Leave the final suffix for an attribute/subscript store. Calls may occur
   // earlier in the receiver chain but cannot themselves be assignment targets.
-  ("target_primary", wrap("primary", seq([
+  ("target_primary", nest("primary", seq([
     r("atom"), ahead(r("target_lookahead")),
     rep(seq([r("primary_suffix"), ahead(r("target_lookahead"))])),
     alt([r("attribute_suffix"), r("subscript_suffix")]), nott(r("target_lookahead"))
