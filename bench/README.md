@@ -1496,3 +1496,35 @@ binary, all 945 timed outputs matching CPython:
 The code-heavy files improve by 4.7% to 7.8% — less than the 27% of visits
 removed, which says the engine's remaining time is not in the visits it makes
 but in what each one touches.
+
+## The binary the benchmark was timing
+
+`almide build` compiles the generated Rust into `target/debug`. `almide install`
+— how anyone actually gets this program — builds `--release`. Every number
+above was therefore a debug build of gramide against a `cc -O2` tree-sitter,
+and the comparison was never the one it claimed to be.
+
+Building it the way it ships is worth more than any single change in this file:
+
+| File | Debug (ms) | Release (ms) | tree-sitter (ms) | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| inspect.py | 13.47 | 12.24 | 10.23 | 1.20x |
+| typing.py | 13.83 | 12.62 | 10.05 | 1.26x |
+| argparse.py | 12.59 | 11.46 | 9.19 | 1.25x |
+| _pydecimal.py | 19.47 | 17.44 | 15.06 | 1.16x |
+| dataclasses.py | 8.45 | 7.87 | 7.30 | 1.08x |
+| pydoc_data/topics.py | 5.26 | 4.81 | 5.06 | **0.95x** |
+
+[The full run](../docs/evidence/release-build-timing.json) is 21 shuffled
+samples per binary across all 15 files; every timed output matches CPython, and
+the [stdlib survey](../docs/evidence/release-build-stdlib.json) is unchanged at
+721 of 721 against tree-sitter's 720.
+
+topics.py is the first file gramide reads faster than tree-sitter does. It is a
+string-heavy file and not the case the engine is judged on, but it is a real
+one, and the code-heavy files are now within 20 to 26 per cent rather than 30
+to 40.
+
+`ci/check.sh` builds `--release` from here on, so what the tests check and what
+the benchmark times is what `almide install` produces. It costs the CI job
+about ten seconds.
