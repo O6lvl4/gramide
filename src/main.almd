@@ -43,6 +43,15 @@ effect fn note(d: lang.Reading) -> Unit = match d.error {
   some(e) => eprintln(e + " [recovered, " + int.to_string(d.errors) + " part(s) skipped]"),
 }
 
+// One write for a command's whole answer. Rust's stdout is a LineWriter, so a
+// `println` per line is a `write` per line whether or not stdout is a terminal:
+// 18,966 of them for `tokens` on inspect.py, 253 for `outline` on typing.py.
+// The lines are a list by then, and joining them costs one pass over bytes the
+// command has already built. `check` keeps its line at a time: its answers are
+// interleaved with the diagnostics on stderr, and that order is the output.
+effect fn print_lines(lines: List[String]) -> Unit =
+  if list.is_empty(lines) then () else println(list.join(lines, "\n"))
+
 effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
   guard cmd == "balance" or registry.supports(path, cmd) else err(path + ": no language package provides " + cmd)
   let src = read(path)!
@@ -51,7 +60,7 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
       let toks = lang.tokens_for(path, src)!
       let names = tree.kind_names()
       let source = bytes.from_string(src)
-      for t in toks { println(int.to_string(t.line) + ":" + int.to_string(t.col) + " " + tree.kind_name_in(names, t.kind) + " " + tree.token_text(source, t)) }
+      let _ = print_lines(list.map(toks, (t) => int.to_string(t.line) + ":" + int.to_string(t.col) + " " + tree.kind_name_in(names, t.kind) + " " + tree.token_text(source, t)))
       ok(())
     },
     // the readers answer about the file they were given even when it does not
@@ -59,8 +68,8 @@ effect fn run(cmd: String, path: String) -> Result[Unit, String] = {
     "parse" => { let d = lang.read_source(path, src)!; let _ = note(d); println(tree.sexp(d.parsed.root, d.parsed.names)); ok(()) },
     "symbols" => { println(symbols.document(path, src)!); ok(()) },
     "symbols-recovered" => { println(symbols.recovered_document(path, src)!); ok(()) },
-    "outline" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.outline(d.parsed.root, d.parsed.toks, bytes.from_string(src), d.parsed.names, d.sep, d.symbols) { println(l) }; ok(()) },
-    "tags" => { let d = lang.read_source(path, src)!; let _ = note(d); for l in tags.tags(d.parsed.root, d.parsed.toks, bytes.from_string(src), d.parsed.names, d.sep, d.symbols) { println(l) }; ok(()) },
+    "outline" => { let d = lang.read_source(path, src)!; let _ = note(d); let _ = print_lines(tags.outline(d.parsed.root, d.parsed.toks, bytes.from_string(src), d.parsed.names, d.sep, d.symbols)); ok(()) },
+    "tags" => { let d = lang.read_source(path, src)!; let _ = note(d); let _ = print_lines(tags.tags(d.parsed.root, d.parsed.toks, bytes.from_string(src), d.parsed.names, d.sep, d.symbols)); ok(()) },
     // the gate. strict, and the only command whose exit code is a verdict
     "check" => { let _ = lang.verify_source(path, src)!; println(path + ": ok"); ok(()) },
     // no grammar needed, and no false rejection possible: valid code balances

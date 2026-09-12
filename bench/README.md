@@ -1794,3 +1794,60 @@ Six of fifteen are faster, two are level, and the seven that are not are the
 seven smallest — under 4 ms, where what separates them is no longer parsing.
 gramide's binary takes about 0.2 ms longer to load than tree-sitter's, and a
 2.5 ms run cannot hide that.
+
+## A line is a write
+
+Rust's stdout is a `LineWriter`: it flushes at every newline, whether or not
+stdout is a terminal. Every command here printed its answer a line at a time, so
+every line of every answer was a `write(2)`. `tokens` on `inspect.py` made
+18,966 of them to say 19,346 lines; `outline` on `typing.py` made 253.
+
+The lines are already a list when the command prints them. Joining them costs
+one pass over bytes the command has just built, and the answer leaves in one
+call. [`bench/count_writes.py`](count_writes.py) counts them exactly — a dyld
+interposer on `write`, in the shape of the allocation profiler, and a
+deterministic number rather than a timing:
+
+| Command | File | Lines | Writes before | Writes after |
+| --- | --- | ---: | ---: | ---: |
+| `tokens` | _pydecimal.py | 31,212 | 29,455 | 2 |
+| `tokens` | inspect.py | 19,346 | 18,966 | 2 |
+| `tokens` | typing.py | 19,216 | 18,251 | 2 |
+| `tokens` | ast.py | 4,268 | 4,143 | 2 |
+| `outline` | _pydecimal.py | 258 | 258 | 2 |
+| `outline` | typing.py | 253 | 253 | 2 |
+| `outline` | inspect.py | 162 | 162 | 2 |
+
+(Two, not one: the joined answer is larger than the `LineWriter`'s buffer, so it
+goes straight out, and its closing newline follows.)
+
+For `tokens` that is most of the command. Twenty-one shuffled samples per
+binary, fresh process each, output required byte-identical
+([evidence](../docs/evidence/one-write-tokens-timing.json)):
+
+| File | Before (ms) | After (ms) | |
+| --- | ---: | ---: | ---: |
+| _pydecimal.py | 19.71 | 9.22 | **0.47x** |
+| inspect.py | 13.59 | 6.77 | **0.50x** |
+| typing.py | 13.68 | 6.79 | **0.50x** |
+| ast.py | 4.93 | 3.32 | **0.67x** |
+| stat.py | 3.37 | 2.84 | **0.84x** |
+
+`outline` answers in tens to hundreds of lines, so the same change is worth
+about 0.3 µs a line there — under the noise of 21 samples on this machine, and
+claimed only as the write count above. The
+[outline board](../docs/evidence/one-write-timing.json) is where it was.
+`tags` answers at greater length, and the change is visible there
+([evidence](../docs/evidence/one-write-tags-timing.json)): 1,818 lines for
+`src/parser.almd`, 10.23 ms to say them and now 9.55; 1,293 lines for
+`src/packages/gramide_rust.almd`, 6.52 ms and now 5.96.
+
+It costs the answer's own size in memory while it is assembled: peak RSS for
+`tokens` on `_pydecimal.py`, a 602 KB answer, goes from 6.11 MB to 6.34 MB.
+
+`check` still prints a line at a time. Its answers interleave with the
+diagnostics on stderr, and that order is part of the output.
+
+[Correctness](../docs/evidence/one-write-stdlib.json) is unchanged: 721 of 721
+stdlib outlines match CPython, against tree-sitter's 720, and `outline`,
+`tokens`, `tags` and `parse` are byte-identical to the previous binary.
