@@ -14,7 +14,9 @@
 // (suffix `_nc`) not, and the headers of `if`, `while`, `for` and `match` use
 // the second.
 
+import self.names as nametable
 import self.package_api
+import self.tree
 import self.parser
 import self.lex
 import self.parser.{ tok, lit, keep, r, seq, alt, rep, rep1, opt, wrap, field, ahead, nott, leftf, lits, keeps, any, grammar, recover, recover_all_keeping }
@@ -350,18 +352,18 @@ fn parse_src(src: String) -> Result[parser.Parsed, String] = {
 }
 
 // Envelopes preserve modifiers/attributes without changing declaration kinds.
-fn item_kinds(kids: List[tree.Node]) -> List[String] = list.flat_map(kids, (k) =>
-  if k.kind == "item_envelope" then list.map(k.kids, (child) => child.kind) else [k.kind])
+fn item_kinds(kids: List[tree.Node], names: nametable.Names) -> List[String] = list.flat_map(kids, (k) =>
+  if nametable.name_at(names, k.kind) == "item_envelope" then list.map(k.kids, (child) => nametable.name_at(names, child.kind)) else [nametable.name_at(names, k.kind)])
 
 fn top_kinds(src: String) -> List[String] = match parse_src(src) {
-  ok(p) => item_kinds(p.root.kids),
+  ok(p) => item_kinds(p.root.kids, p.names),
   err(e) => ["ERROR " + e],
 }
 
 fn recovered_kinds(src: String) -> List[String] = {
   let toks = lex.tokenize_recovering(src, spec())
   match parser.parse_recovering(parser.compile(rust()), bytes.from_string(src), toks) {
-    ok(p) => item_kinds(p.root.kids),
+    ok(p) => item_kinds(p.root.kids, p.names),
     err(_) => ["NOTHING"],
   }
 }

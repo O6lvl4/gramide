@@ -55,7 +55,7 @@ type Reading = { parsed: parser.Parsed, error: Option[String], errors: Int, sep:
 
 fn recovered(c: parser.Compiled, source: Bytes, toks: List[tree.Token], msg: String, l: Language) -> Result[Reading, String] =
   match parser.parse_recovering(c, source, toks) {
-    ok(p) => ok(Reading { parsed: p, error: some(msg), errors: parser.error_nodes(p.root), sep: l.sep, language: l.definition.id, symbols: l.definition.symbols }),
+    ok(p) => ok(Reading { parsed: p, error: some(msg), errors: parser.error_nodes(p.root, parser.error_kind(c)), sep: l.sep, language: l.definition.id, symbols: l.definition.symbols }),
     err(_) => err(msg),
   }
 

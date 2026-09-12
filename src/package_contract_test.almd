@@ -37,7 +37,7 @@ test "an unregistered package supplies lexer grammar and semantic roles" {
   let read = lang.read_lang(engine, "demo.example", "@Box { action read; }")!
   assert_eq(read.language, "example")
   assert_eq(read.error, none)
-  let rows = symbols.collect(read.parsed.root, read.parsed.toks, bytes.from_string("@Box { action read; }"), "", read.sep, read.symbols)
+  let rows = symbols.collect(read.parsed.root, read.parsed.toks, bytes.from_string("@Box { action read; }"), read.parsed.names, "", read.sep, read.symbols)
   assert_eq(list.len(rows), 2)
   let method = list.last(rows)!
   assert_eq(json.get_string(method, "name"), some("Box.read"))

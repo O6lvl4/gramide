@@ -16,6 +16,7 @@
 // what was expected there. That position is where a human would say the
 // syntax breaks, and it is what `check` reports.
 
+import self.names as nametable
 import self.tree
 
 type Rule =
@@ -71,7 +72,7 @@ type Grammar = { start: String, rules: Map[String, Rule] }
 type Op = { kind: Int, a: Int, b: Int }
 type Compiled = { ops: List[Op], texts: List[String], kids: List[Int], start: Int, atoms: Map[String, Int], name: String,
   spelling: List[Int], spelling_start: List[Int], spelling_end: List[Int], bucket: Map[Int, Int], bucket_next: Map[Int, Int],
-  head: List[Int] }
+  head: List[Int], kind_of: List[Int], names: nametable.Names, extra: Int }
 
 // Every terminal spelling, byte by byte and end to end, in atom order, plus a
 // bucket chain keyed by a spelling's first byte and its length. Numbering the
@@ -162,6 +163,16 @@ let K_RECOVER_ALL = 17
 let K_RECOVER_LINES = 18
 let K_PREC = 19
 let K_NEEDS = 20
+
+// The engine names six things the grammar does not: a kept operator, a
+// recovered range, the three parts of a fold, and the absence of a name. They
+// are appended to the text table, and `c.extra` is where they start.
+let X_NONE = 0
+let X_OP = 1
+let X_ERROR = 2
+let X_LEFT = 3
+let X_OPERATOR = 4
+let X_RIGHT = 5
 
 // Append a rule's subtree to the arena and answer where its own node landed.
 // The three lists are the arena itself, handed down rather than returned:
@@ -341,6 +352,30 @@ fn head_terminals(resolved: List[Op], kids: List[Int]) -> List[Int] = {
   heads
 }
 
+// Every node kind and field name is a number: the first entry that spells a
+// name answers for every later one, so two nodes the grammar spelled the same
+// compare equal without a string ever being copied out of the arena.
+fn canonical_kinds(texts: List[String], empty: Int) -> List[Int] = {
+  var seen: Map[String, Int] = [:]
+  var out: List[Int] = list.with_capacity(list.len(texts))
+  var i = 0
+  while i < list.len(texts) {
+    let text = match list.get(texts, i) { some(t) => t, none => "" }
+    // Most nodes in the arena are structure — sequence, choice, repetition —
+    // and carry no name at all. They share one number without being asked.
+    if text == "" then list.push(out, empty)
+    else match map.get(seen, text) {
+      some(first) => list.push(out, first),
+      none => {
+        map.insert(seen, text, i)
+        list.push(out, i)
+      },
+    }
+    i = i + 1
+  }
+  out
+}
+
 fn compile(g: Grammar) -> Compiled = {
   var ops: List[Op] = []
   var texts: List[String] = []
@@ -396,12 +431,16 @@ fn compile(g: Grammar) -> Compiled = {
     i = i + 1
   }
   let (spelling, spelling_start, spelling_end, bucket, bucket_next) = pack_atoms(spellings)
+  let extra = list.len(texts)
+  for name in ["", "op", "ERROR", "left", "operator", "right"] { list.push(texts, name) }
+  let kinds = canonical_kinds(texts, extra + X_NONE)
   let linked = shortcut_ops(resolved)
   let linked_kids = shortcut_kids(resolved, kids, arena_kids)
   Compiled { ops: linked, texts: texts, kids: linked_kids,
     start: target_of(resolved, start), atoms: atoms, name: g.start,
     spelling: spelling, spelling_start: spelling_start, spelling_end: spelling_end,
-    bucket: bucket, bucket_next: bucket_next, head: head_terminals(linked, linked_kids) }
+    bucket: bucket, bucket_next: bucket_next, head: head_terminals(linked, linked_kids),
+    kind_of: kinds, names: nametable.names_of(texts), extra: extra }
 }
 
 // Keep the owned token stream available for Parsed/failure output while
@@ -567,10 +606,10 @@ fn take_from(mut out: List[tree.Node], mark: Int) -> List[tree.Node] = {
 }
 
 // Name every node appended since `mark`, in place.
-fn label_from(mut out: List[tree.Node], mark: Int, name: String) -> Unit = {
+fn label_from(mut out: List[tree.Node], mark: Int, name: Int) -> Unit = {
   var rev: List[tree.Node] = list.with_capacity(list.len(out) - mark)
   while list.len(out) > mark {
-    var n = match list.pop(out) { some(x) => x, none => tree.leaf("", 0) }
+    var n = match list.pop(out) { some(x) => x, none => tree.leaf(-1, 0) }
     tree.set_field(n, name)
     list.push(rev, n)
   }
@@ -583,13 +622,13 @@ fn label_from(mut out: List[tree.Node], mark: Int, name: String) -> Unit = {
 // operand, [opmark, rmark) the operator, [rmark, end) the right operand.
 // Only the end of the list can be popped, so naming them in one pass is
 // also the only way to name a middle range without copying the list.
-fn fold_kids(mut out: List[tree.Node], mark: Int, opmark: Int, rmark: Int) -> List[tree.Node] = {
+fn fold_kids(mut out: List[tree.Node], mark: Int, opmark: Int, rmark: Int, left: Int, operator: Int, right: Int) -> List[tree.Node] = {
   var rev: List[tree.Node] = list.with_capacity(list.len(out) - mark)
   var idx = list.len(out)
   while idx > mark {
-    var n = match list.pop(out) { some(x) => x, none => tree.leaf("", 0) }
+    var n = match list.pop(out) { some(x) => x, none => tree.leaf(-1, 0) }
     idx = idx - 1
-    tree.set_field(n, if idx >= rmark then "right" else if idx >= opmark then "operator" else "left")
+    tree.set_field(n, if idx >= rmark then right else if idx >= opmark then operator else left)
     list.push(rev, n)
   }
   var fwd: List[tree.Node] = list.with_capacity(list.len(rev))
@@ -601,6 +640,9 @@ fn fold_kids(mut out: List[tree.Node], mark: Int, opmark: Int, rmark: Int) -> Li
 
 fn text_at(c: Compiled, id: Int) -> String = match list.get(c.texts, id) { some(t) => t, none => "" }
 fn kid_at(c: Compiled, i: Int) -> Int = match list.get(c.kids, i) { some(k) => k, none => 0 }
+// The number that stands for this node's spelling, the same for every node the
+// grammar spelled the same way.
+fn kind_at(c: Compiled, id: Int) -> Int = match list.get(c.kind_of, id) { some(k) => k, none => -1 }
 
 // A literal terminal holds a set of spellings, not one: `a` starts a run of
 // `b` atom numbers followed by `b` node ids, and an alternation whose every
@@ -645,8 +687,8 @@ fn reduce_top(c: Compiled, mut out: List[tree.Node], mut marks: List[Int], mut o
   let from = match list.pop(froms) { some(v) => v, none => 0 }
   let _ = list.pop(levels)
   if build then {
-    let kids = fold_kids(out, mark, opmark, right)
-    list.push(out, tree.node(text_at(c, id), kids, from, to))
+    let kids = fold_kids(out, mark, opmark, right, c.extra + X_LEFT, c.extra + X_OPERATOR, c.extra + X_RIGHT)
+    list.push(out, tree.node(kind_at(c, id), kids, from, to))
   } else ()
   (mark, from)
 }
@@ -722,7 +764,7 @@ fn token_here(c: Compiled, tk: List[Int], mut out: List[tree.Node], mut exp: Lis
       some(k) => if k != op.b then miss(exp, st0, pos, id)
         else if op.b == tree.T_NEWLINE or op.b == tree.T_EOF then good(st0, pos + 1)
         else {
-          if st0.build then list.push(out, tree.leaf(text_at(c, id), pos)) else ()
+          if st0.build then list.push(out, tree.leaf(kind_at(c, id), pos)) else ()
           good(st0, pos + 1)
         },
       none => miss(exp, st0, pos, id),
@@ -736,7 +778,7 @@ fn literal_here(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.No
         some(k) => if k == tree.T_STRING or k == tree.T_NEG then missed(c, exp, st0, pos, op)
           else if op.kind == K_LIT then good(st0, pos + 1)
           else {
-            if st0.build then list.push(out, tree.leaf("op", pos)) else ()
+            if st0.build then list.push(out, tree.leaf(c.extra + X_OP, pos)) else ()
             good(st0, pos + 1)
           },
         none => missed(c, exp, st0, pos, op),
@@ -789,7 +831,7 @@ fn recover_lines_here(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[t
         let stop = if resume >= 0 then resume else limit
         if not real_between(tk, tt, pos, stop) then Out { ok: false, pos: pos, st: st }
         else {
-          list.push(out, tree.node("ERROR", [], pos, stop))
+          list.push(out, tree.node(c.extra + X_ERROR, [], pos, stop))
           if resume >= 0 then {
             let a = parse_rule(c, tk, tt, out, exp, st, op.a, resume)
             if a.ok then a else { rollback(out, mark); Out { ok: false, pos: pos, st: a.st } }
@@ -931,8 +973,8 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
             go = false
           } else {
             if st0.build then {
-              let kids = fold_kids(out, mark, opmark, rmark)
-              list.push(out, tree.node(text_at(c, id), kids, pos, rr.pos))
+              let kids = fold_kids(out, mark, opmark, rmark, c.extra + X_LEFT, c.extra + X_OPERATOR, c.extra + X_RIGHT)
+              list.push(out, tree.node(kind_at(c, id), kids, pos, rr.pos))
             } else ()
             p = rr.pos
           }
@@ -947,7 +989,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
     if o.ok then {
       if st0.build then {
         let kids = take_from(out, mark)
-        list.push(out, tree.node(text_at(c, id), kids, pos, o.pos))
+        list.push(out, tree.node(kind_at(c, id), kids, pos, o.pos))
       } else ()
       good(o.st, o.pos)
     } else {
@@ -990,7 +1032,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
     let mark = list.len(out)
     let o = parse_rule(c, tk, tt, out, exp, st0, op.a, pos)
     if o.ok then {
-      label_from(out, mark, text_at(c, id))
+      label_from(out, mark, kind_at(c, id))
       good(o.st, o.pos)
     } else {
       rollback(out, mark)
@@ -1058,7 +1100,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
           let kept = h.ok and h.pos > pos and h.pos <= stop
           if not kept then rollback(out, mark) else ()
           let from = if kept then h.pos else pos
-          if real_between(tk, tt, from, stop) then list.push(out, tree.node("ERROR", [], from, stop)) else ()
+          if real_between(tk, tt, from, stop) then list.push(out, tree.node(c.extra + X_ERROR, [], from, stop)) else ()
           if resume >= 0 then {
             let a = parse_rule(c, tk, tt, out, exp, st, op.a, resume)
             if a.ok then Out { ok: true, pos: a.pos, st: a.st } else {
@@ -1072,7 +1114,7 @@ fn parse_rule(c: Compiled, tk: List[Int], tt: List[Int], mut out: List[tree.Node
   }
 }
 
-type Parsed = { root: tree.Node, toks: List[tree.Token] }
+type Parsed = { root: tree.Node, toks: List[tree.Token], names: nametable.Names }
 
 // What an arena node expected, for the error message.
 fn expectation(c: Compiled, id: Int) -> String = {
@@ -1120,7 +1162,7 @@ fn parse_with(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Result[Pars
     while list.len(out) > 0 {
       match list.pop(out) { some(n) => list.push(rev, n), none => () }
     }
-    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(c.name, [], 0, list.len(input.tokens)) }, toks: input.tokens })
+    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(kind_at(c, c.start), [], 0, list.len(input.tokens)) }, toks: input.tokens, names: c.names })
   } else {
     // the run above knows where it failed but not what it wanted there;
     // this second run collects that, and only a file that fails pays for it
@@ -1168,7 +1210,7 @@ fn parse_recovering(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Resul
     while list.len(out) > 0 {
       match list.pop(out) { some(n) => list.push(rev, n), none => () }
     }
-    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(c.name, [], 0, list.len(input.tokens)) }, toks: input.tokens })
+    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(kind_at(c, c.start), [], 0, list.len(input.tokens)) }, toks: input.tokens, names: c.names })
   } else {
     var again: List[tree.Node] = []
     var wanted: List[Int] = []
@@ -1178,9 +1220,13 @@ fn parse_recovering(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Resul
 }
 
 // How much of the tree the parser had to give up on.
-fn error_nodes(n: tree.Node) -> Int = {
-  var total = if n.kind == "ERROR" then 1 else 0
-  for k in n.kids { total = total + error_nodes(k) }
+// The number a recovered range answers to, for a reader that wants to count or
+// exclude them without knowing how the engine spells it.
+fn error_kind(c: Compiled) -> Int = c.extra + X_ERROR
+
+fn error_nodes(n: tree.Node, error: Int) -> Int = {
+  var total = if n.kind == error then 1 else 0
+  for k in n.kids { total = total + error_nodes(k, error) }
   total
 }
 
@@ -1256,15 +1302,16 @@ fn toks_of(texts: List[String]) -> List[tree.Token] = {
 
 test "left fold builds ((1 + 2) - 3) and precedence nests * under +" {
   let p = parse_texts(arith(), ["1", "+", "2", "-", "3", ""])!
-  assert_eq(tree.sexp(p.root), "(binary left:(binary left:(integer) operator:(op) right:(integer)) operator:(op) right:(integer))")
+  assert_eq(tree.sexp(p.root, p.names), "(binary left:(binary left:(integer) operator:(op) right:(integer)) operator:(op) right:(integer))")
   let q = parse_texts(arith(), ["1", "+", "2", "*", "3", ""])!
-  assert_eq(tree.sexp(q.root), "(binary left:(integer) operator:(op) right:(binary left:(integer) operator:(op) right:(integer)))")
+  assert_eq(tree.sexp(q.root, q.names), "(binary left:(integer) operator:(op) right:(binary left:(integer) operator:(op) right:(integer)))")
 }
 
 test "parentheses and a lone atom" {
   let p = parse_texts(arith(), ["(", "1", "+", "2", ")", "*", "3", ""])!
-  assert_eq(tree.sexp(p.root), "(binary left:(binary left:(integer) operator:(op) right:(integer)) operator:(op) right:(integer))")
-  assert_eq(tree.sexp(parse_texts(arith(), ["7", ""])!.root), "(integer)")
+  assert_eq(tree.sexp(p.root, p.names), "(binary left:(binary left:(integer) operator:(op) right:(integer)) operator:(op) right:(integer))")
+  let lone = parse_texts(arith(), ["7", ""])!
+  assert_eq(tree.sexp(lone.root, lone.names), "(integer)")
 }
 
 test "the error names the farthest point and what was expected there" {
@@ -1298,8 +1345,8 @@ test "a recovering parse skips what it cannot read and names the rest" {
   match parse_recovering(c, source, toks) {
     err(_) => assert(false),
     ok(p) => {
-      assert_eq(tree.sexp(p.root), "(list (item (integer)) (ERROR) (item (integer)))")
-      assert_eq(error_nodes(p.root), 1)
+      assert_eq(tree.sexp(p.root, p.names), "(list (item (integer)) (ERROR) (item (integer)))")
+      assert_eq(error_nodes(p.root, error_kind(c)), 1)
     },
   }
 }
@@ -1312,14 +1359,14 @@ test "a Recover rule that matches leaves no trace of itself in the tree" {
   let c = compile(g)
   match parse_with(c, src_of(["1", ";", "2", ";", ""]), toks_of(["1", ";", "2", ";", ""])) {
     err(_) => assert(false),
-    ok(p) => assert_eq(tree.sexp(p.root), "(list (item (integer)) (item (integer)))"),
+    ok(p) => assert_eq(tree.sexp(p.root, p.names), "(list (item (integer)) (item (integer)))"),
   }
 }
 
 
 test "child drains preserve prefix, nested nodes and sibling order" {
-  let prefix = tree.leaf("prefix", 0)
-  let child = tree.node("nested", [tree.leaf("inner", 2)], 1, 3)
+  let prefix = tree.leaf(0, 0)
+  let child = tree.node(1, [tree.leaf(2, 2)], 1, 3)
   var out = [prefix]
   assert_eq(list.len(take_from(out, 1)), 0)
   assert_eq(out, [prefix])
@@ -1327,9 +1374,9 @@ test "child drains preserve prefix, nested nodes and sibling order" {
   assert_eq(take_from(out, 1), [child])
   assert_eq(out, [prefix])
   list.push(out, child)
-  list.push(out, tree.leaf("second", 3))
-  list.push(out, tree.leaf("third", 4))
-  assert_eq(take_from(out, 1), [child, tree.leaf("second", 3), tree.leaf("third", 4)])
+  list.push(out, tree.leaf(3, 3))
+  list.push(out, tree.leaf(4, 4))
+  assert_eq(take_from(out, 1), [child, tree.leaf(3, 3), tree.leaf(4, 4)])
   assert_eq(out, [prefix])
   assert_eq(take_from(out, 0), [prefix])
   assert_eq(list.len(out), 0)

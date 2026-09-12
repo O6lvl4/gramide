@@ -90,7 +90,7 @@ INVALID.append(('too_many_brackets','x = '+('('*201)+'1'+(')'*201)+'\n'))
 INVALID.append(('too_many_indents',''.join(' '*i+'if True:\n' for i in range(101))+' '*101+'x = 1\n'))
 with tempfile.TemporaryDirectory() as tmp:
     project=Path(tmp);(project/'src/packages/python').mkdir(parents=True)
-    for file in ['tree.almd','lex.almd','packages/python/layout.almd']:
+    for file in ['tree.almd','names.almd','lex.almd','packages/python/layout.almd']:
         shutil.copyfile(ROOT/'src'/file,project/'src'/file)
     shutil.copyfile(ROOT/'ci/python_layout_probe.almd',project/'src/main.almd')
     (project/'almide.toml').write_text('[package]\nname = "layout_probe"\nversion = "0.1.0"\nedition = "2026"\n')
