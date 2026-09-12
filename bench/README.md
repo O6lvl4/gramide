@@ -403,3 +403,40 @@ This small generated Go corpus is not general Go or Rust performance evidence.
 The full multi-language regression suite, real hew integration and unchanged
 per-file codopsy-almd baseline pass. Issue #37, the complete 700-file workload,
 peak memory, incremental reuse and general superiority remain unfinished.
+
+## Scalar Python scanner dispatch
+
+The Python physical scanner previously built an unexpected-character diagnostic
+and used `option.map` with a default `"normal"` string on every iteration.
+Fallback diagnostics now live in the branches that consume them, with saved
+starting byte coordinates. A scalar mode classifier replaces the map/default
+string without changing the interpolation frame representation. Generated Rust
+matches the frame's borrowed mode text and returns an integer; ordinary source
+uses the allocation-free `None` branch. Existing frame copies within active
+interpolations remain. The 21 strict-command diagnostic checks cover Unicode,
+CRLF, invalid continuations, f/t strings and excessive interpolation nesting.
+
+The [same-runtime allocation profile](../docs/evidence/python-scalar-mode-allocations.json)
+compared with the preceding declaration-table change reports:
+
+| File | Total allocations before → after | Physical scanner before → after |
+| --- | ---: | ---: |
+| inspect.py | 1,103,375 → 969,938 | 232,957 → 99,520 |
+| typing.py | 1,078,806 → 961,793 | 217,773 → 100,760 |
+| argparse.py | 1,023,829 → 894,248 | 219,689 → 90,108 |
+| _pydecimal.py | 1,688,636 → 1,480,180 | 356,034 → 147,578 |
+| pydoc_data/topics.py | 49,393 → 46,954 | 2,867 → 428 |
+
+Source/output hashes and the diagnostic runtime hash match the preceding
+profile. Counts attribute Rust allocation requests to the innermost generated
+function, not exact call sites, live memory, RSS or all libc allocations.
+Instrumentation can affect optimization; timings use normal binaries instead.
+
+The [paired normal-binary outline comparison](../docs/evidence/python-scalar-mode-outline.json)
+checks identical text against CPython AST for all 15 files before timing.
+Fourteen medians improve; token.py increases from 5.283 to 5.314 ms and is retained.
+inspect.py improves from 58.02 to 56.00 ms, argparse.py from 54.59 to 52.60 ms,
+and _pydecimal.py from 84.41 to 81.30 ms. The tree-sitter adapter remains faster
+on every file (11.28, 10.66 and 15.95 ms respectively for those three examples).
+These five-sample, startup-inclusive Python 3.14 comparisons are not the
+700-file Python 3.13 workload in issue #37, which remains unresolved.

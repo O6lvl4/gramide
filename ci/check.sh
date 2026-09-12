@@ -13,6 +13,7 @@ python3 ci/python_numbers.py
 python3 scripts/gen_python_identifiers.py --check
 python3 ci/python_identifiers.py
 python3 ci/python_lexer.py
+python3 ci/python_lexer_diagnostics.py
 python3 ci/python_expressions.py
 python3 ci/python_statements.py
 python3 ci/python_symbols.py
