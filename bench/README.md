@@ -2057,3 +2057,56 @@ stdlib outlines match CPython against tree-sitter's 720. `parse` is
 byte-identical on all fifteen, the expression oracle matches the same 2,993
 trees and rejects the same 3,037, and every comprehension form — list, dict,
 set, generator, generator call, `async for` — parses to the tree it did before.
+
+## A sequence that begins with something optional begins with what follows it
+
+`function_declaration` begins with `decorators`, and `decorators` is a `rep`:
+in a file without decorators it matches nothing at all. The head computation
+read a sequence through its first element, that element had no head of its own,
+and so neither did the declaration. Every statement in the file was therefore
+read into it, as far as the `def` that was not there — 2,357 failures and 23,570
+visits in `inspect.py`, and the same again for `class_declaration`.
+
+A rule that can match nothing does not decide what follows it, so a sequence
+that begins with one begins with everything its next element does as well. The
+computation now walks the elements, unioning heads, and stops at the first one
+that must read something:
+
+```
+decorators (rep, nothing)  ∪  opt(async)  ∪  "def"   →   { @, async, def }
+```
+
+Two rules make it safe. Answering "can match nothing" where it is not certain
+only ever adds the next element's terminals, and a head set is allowed to be
+larger than the truth. And `opt` and `rep` keep answering "no idea" in the table
+the engine reads, because `may_start` must never refuse one — they can always
+match; it is only the sequence around them that learns anything.
+
+| | ops without a head set, before → after |
+| --- | ---: |
+| Rust | 831 → 643 |
+| Almide | 811 → 651 |
+| Go | 329 → 307 |
+| Python | 726 → 696 |
+
+21 shuffled samples per binary, fresh process each, startup included
+([evidence](../docs/evidence/nullable-heads-timing.json)):
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | |
+| --- | ---: | ---: | ---: | ---: |
+| _pydecimal.py | 12.19 | 11.42 | 15.67 | **0.73x** |
+| inspect.py | 8.02 | 7.73 | 10.22 | **0.76x** |
+| dataclasses.py | 5.37 | 5.63 | 7.27 | **0.77x** |
+| typing.py | 8.30 | 8.00 | 9.99 | **0.80x** |
+| argparse.py | 7.46 | 7.24 | 9.05 | **0.80x** |
+| pydoc_data/topics.py | 4.07 | 4.14 | 5.05 | **0.82x** |
+| tokenize.py | 3.83 | 3.60 | 3.83 | **0.94x** |
+| ast.py | 3.62 | 3.62 | 3.83 | **0.94x** |
+
+Where the board stood when this benchmark was written, `inspect.py` took 48.98
+ms against tree-sitter's 10.5. It now takes 7.73 against 10.22.
+
+[Correctness](../docs/evidence/nullable-heads-stdlib.json): 721 of 721 stdlib
+outlines match CPython against tree-sitter's 720, and `outline`, `parse` and
+`check` are byte-identical across 275 Almide, Rust and Go files — the head sets
+are a superset either way, so they can only prune a walk that would have failed.
