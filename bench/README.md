@@ -1864,24 +1864,32 @@ floor is what a startup cost is and the median only adds this machine's load:
 
 | | ms over `/usr/bin/true` | |
 | --- | ---: | --- |
-| C, 33 KB, one `puts` | +0.116 | |
-| the same C binary padded past 400 KB | +0.135 | mach-o size is not a startup cost |
-| Rust, `write(2)` only, no `std::rt::init` | +0.106 | Rust itself is free |
-| Rust, ordinary `main`, one `println!` | +0.350 | **+0.244** for the std runtime |
-| Almide, one `println` | +0.337 | the same, to within this measurement |
-| gramide, no arguments | +0.380 | +0.043 for its own 2.4 MB |
-| gramide, a one-line file | +0.555 | +0.175 of its own work |
-| tree-sitter, the same one-line file | +0.237 | +0.121 of its own work |
+| C, 33 KB, one `puts` | +0.176 | |
+| the same C binary padded past 400 KB | +0.165 | mach-o size is not a startup cost |
+| Rust, `#![no_main]`, `write(2)` | +0.180 | Rust itself is free — this is C's number |
+| Rust, ordinary `main`, `write(2)` | +0.346 | **+0.166 for `std::rt::init`** |
+| Rust, ordinary `main`, one `println!` | +0.368 | +0.022 for all of `Stdout` |
+| Almide, one `println` | +0.344 | Almide adds nothing to Rust's |
+| gramide, no arguments | +0.454 | +0.110 for its own 2.4 MB |
+| gramide, a one-line file | +0.607 | +0.153 of its own work |
+| tree-sitter, the same one-line file | +0.276 | +0.100 of its own work |
 
-So the gap on a file with nothing in it is 0.32 ms, and 0.24 of it is the Rust
-standard library starting up: `std::rt::init`, and the first `println!` building
-the `Stdout` it flushes through. It is not the binary's size — 400 KB of padding
-costs a C binary nothing — and it is not Almide, which is level with Rust to
-within the noise here. It is what every binary the compiler emits pays before
-`main` runs, and it is out of gramide's reach from Almide source.
+So the gap on a file with nothing in it is 0.33 ms, and half of it — 0.166 ms —
+is one thing: **`std::rt::init`**, the prologue Rust runs before `main`. The two
+Rust rows that differ only in whether `main` is Rust's or the C entry point are
+0.166 ms apart, doing the same `write(2)` either way.
+
+It is not the printing. Going from `write(2)` to `println!` — the whole of
+`Stdout`, its lazy initialisation, its lock and its `LineWriter` — costs 0.022
+ms, a seventh of it. It is not the binary's size: 400 KB of padding costs a C
+binary nothing. And it is not Almide, which lands on Rust's number exactly.
+
+(An earlier version of this section attributed the cost to `std::rt::init`
+*and* the first `println!` together. The row that separates them was not in the
+measurement then. It is now, and printing is not where the time goes.)
 
 The files that still lose are 1 KB to 25 KB and finish in about 4 ms or less.
-Their gaps run from 0.17 ms to 0.51 ms, and 0.32 ms of every one of them is
+Their gaps run from 0.17 ms to 0.51 ms, and 0.33 ms of every one of them is
 already there before either program has read a byte. For six of the eight the
 gap is smaller than that: gramide reads those files faster than tree-sitter
 does and still loses, because it started later. It starts later on the files it

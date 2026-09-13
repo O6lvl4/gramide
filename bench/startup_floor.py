@@ -32,6 +32,9 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
 }
 '''
 RUST_PRINTLN='fn main(){println!("hi");}\n'
+RUST_MAIN_WRITE='''extern "C" { fn write(fd: i32, buf: *const u8, n: usize) -> isize; }
+fn main() { unsafe { write(1, b"hi\\n".as_ptr(), 3); } }
+'''
 ALMIDE_PRINTLN='fn main() -> Unit = println("hi")\n'
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -55,8 +58,9 @@ with tempfile.TemporaryDirectory() as tmp:
   'true':(['/usr/bin/true'],'the cost of starting any process at all'),
   'c_hello':([str(cc('c_hello',C_HELLO))],'C, 33 KB, one puts'),
   'c_padded':([str(cc('c_padded',C_PADDED))],'the same C binary padded past 400 KB: mach-o size is not a startup cost'),
-  'rust_write':([str(rustc('rust_write',RUST_WRITE))],'Rust with no std::rt::init and no std formatting or stdout: write(2) only'),
-  'rust_println':([str(rustc('rust_println',RUST_PRINTLN))],'Rust, ordinary main, one println!'),
+  'rust_no_main':([str(rustc('rust_no_main',RUST_WRITE))],'Rust with no std::rt::init at all: #![no_main] and write(2)'),
+  'rust_main_write':([str(rustc('rust_main_write',RUST_MAIN_WRITE))],'Rust, ordinary main, write(2) — std::rt::init and nothing else'),
+  'rust_println':([str(rustc('rust_println',RUST_PRINTLN))],'Rust, ordinary main, one println! — the same, plus all of Stdout'),
   'almide_println':([str(project/'almide_hello')],'Almide, one println: what every Almide binary pays'),
   'gramide_noargs':([str(args.gramide.resolve())],'gramide with no arguments: it prints usage and exits'),
   'gramide_tiny':([str(args.gramide.resolve()),'outline',tiny],'gramide reading a one-line file'),
