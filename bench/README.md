@@ -1886,3 +1886,61 @@ already there before either program has read a byte. For six of the eight the
 gap is smaller than that: gramide reads those files faster than tree-sitter
 does and still loses, because it started later. It starts later on the files it
 wins, too.
+
+## A rule that begins by saying what it is not
+
+Every rule carries a head set — the terminals it can begin with — and
+`may_start` rejects a rule against the token at the cursor before walking into
+it. 923 of Python's 1,674 ops had no head set, so `may_start` answered yes for
+55% of the arena and the walk happened anyway.
+
+The reason is one rule. A Python `name` is *not a keyword, then an identifier*:
+
+```almide
+("name", seq([nott(lits(HARD_KEYWORDS)), tok("identifier")]))
+```
+
+The head computation reads a sequence through its first child, and the first
+child here is a negative lookahead, which has no head of its own. So `name` had
+none, and so did `atom`, which is an alternation over it — and so did every
+level of the expression ladder above `atom`, up through `power`, `comparison`
+and `conditional`. At 2,472 positions in `inspect.py` the parser walked the
+whole ladder down to `atom` and failed at the bottom.
+
+A lookahead reads no token, so it is not what a rule begins with. Skipping it
+answers with what follows, which is a **superset** of the truth — a lookahead can
+only remove possibilities, never add one — and a superset is exactly what a head
+set must be to be safe.
+
+| | ops without a head set |
+| --- | ---: |
+| Python, before | 923 of 1,674 (55%) |
+| Python, after | 726 of 1,674 (43%) |
+
+21 shuffled samples per binary, fresh process each, startup included
+([evidence](../docs/evidence/head-lookahead-timing.json)):
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | |
+| --- | ---: | ---: | ---: | ---: |
+| _pydecimal.py | 13.37 | 12.68 | 14.94 | **0.85x** |
+| typing.py | 9.61 | 9.09 | 10.01 | **0.91x** |
+| inspect.py | 9.41 | 8.99 | 10.18 | **0.88x** |
+| argparse.py | 8.89 | 8.34 | 9.15 | **0.91x** |
+| tokenize.py | 3.85 | 3.75 | 3.81 | **0.98x** |
+| ast.py | 3.84 | 3.78 | 3.81 | **0.99x** |
+
+Eight of the fifteen files are now read faster than tree-sitter reads them, and
+the seven that are not are the seven smallest.
+
+Two further things were tried and are not here, because they bought nothing a
+measurement could see. Giving a **reference** the head set of the rule it names
+takes Python from 726 unknown to 359 — and costs about 0.1 ms on the large
+files, because a rule that now has a head set consults it, and consulting a
+large one is a walk. **Capping** that walk recovers the loss and lands back
+where this change already is. Both are real improvements to what the table
+knows; neither is an improvement to what the parser does with it.
+
+[Correctness](../docs/evidence/head-lookahead-stdlib.json) is unchanged: 721 of
+721 stdlib outlines match CPython against tree-sitter's 720, and `outline` and
+`tags` are byte-identical across 325 Almide, Rust and Go files — the head sets
+are a superset, so they can only ever prune a walk that would have failed.
