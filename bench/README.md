@@ -2110,3 +2110,66 @@ ms against tree-sitter's 10.5. It now takes 7.73 against 10.22.
 outlines match CPython against tree-sitter's 720, and `outline`, `parse` and
 `check` are byte-identical across 275 Almide, Rust and Go files — the head sets
 are a superset either way, so they can only prune a walk that would have failed.
+
+## A tuple needs a comma, and the line already knows whether there is one
+
+The largest cost left in the parse, and the same shape as the last two:
+
+```almide
+("yield_values", alt([
+  wrap("tuple", seq([r("yield_item"), lit(","), opt(containers.separated(r("yield_item")))])),
+  r("yield_item")
+])),
+```
+
+`yield_values` is the right-hand side of every assignment and the value of every
+`return`. Ordered choice, so `return x` was first read as a tuple: parse `x` as
+a whole expression, look for the comma that is not there, throw it away, parse
+it again. 1,105 failures and **69,808 visits in `inspect.py` — a quarter of the
+parse**, for a tuple that was never there.
+
+Reordering does not work here, the way it did for the walrus and the
+comprehensions: `a, b` read as a single item succeeds, and ordered choice does
+not come back for the rest. But the engine already has the answer to the
+question being asked, in `needs` — the guard that scans the rest of the logical
+line, **outside brackets**, without parsing:
+
+```almide
+seq([needs(lit(",")), wrap("tuple", …)]),
+```
+
+No comma on the line, no tuple, no expression parsed twice. `f(a, b)` is not a
+false alarm either: that comma is inside brackets, and the scan does not count
+it. This is the same guard `assignment` has used all along for `:` and `=`,
+which is what made it worth looking for.
+
+21 shuffled samples per binary, fresh process each, startup included, every
+output checked against CPython's AST
+([evidence](../docs/evidence/tuple-guard-timing.json)):
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | |
+| --- | ---: | ---: | ---: | ---: |
+| _pydecimal.py | 10.62 | 9.55 | 14.73 | **0.65x** |
+| inspect.py | 7.69 | 6.98 | 10.14 | **0.69x** |
+| dataclasses.py | 5.35 | 5.17 | 7.34 | **0.71x** |
+| typing.py | 8.09 | 7.21 | 10.02 | **0.72x** |
+| argparse.py | 7.39 | 6.59 | 9.08 | **0.73x** |
+| pydoc_data/topics.py | 3.90 | 3.96 | 4.90 | **0.81x** |
+| tokenize.py | 3.52 | 3.33 | 3.85 | **0.86x** |
+| ast.py | 3.65 | 3.40 | 3.83 | **0.89x** |
+| textwrap.py | 3.01 | 2.94 | 3.01 | **0.97x** |
+
+Nine of the fifteen files are read faster than tree-sitter reads them, and on
+the four largest it is between a quarter and a third faster. The six that are
+not are the six smallest, and what decides them is
+[the process, not the parse](#what-a-run-costs-before-the-parser-sees-a-byte).
+
+A note for whoever writes the next guard: `needs(lits([","]))` — a set of one —
+does not work. `lits` is an alternation of literals, the compiler shortcuts a
+one-branch alternation into the literal itself, and the scan reads the op it is
+given as a run of spellings. `needs(lit(","))` is the spelling that means this.
+
+[Correctness](../docs/evidence/tuple-guard-stdlib.json): 721 of 721 stdlib
+outlines match CPython against tree-sitter's 720, `parse` is byte-identical on
+all fifteen, and `return 1, 2`, `x = 1, 2`, `return f(1, 2)` and `yield 1, 2`
+all parse to the trees they did before.
