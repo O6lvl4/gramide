@@ -91,7 +91,7 @@ type Chunk = { lines: List[Line], failed: Bool }
 // a `fan` can finish in any order and the output still comes out in list order.
 effect fn check_chunk(cmd: String, paths: List[String], from: Int, to: Int) -> Chunk = {
   let mine = list.slice(paths, from, to)
-  let engines = lang.engines_for(mine)
+  let engines = lang.engines_for(mine)!
   var lines: List[Line] = []
   var failed = false
   for p in mine {

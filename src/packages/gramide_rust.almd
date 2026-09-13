@@ -455,5 +455,5 @@ fn prepare_lexer() -> package_api.Tokenizer = {
 fn definition() -> package_api.Definition = package_api.Definition {
   id: "rust", package_name: "gramide-rust", version: "0.1.0", extensions: [".rs"],
   capabilities: ["check", "tokens", "parse", "outline", "symbols", "tags", "map"],
-  lexer: () => prepare_lexer(), grammar: () => rust(), sep: "::", symbols: symbol_rules()
+  lexer: () => prepare_lexer(), grammar: none, sep: "::", symbols: symbol_rules()
 }

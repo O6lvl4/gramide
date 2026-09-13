@@ -400,5 +400,5 @@ fn prepare_lexer() -> package_api.Tokenizer = {
 fn definition() -> package_api.Definition = package_api.Definition {
   id: "almide", package_name: "gramide-almide", version: "0.1.0", extensions: [".almd"],
   capabilities: ["check", "tokens", "parse", "outline", "symbols", "tags", "map"],
-  lexer: () => prepare_lexer(), grammar: () => almide(), sep: ".", symbols: symbol_rules()
+  lexer: () => prepare_lexer(), grammar: none, sep: ".", symbols: symbol_rules()
 }

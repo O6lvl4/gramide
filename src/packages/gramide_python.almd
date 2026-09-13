@@ -30,5 +30,5 @@ fn symbol_rules() -> package_api.SymbolRules = package_api.SymbolRules {
 fn definition() -> package_api.Definition = package_api.Definition {
   id: "python", package_name: "gramide-python", version: "0.1.0", extensions: [".py", ".pyi"],
   capabilities: ["check", "tokens", "parse", "outline", "symbols", "symbols-recovered", "tags", "map"],
-  lexer: () => prepare_lexer(), grammar: () => statements.file_grammar(), sep: ".", symbols: symbol_rules()
+  lexer: () => prepare_lexer(), grammar: none, sep: ".", symbols: symbol_rules()
 }
