@@ -2003,3 +2003,57 @@ the six that are not are the six smallest.
 [Correctness](../docs/evidence/walrus-last-stdlib.json): 721 of 721 stdlib
 outlines match CPython against tree-sitter's 720. The expression oracle still
 matches 2,993 trees and rejects the same 3,037.
+
+## A generator is not what most calls are
+
+The same shape as the walrus, one level up and an order of magnitude larger.
+
+```almide
+("primary_suffix", alt([r("attribute_suffix"), r("generator_call"), r("call_suffix"), r("subscript_suffix")])),
+("generator_call", wrap("call", r("generator"))),
+("generator_body", wrap("generator", seq([r("named_expression"), r("for_clauses")]))),
+```
+
+Ordered choice, so `f(x)` was first read as `f(x for … )`: parse `x` as a whole
+expression, look for a `for`, find `)`, throw the expression away and parse it
+again as an argument. `atom` did the same with the displays — `[1, 2]` was a
+list comprehension attempt before it was a list.
+
+Attributing each failed call its own subtree, `generator_body` is **2,432
+failures and 98,865 visits in `inspect.py`, a quarter of the whole parse**, and
+almost none of them were generators.
+
+Each plain form ends exactly where a `for` would begin, so a plain form that
+turns out to be a comprehension fails there and falls through to the branch that
+reads it. Trying the plain form first therefore decides the common case in one
+pass and costs the rare case one extra failure:
+
+```almide
+("primary_suffix", alt([r("attribute_suffix"), r("call_suffix"), r("generator_call"), r("subscript_suffix")])),
+("atom", alt([… r("tuple_display"), r("list_display"), r("dict_display"), r("set_display"), seq([lit("("), …, lit(")")]), r("comprehension")])),
+```
+
+21 shuffled samples per binary, fresh process each, startup included, every
+output checked against CPython's AST
+([evidence](../docs/evidence/comprehension-last-timing.json)):
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | |
+| --- | ---: | ---: | ---: | ---: |
+| _pydecimal.py | 12.21 | 10.93 | 14.61 | **0.75x** |
+| inspect.py | 8.79 | 7.91 | 10.15 | **0.78x** |
+| dataclasses.py | 5.77 | 5.73 | 7.16 | **0.80x** |
+| argparse.py | 8.11 | 7.41 | 9.03 | **0.82x** |
+| typing.py | 8.96 | 8.24 | 9.98 | **0.83x** |
+| pydoc_data/topics.py | 4.03 | 4.76 | 5.22 | **0.91x** |
+| ast.py | 3.67 | 3.56 | 3.83 | **0.93x** |
+| tokenize.py | 3.71 | 3.54 | 3.83 | **0.93x** |
+
+Eight of the fifteen files are read faster than tree-sitter reads them, and the
+margin on the largest is now a quarter. The seven that are not are the seven
+smallest, where the answer is decided before either program reads a byte.
+
+[Correctness](../docs/evidence/comprehension-last-stdlib.json): 721 of 721
+stdlib outlines match CPython against tree-sitter's 720. `parse` is
+byte-identical on all fifteen, the expression oracle matches the same 2,993
+trees and rejects the same 3,037, and every comprehension form — list, dict,
+set, generator, generator call, `async for` — parses to the tree it did before.

@@ -39,11 +39,22 @@ fn rules() -> List[(String, parser.Rule)] = [
   ("power", nest("power", seq([r("await_primary"), opt(seq([keep("**"), r("factor")]))]))),
   ("await_primary", alt([wrap("await", seq([lit("await"), r("primary")])), r("primary")])),
   ("primary", nest("primary", seq([r("atom"), rep(r("primary_suffix"))]))),
-  ("primary_suffix", alt([r("attribute_suffix"), r("generator_call"), r("call_suffix"), r("subscript_suffix")])),
+  // A call is tried before a generator call, not after it. `f(x for y in z)` is
+  // rare and `f(x)` is not, and reading `f(x)` as a generator first means
+  // parsing `x` as a whole expression, looking for a `for` that is not there,
+  // and parsing it again: 2,432 failures and 98,865 visits in `inspect.py`, a
+  // quarter of the file's parse. A call that turns out to hold a generator
+  // fails on the `)` it does not find and falls through to the branch that
+  // reads it, which is what ordered choice is for.
+  ("primary_suffix", alt([r("attribute_suffix"), r("call_suffix"), r("generator_call"), r("subscript_suffix")])),
   ("attribute_suffix", wrap("attribute", seq([lit("."), field("field", r("name"))]))),
   ("call_suffix", wrap("call", seq([lit("("), opt(r("call_arguments")), lit(")")]))),
   ("subscript_suffix", wrap("subscript", seq([lit("["), r("slices"), lit("]")]))),
-  ("atom", alt([tok("number"), tok("imaginary"), r("strings"), keeps(["True", "False", "None", "..."]), r("name"), r("comprehension"), r("tuple_display"), r("list_display"), r("dict_display"), r("set_display"), seq([lit("("), alt([r("yield_expression"), r("named_expression")]), lit(")")])])),
+  // and the same for the displays: `[1, 2]` is not a list comprehension, and
+  // finding that out by parsing `1` as a comprehension's element first costs
+  // the same wasted expression. Each display ends where a `for` would begin, so
+  // a display that is a comprehension fails there and the comprehension reads it.
+  ("atom", alt([tok("number"), tok("imaginary"), r("strings"), keeps(["True", "False", "None", "..."]), r("name"), r("tuple_display"), r("list_display"), r("dict_display"), r("set_display"), seq([lit("("), alt([r("yield_expression"), r("named_expression")]), lit(")")]), r("comprehension")])),
   ("yield_expression", alt([
     wrap("yield_from", seq([lit("yield"), lit("from"), r("expression")])),
     wrap("yield", seq([lit("yield"), opt(r("yield_values"))]))
