@@ -104,7 +104,7 @@ fn render(t: Tag) -> String =
 type DeclarationEntry = { syntax: Int, kind: String }
 type DeclarationTable = { entries: List[DeclarationEntry], scopes: List[Int], namespaces: List[Int],
   callables: List[Int], envelopes: List[Int], unnamed_envelopes: List[Int],
-  type_name: Int, identifier: Int, arguments: Int, field_access: Int,
+  type_name: Int, identifier: Int, arguments: Int, field_access: Int, type_mentions: List[Int],
   f_name: Int, f_trait: Int, f_receiver: Int, f_field: Int }
 fn declaration_table(rules: package_api.SymbolRules, names: nametable.Names) -> DeclarationTable =
   DeclarationTable {
@@ -115,7 +115,8 @@ fn declaration_table(rules: package_api.SymbolRules, names: nametable.Names) -> 
     envelopes: list.map(rules.envelopes, (k) => nametable.id_of(names, k)),
     unnamed_envelopes: list.map(rules.unnamed_envelopes, (k) => nametable.id_of(names, k)),
     type_name: nametable.id_of(names, "type_name"), identifier: nametable.id_of(names, "identifier"),
-    arguments: nametable.id_of(names, "arguments"), field_access: nametable.id_of(names, "field_access"),
+    arguments: nametable.id_of(names, rules.arguments), field_access: nametable.id_of(names, rules.field_access),
+    type_mentions: list.map(rules.type_mentions, (k) => nametable.id_of(names, k)),
     f_name: nametable.id_of(names, "name"), f_trait: nametable.id_of(names, "trait"),
     f_receiver: nametable.id_of(names, "receiver"), f_field: nametable.id_of(names, "field")
   }
@@ -136,6 +137,15 @@ fn is_scope(k: Int, table: DeclarationTable) -> Bool = {
 fn is_callable(k: Int, table: DeclarationTable) -> Bool = {
   var found = false
   for candidate in table.callables { if candidate == k then found = true else () }
+  found
+}
+// A type is mentioned inside one of these, and its name is the first thing in
+// it: `type:(type_name (identifier))` in Rust, `(annotation (identifier))` in
+// Python. Anything else under them — a subscript, a union, a keyword argument
+// — is left alone, because a repo map ranks names and those are not one.
+fn mentions_type(k: Int, table: DeclarationTable) -> Bool = {
+  var found = false
+  for candidate in table.type_mentions { if candidate == k then found = true else () }
   found
 }
 
@@ -222,7 +232,7 @@ fn walk(n: tree.Node, toks: List[tree.Token], source: Bytes, scope: String, name
       base: bare_name(n, toks, source, table),
       line: first_line(n, toks), end_line: last_line(n, toks, source) })
   }
-  else if n.kind == table.type_name and not list.is_empty(n.kids) then {
+  else if mentions_type(n.kind, table) and not list.is_empty(n.kids) then {
     match list.get(n.kids, 0) {
       some(leaf) => if (leaf.kind == table.type_name or leaf.kind == table.identifier) and list.is_empty(leaf.kids) then
         list.push(out, Tag { role: "ref", kind: "type", name: leaf_word(leaf, toks, source), base: leaf_word(leaf, toks, source), line: first_line(leaf, toks), end_line: 0 })

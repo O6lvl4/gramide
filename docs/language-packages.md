@@ -18,6 +18,21 @@ Symbol rules map syntax node kinds to semantic declaration kinds and identify
 scopes, namespace scopes, callables and declaration envelopes. Grammars use the shared tree field
 conventions (`name`, `trait`, `receiver`, `type_name`) consumed by tags and symbols. A new
 syntax needing a new field convention must extend this ABI with tests.
+
+`SymbolRules.arguments`, `.field_access` and `.type_mentions` are the reference
+vocabulary: the node kind that closes a call in a postfix chain, the node kind
+that reads a field, and the node kinds that wrap a type mention. Almide, Go and
+Rust name them `arguments`, `field_access` and `["type_name"]`, which is what
+the walker assumed before this field existed. A grammar that spells them
+differently says so here rather than renaming its nodes: Python's are `call` and
+`attribute`, and it has no node meaning "a type", so its type mentions are
+`["annotation", "returns", "bases"]` — after a `:`, after a `->`, and in a
+class's bases. Within one of those, a reference is recorded only when the first
+thing written there is a bare name; `list[int]`, `Foo | None` and `"Bar"` are
+expressions and are left alone. Existing static package definitions must provide
+all three fields. `ci/python_tags.py` holds both halves of that contract: the
+cases that are reported, and the cases that deliberately are not.
+
 `src/package_contract_test.almd` exercises a custom lexer, grammar, declaration
 and owner rules without editing the built-in registry.
 
@@ -31,9 +46,8 @@ contract addition does not change the JSON schema version or capability names.
 entry has `id`, `name`, `version`, `extensions` and `capabilities`. Consumers must
 check the relevant capability: hew needs `symbols`, while golemide requires `check`
 for a grammar-backed write gate. A reader-only grammar must not advertise check.
-All built-in packages expose check, tokens, parse, outline and symbols. Almide,
-Go and Rust additionally advertise tags and map; Python reference extraction is
-not yet covered by that contract. Balance is a separate generic fallback.
+All built-in packages expose check, tokens, parse, outline, symbols, tags and
+map. Balance is a separate generic fallback.
 
 ## Python design checkpoint
 
@@ -555,8 +569,9 @@ and 12 complete stdlib files. An optional suite-ending semicolon is retained.
 The Python scanner stays strict for checks and complete-symbol reads. Optional
 reader recovery is described below; broken input must never produce a symbols
 document marked complete. Compiler-context checks,
-Unicode-name escapes, NFKC identity, literal decoding, encoding cookies/BOM and
-Python reference extraction remain future work. `check` is a grammar check, not
+Unicode-name escapes, NFKC identity, literal decoding and encoding cookies/BOM
+remain future work. Reference extraction is covered as described above, with
+its exclusions listed in `ci/python_tags.py`. `check` is a grammar check, not
 a promise that CPython compilation or execution succeeds. Historical checkpoints
 above describe their then-unregistered state. No tree-sitter victory is claimed.
 
