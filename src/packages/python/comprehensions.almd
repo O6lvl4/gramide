@@ -24,7 +24,13 @@ fn rules() -> List[(String, parser.Rule)] = [
     wrap("starred", seq([lit("*"), nott(lit("*")), r("star_target")])),
     r("target_atom")
   ])),
+  // A bare name with no `(`, `[` or `.` after it cannot be the attribute or
+  // subscript store `target_primary` reads, and it is what almost every
+  // assignment target is. Saying so first costs a name and a lookahead; leaving
+  // it to `target_primary` cost an `atom` parsed and thrown away. The branch is
+  // a strict subset of the `name` branch below it, so the language does not move.
   ("target_atom", alt([
+    seq([r("name"), nott(r("target_lookahead"))]),
     r("target_primary"),
     r("name"),
     seq([lit("("), r("target_atom"), lit(")")]),

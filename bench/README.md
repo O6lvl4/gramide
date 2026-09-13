@@ -2173,3 +2173,51 @@ given as a run of spellings. `needs(lit(","))` is the spelling that means this.
 outlines match CPython against tree-sitter's 720, `parse` is byte-identical on
 all fifteen, and `return 1, 2`, `x = 1, 2`, `return f(1, 2)` and `yield 1, 2`
 all parse to the trees they did before.
+
+## Four assignment forms, one question each
+
+`assignment` asks the line whether it holds an assignment operator at all, which
+is why an expression statement costs nothing here. Inside, all four forms were
+tried in order, and each of them wants a *particular* operator:
+
+```almide
+needs(lits([":", "=", "+=", …])), alt([
+  annassign_simple,   // wants `:`
+  annassign,          // wants `:`
+  assign,             // wants `=`
+  augassign,          // wants one of the augmented ones
+])
+```
+
+So `x = 1` was read as an annotated assignment twice before it was read as an
+assignment, and the second of those reads `x` as a *store target* — a `primary`
+that has to end in an attribute or a subscript — which means parsing an atom and
+throwing it away. The scan that answers the outer question answers each inner
+one just as cheaply, and a `:` inside brackets is not one of these, which it
+already knows (`d = {1: 2}`, `s = a[1:2]`).
+
+The same shape sits one level down, in `target_atom`: a bare name with nothing
+of `(`, `[` or `.` after it cannot be the store target `target_primary` reads,
+and it is what almost every assignment target is.
+
+**224,603 → 216,051 visits on `inspect.py`, −3.8%.** That is the deterministic
+half. The other half was measured on a machine that has been under a load
+average of 15 to 21 all afternoon, so it is reported as what it is — 61 shuffled
+samples a binary, minima, five of seven files on one side of zero:
+
+| File | before (ms) | after (ms) | |
+| --- | ---: | ---: | ---: |
+| dataclasses.py | 5.010 | 4.865 | −0.145 |
+| inspect.py | 7.220 | 7.092 | −0.128 |
+| typing.py | 7.526 | 7.455 | −0.071 |
+| _pydecimal.py | 9.657 | 9.594 | −0.063 |
+| ast.py | 3.583 | 3.529 | −0.055 |
+| argparse.py | 6.750 | 6.816 | +0.066 |
+| tokenize.py | 3.464 | 3.559 | +0.095 |
+
+Worth about 0.05 ms, which is the edge of what the day could resolve; the visits
+it removes are exact. `parse` is byte-identical on the fifteen benchmark files
+and on a fixture of every assignment form — plain, attribute, subscript, tuple,
+parenthesised, annotated, augmented, chained, `del`, `lambda`, dict display and
+slice — and 721 of 721 stdlib outlines still match CPython against tree-sitter's
+720.
