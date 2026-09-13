@@ -65,8 +65,15 @@ library, compiler and toolchain, test data included):
 | 35 files, all under `testdata` | rejected, each also rejected by `gofmt -e` |
 | 11 `testdata` files `gofmt` rejects | parse (gramide is more permissive than `gofmt` here) |
 
-Whole-corpus `check` on 8 cores: 2.5 s for the Almide corpus, 23 s for the Go corpus;
-the largest file, a 116k-line generated Go source, takes 7.6 s alone.
+Whole-corpus `check`, one process per two thousand files (which is what the
+kernel's argument limit allows, and what `gramide check src/*.go` is): the 4,105
+`.almd` files in the Almide repository (everything but `.git`, `.claude`,
+`target` and `worktrees`) take **0.118 s** (42 MB/s), and every `.go` file under
+`GOROOT/src` — 7,702 files, 90.2 MB — takes **0.695 s** (130 MB/s). The largest,
+`cmd/compile/internal/ssa/opGen.go` at 96,689 generated lines, takes **64 ms**
+alone. `bench/corpus_check.py` measures it
+([Almide](docs/evidence/corpus-check-almide.json),
+[Go](docs/evidence/corpus-check-go.json)).
 
 ## How it works
 
@@ -101,8 +108,8 @@ A note on the engine: the grammar value is compiled into a flat arena of
 three-integer nodes and `parse_rule` is one self-recursive function with the loops
 for sequence, choice and repetition inside it. Both shapes come from how the Almide
 native backend copies values, and [docs/design.md](docs/design.md) records each rule
-with the measurement that forced it (the last one took a 116k-line file from 188 s
-to 7.6 s).
+with the measurement that forced it (one of them took a 116k-line generated Go
+file from 188 s to 7.6 s; the largest such file in Go 1.26 is 64 ms now).
 
 That arena is now compiled ahead of time. `python3 scripts/gen_grammar_tables.py`
 writes each package's into `src/packages/tables/`, and `--check` — which
