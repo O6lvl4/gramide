@@ -31,6 +31,7 @@ python3 ci/python_lexer_diagnostics.py
 python3 ci/python_expressions.py
 python3 ci/python_statements.py
 python3 ci/python_symbols.py
+python3 ci/python_tags.py
 python3 ci/python_recovery.py
 python3 ci/python_string_recovery.py
 python3 ci/python_interpolation_recovery.py

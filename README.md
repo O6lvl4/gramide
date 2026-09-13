@@ -45,7 +45,7 @@ Acceptance does not establish full compiler syntax validity;
 the grammars are more permissive than the compilers in a few known places listed in
 [docs/design.md](docs/design.md).
 
-**Python** — declaration names, ownership and source ranges match CPython for 645 declarations, including 12 complete standard-library files. Functions, async functions, classes, decorators and type aliases are available to hew through `symbols`. Recovery, contextual compiler checks, literal decoding and Unicode normalization remain incomplete; see [package progress](docs/language-packages.md).
+**Python** — declaration names, ownership and source ranges match CPython for 645 declarations, including 12 complete standard-library files. Functions, async functions, classes, decorators and type aliases are available to hew through `symbols`. `tags` and `map` read calls, base classes and annotations, and `ci/python_tags.py` lists what they deliberately do not read. Recovery, contextual compiler checks, literal decoding and Unicode normalization remain incomplete; see [package progress](docs/language-packages.md).
 
 **Almide** — every `.almd` file in the Almide repository (3,382 files after excluding
 two directories of deliberately non-Almide syntax experiments):

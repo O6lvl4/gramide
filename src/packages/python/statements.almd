@@ -27,8 +27,8 @@ fn rules() -> List[(String, parser.Rule)] = [
   // assignment on this line; without one the four of them would each parse the
   // whole expression to find that out.
   ("assignment", seq([needs(lits([":", "=", "+=", "-=", "*=", "@=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "**=", "//="])), alt([
-    wrap("annassign_simple", seq([r("name"), lit(":"), r("expression"), opt(seq([lit("="), r("rhs")]))])),
-    wrap("annassign", seq([alt([r("target_primary"), seq([lit("("), r("single_target"), lit(")")])]), lit(":"), r("expression"), opt(seq([lit("="), r("rhs")]))])),
+    wrap("annassign_simple", seq([r("name"), wrap("annotation", seq([lit(":"), r("expression")])), opt(seq([lit("="), r("rhs")]))])),
+    wrap("annassign", seq([alt([r("target_primary"), seq([lit("("), r("single_target"), lit(")")])]), wrap("annotation", seq([lit(":"), r("expression")])), opt(seq([lit("="), r("rhs")]))])),
     wrap("assign", seq([r("assignment_target"), rep(r("assignment_target")), r("rhs"), nott(lit("="))])),
     wrap("augassign", seq([r("single_target"), keeps(["+=", "-=", "*=", "@=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "**=", "//="]), r("rhs")]))
   ])])),

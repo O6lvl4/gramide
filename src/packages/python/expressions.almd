@@ -7,7 +7,7 @@ import self.packages.python.lambdas
 import self.packages.python.string_expressions
 import self.tree
 import self.parser
-import self.parser.{ nest, seq, nott, lits, tok, wrap, r, opt, keep, leftf, prec, alt, rep, keeps, lit, grammar }
+import self.parser.{ nest, seq, nott, lits, tok, wrap, r, opt, keep, leftf, prec, alt, rep, keeps, lit, grammar, field }
 
 let HARD_KEYWORDS = ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"]
 
@@ -33,7 +33,7 @@ fn rules() -> List[(String, parser.Rule)] = [
   ("await_primary", alt([wrap("await", seq([lit("await"), r("primary")])), r("primary")])),
   ("primary", nest("primary", seq([r("atom"), rep(r("primary_suffix"))]))),
   ("primary_suffix", alt([r("attribute_suffix"), r("generator_call"), r("call_suffix"), r("subscript_suffix")])),
-  ("attribute_suffix", wrap("attribute", seq([lit("."), r("name")]))),
+  ("attribute_suffix", wrap("attribute", seq([lit("."), field("field", r("name"))]))),
   ("call_suffix", wrap("call", seq([lit("("), opt(r("call_arguments")), lit(")")]))),
   ("subscript_suffix", wrap("subscript", seq([lit("["), r("slices"), lit("]")]))),
   ("atom", alt([tok("number"), tok("imaginary"), r("strings"), keeps(["True", "False", "None", "..."]), r("name"), r("comprehension"), r("tuple_display"), r("list_display"), r("dict_display"), r("set_display"), seq([lit("("), alt([r("yield_expression"), r("named_expression")]), lit(")")])])),
