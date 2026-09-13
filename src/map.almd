@@ -44,7 +44,7 @@ effect fn scan(root: String) -> Result[Scan, String] = {
   var files: List[FileTags] = []
   var errors: List[String] = []
   // compiled once for the whole walk, not once per file
-  let engines = lang.engines_for(all)
+  let engines = lang.engines_for(all)!
   for p in list.sort(all) {
     let rel = if string.starts_with(p, root + "/") then string.slice(p, string.len(root) + 1, string.len(p)) else p
     if lang.supports(p, "map") and not skipped(rel) then {

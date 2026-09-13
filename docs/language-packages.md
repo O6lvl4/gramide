@@ -8,7 +8,18 @@ dynamic loading or independently installable Almide packages. Those are future
 distribution decisions, not capabilities of this release.
 
 Each definition supplies a stable language ID, package name/version, extensions,
-capabilities, lexer factory, grammar factory, display separator and symbol rules.
+capabilities, lexer factory, an optional grammar factory, display separator and
+symbol rules. `grammar` is `Option[() -> parser.Grammar]`: a built-in package
+answers `none` and is read from its compiled table in `src/packages/tables`,
+which `scripts/gen_grammar_tables.py --check` holds to the rule tree in
+`src/packages`. A package that ships no table says `some(factory)` and is
+compiled at load, which is what `src/package_contract_test.almd` does. A package
+with neither is a registration error, reported by name.
+
+Carrying the factory on every definition linked every rule constructor for every
+language into the shipped binary, which never calls one: 38% of its executable
+code and 29% of its size. The generator's probe reaches the rule trees directly
+instead, because the generator is the one thing that compiles them.
 The lexer factory prepares configuration once per loaded language and returns a
 `(String, Bool) -> Result[List[Token], LexError]` callback. The boolean requests
 recovery. The shared lexer remains useful but is optional. The host compiles only

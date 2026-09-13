@@ -21,6 +21,11 @@ type SymbolRules = {
 }
 type Definition = {
   id: String, package_name: String, version: String, extensions: List[String], capabilities: List[String],
-  lexer: () -> Tokenizer, grammar: () -> parser.Grammar,
+  // A built-in package ships its arena compiled (src/packages/tables), and its
+  // rule tree is the generator's input, not the binary's: carrying the factory
+  // here linked every rule constructor for every language into a binary that
+  // never calls one — 38% of its executable code. `none` says "read the table";
+  // a package that has no table says how to build one.
+  lexer: () -> Tokenizer, grammar: Option[() -> parser.Grammar],
   sep: String, symbols: SymbolRules
 }
