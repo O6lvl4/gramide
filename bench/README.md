@@ -2221,3 +2221,67 @@ and on a fixture of every assignment form — plain, attribute, subscript, tuple
 parenthesised, annotated, augmented, chained, `del`, `lambda`, dict display and
 slice — and 721 of 721 stdlib outlines still match CPython against tree-sitter's
 720.
+
+## Where the board stands
+
+Every file the benchmark reads, one process each, startup included, 21 shuffled
+samples a binary, every output checked against CPython's AST. "At the start" is
+the binary this stretch of work began from, built from the commit itself
+([evidence](../docs/evidence/final-board.json)):
+
+| File | bytes | gramide (ms) | tree-sitter (ms) | | at the start (ms) | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| _pydecimal.py | 229,278 | 10.51 | 15.91 | **0.66x** | 14.28 | 0.74x |
+| dataclasses.py | 71,358 | 5.45 | 7.99 | **0.68x** | 6.93 | 0.79x |
+| inspect.py | 127,349 | 7.50 | 10.85 | **0.69x** | 10.03 | 0.75x |
+| argparse.py | 106,633 | 7.24 | 9.94 | **0.73x** | 9.36 | 0.77x |
+| typing.py | 135,278 | 7.99 | 10.93 | **0.73x** | 10.53 | 0.76x |
+| pydoc_data/topics.py | 581,422 | 4.60 | 5.62 | **0.82x** | 4.66 | 0.99x |
+| tokenize.py | 21,849 | 4.15 | 4.85 | **0.86x** | 4.64 | 0.89x |
+| ast.py | 25,479 | 3.93 | 4.40 | **0.89x** | 4.29 | 0.92x |
+| textwrap.py | 19,382 | 3.46 | 3.57 | **0.97x** | 3.80 | 0.91x |
+| reprlib.py | 8,064 | 3.40 | 3.39 | 1.00x | 3.70 | 0.92x |
+| genericpath.py | 6,247 | 3.12 | 3.06 | 1.02x | 3.28 | 0.95x |
+| copyreg.py | 7,716 | 3.23 | 3.10 | 1.04x | 3.27 | 0.99x |
+| token.py | 2,584 | 3.09 | 2.89 | 1.07x | 3.05 | 1.01x |
+| stat.py | 6,308 | 3.21 | 2.99 | 1.07x | 3.37 | 0.95x |
+| keyword.py | 1,073 | 2.94 | 2.60 | 1.13x | 2.93 | 1.01x |
+
+**Nine faster, one level, five slower.** The order of the table is the order of
+the answer: every file where reading it is most of the work is read faster than
+tree-sitter reads it, by a quarter to a third; every file where it is not is a
+file of a few kilobytes that finishes in about three milliseconds, and what
+separates those is [the process, not the
+parse](#what-a-run-costs-before-the-parser-sees-a-byte) — 0.33 ms of it before
+either program has read a byte.
+
+`inspect.py` is the file this benchmark was built around: issue #37's example,
+127 KB and 16,963 tokens. It took **48.98 ms** when that issue was opened,
+against tree-sitter's 10.5. It takes 7.50 ms now.
+
+The whole standard library, measured the way issue #37 measured it — 721 files,
+12,175,027 bytes, one process a file, startup measured separately and subtracted.
+`bench/corpus_parse_rate.py` is that method, kept so the number can be checked
+against the one the issue reported
+([evidence](../docs/evidence/corpus-parse-rate.json)):
+
+| | parse time | rate |
+|---|---:|---:|
+| tree-sitter | 0.90 s | 13.6 MB/s |
+| gramide | **0.56 s** | **21.9 MB/s** |
+
+Issue #37 reported 5.46 s and 2.2 MB/s for gramide there, against tree-sitter's
+0.67 s. And with startup left in, which is what a caller actually pays, the
+whole corpus is 2.57 s against tree-sitter's 2.60 s: gramide is level or ahead
+even while paying a process launch for every one of the 721 files, which is the
+half of the comparison it loses.
+
+What the sections above add up to, on `inspect.py`: **428,333 visits to
+`parse_rule` at the start of this work, 216,051 now.** Almost all of it came
+from one shape — a grammar offering a rare, expensive branch before a common,
+cheap one, and a PEG dutifully trying it on everything. The four largest were a
+generator call tried before a call (a quarter of the parse), a tuple tried
+before a single value (another quarter), a walrus tried before every expression,
+and a store target tried before every plain assignment. None of them was in the
+engine; all of them were visible the moment each failed call was charged for its
+own subtree.
