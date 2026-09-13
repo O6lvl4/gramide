@@ -1952,3 +1952,54 @@ knows; neither is an improvement to what the parser does with it.
 721 stdlib outlines match CPython against tree-sitter's 720, and `outline` and
 `tags` are byte-identical across 325 Almide, Rust and Go files — the head sets
 are a superset, so they can only ever prune a walk that would have failed.
+
+## The walrus that was tried on every expression
+
+`named_expression` is Python's "an expression, or an assignment expression":
+
+```almide
+("named_expression", alt([r("assignment_expression"), seq([r("expression"), nott(lit(":="))])])),
+("assignment_expression", wrap("named", seq([r("name"), lit(":="), r("expression")]))),
+```
+
+Ordered choice takes the first branch that matches, so every expression in the
+file was first read as `name := …`: parse a name, look for `:=`, find something
+else, give the name back. Instrumenting the generated Rust to attribute each
+failed call's own subtree makes it the largest single failing rule in the arena
+— 7,690 failures in `inspect.py`, 20,700 visits, and not one of them was a
+walrus.
+
+The other branch already ends in *and no `:=` follows*, which is exactly the
+case the first branch is the answer to. So try it first:
+
+```almide
+("named_expression", alt([seq([r("expression"), nott(lit(":="))]), r("assignment_expression")])),
+```
+
+`x + 1` is now decided in one pass. `n := len(x)` parses `n`, fails the `nott`,
+and falls through to the branch that reads it — the backtrack that used to
+happen on every expression now happens only on the ones that are walruses. Same
+two branches, same language, `parse` byte-identical on all fifteen files.
+
+21 shuffled samples per binary, fresh process each, startup included
+([evidence](../docs/evidence/walrus-last-timing.json)):
+
+| File | Before (ms) | After (ms) | tree-sitter (ms) | |
+| --- | ---: | ---: | ---: | ---: |
+| _pydecimal.py | 11.96 | 11.81 | 14.07 | **0.84x** |
+| dataclasses.py | 5.58 | 5.89 | 6.91 | **0.85x** |
+| inspect.py | 8.41 | 8.35 | 9.68 | **0.86x** |
+| typing.py | 8.72 | 8.59 | 9.49 | **0.90x** |
+| argparse.py | 7.88 | 7.83 | 8.70 | **0.90x** |
+| pydoc_data/topics.py | 3.91 | 3.89 | 4.72 | **0.82x** |
+| ast.py | 3.54 | 3.57 | 3.63 | **0.98x** |
+| tokenize.py | 3.74 | 3.69 | 3.70 | **1.00x** |
+
+The change is worth about 0.1 ms and is inside the noise of any one file; what
+it is not inside is the noise of all of them, and the visit count it removes is
+exact. Eight of the fifteen files are faster than tree-sitter, one is level, and
+the six that are not are the six smallest.
+
+[Correctness](../docs/evidence/walrus-last-stdlib.json): 721 of 721 stdlib
+outlines match CPython against tree-sitter's 720. The expression oracle still
+matches 2,993 trees and rejects the same 3,037.

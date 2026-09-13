@@ -16,7 +16,14 @@ fn rules() -> List[(String, parser.Rule)] = [
   ("expression", alt([r("lambda"), r("conditional")])),
   ("conditional", nest("conditional", seq([r("disjunction"), opt(seq([keep("if"), r("disjunction"), keep("else"), r("expression")]))]))),
   ("assignment_expression", wrap("named", seq([r("name"), lit(":="), r("expression")]))),
-  ("named_expression", alt([r("assignment_expression"), seq([r("expression"), nott(lit(":="))])])),
+  // The walrus reads `name := expression`, and it was tried first, so every
+  // expression that is not one paid for a `name` that led nowhere: 7,690 times
+  // in `inspect.py`, 20,700 visits. The other branch already ends in "and no
+  // `:=` follows", which is exactly the case the walrus wants, so trying it
+  // first decides the common case in one pass and leaves the walrus the
+  // failure it is the answer to. Ordered choice, same two branches, same
+  // language.
+  ("named_expression", alt([seq([r("expression"), nott(lit(":="))]), r("assignment_expression")])),
   // `or` and `and` are one ladder: two levels, lowest first, left-associative
   ("disjunction", prec("boolean", r("inversion"), [keep("or"), keep("and")])),
   ("inversion", alt([wrap("unary", seq([keep("not"), r("inversion")])), r("comparison")])),
