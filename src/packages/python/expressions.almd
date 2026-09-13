@@ -7,7 +7,7 @@ import self.packages.python.lambdas
 import self.packages.python.string_expressions
 import self.tree
 import self.parser
-import self.parser.{ nest, seq, nott, lits, tok, wrap, r, opt, keep, leftf, prec, alt, rep, keeps, lit, grammar, field }
+import self.parser.{ nest, seq, nott, lits, tok, wrap, r, opt, keep, leftf, prec, alt, rep, keeps, lit, grammar, field, needs }
 
 let HARD_KEYWORDS = ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"]
 
@@ -60,8 +60,15 @@ fn rules() -> List[(String, parser.Rule)] = [
     wrap("yield", seq([lit("yield"), opt(r("yield_values"))]))
   ])),
   ("yield_item", alt([r("starred"), r("expression")])),
+  // A tuple needs a comma, and the line-scan guard can see one — outside
+  // brackets, before the newline — without parsing anything. Without it, every
+  // `return x` and every `x = expr` read the whole expression, looked for the
+  // comma that was not there, and read it again: 1,105 failures and 69,808
+  // visits in `inspect.py`, a quarter of the parse and the largest single cost
+  // left in it. `f(a, b)` is not a false alarm either: that comma is inside
+  // brackets, and the scan does not count it.
   ("yield_values", alt([
-    wrap("tuple", seq([r("yield_item"), lit(","), opt(containers.separated(r("yield_item")))])),
+    seq([needs(lit(",")), wrap("tuple", seq([r("yield_item"), lit(","), opt(containers.separated(r("yield_item")))]))]),
     r("yield_item")
   ])),
 ] + containers.rules() + arguments.rules() + comprehensions.rules() + lambdas.rules() + string_expressions.rules()
