@@ -1,57 +1,57 @@
-// Language-neutral host for statically registered language packages.
-// The composition root is registry.almd; grammar/lexer/semantic rules live in
-// src/packages. Engines compile only packages needed by a batch.
+// lang — the language-neutral host.
+//
+// Every entry point that starts from a path takes the list of language
+// packages the binary was built with (registry.almd); nothing here knows a
+// language by name. Engines compile only the packages a batch of files needs,
+// and a reader that holds Engines needs nothing else.
 
 import self.tree
 import self.lex
 import self.parser
 import self.package_api
 import self.registry
-import self.packages.tables
 
-fn known(path: String) -> Bool = registry.known(path)
-fn supports(path: String, capability: String) -> Bool = registry.supports(path, capability)
+fn known(packages: List[package_api.Definition], path: String) -> Bool = registry.known(packages, path)
+fn supports(packages: List[package_api.Definition], path: String, capability: String) -> Bool = registry.supports(packages, path, capability)
 fn unknown_ext(path: String) -> String = path + ": no registered grammar for this extension"
 fn lex_error(path: String, e: lex.LexError) -> String = path + ":" + int.to_string(e.line) + ":" + int.to_string(e.col) + ": " + e.message
 
 type Language = { definition: package_api.Definition, tokenize: package_api.Tokenizer, grammar: parser.Compiled, sep: String }
 type Engines = { loaded: List[Language] }
 
-// A package that ships a compiled grammar is read from it; compiling the rule
-// tree instead is 0.8 ms, and it is 0.8 ms before the file has been opened.
-// `scripts/gen_grammar_tables.py --check` is what keeps the two the same.
-fn grammar_of(d: package_api.Definition) -> Result[parser.Compiled, String] = match tables.compiled_for(d.id) {
-  some(c) => ok(c),
-  none => match d.grammar {
-    some(make_grammar) => ok(parser.compile(make_grammar())),
-    none => err(d.id + ": the package ships neither a compiled grammar nor a grammar to compile"),
-  },
-}
-
-fn compile(d: package_api.Definition) -> Result[Language, String] = {
+// Both thunks run once here, per loaded language: the lexer prepares its
+// tables, and the grammar is read from the package's compiled table (or,
+// for a package that ships only rules, compiled from them).
+fn compile(d: package_api.Definition) -> Language = {
   let make_lexer = d.lexer
-  ok(Language { definition: d, tokenize: make_lexer(), grammar: grammar_of(d)!, sep: d.sep })
+  let make_grammar = d.grammar
+  Language { definition: d, tokenize: make_lexer(), grammar: make_grammar(), sep: d.sep }
 }
-fn language_of(path: String) -> Result[Language, String] = compile(registry.resolve(path)!)
-fn tokens_for(path: String, src: String) -> Result[List[tree.Token], String] = {
-  let d = registry.resolve(path)!
+fn language_of(packages: List[package_api.Definition], path: String) -> Result[Language, String] = ok(compile(registry.resolve_in(packages, path)!))
+fn tokens_for(packages: List[package_api.Definition], path: String, src: String) -> Result[List[tree.Token], String] = {
+  let d = registry.resolve_in(packages, path)!
   let prepare = d.lexer
   let scan = prepare()
   scan(src, false) |> result.map_err((e) => lex_error(path, e))
 }
-fn loaded_from(ds: List[package_api.Definition]) -> Result[List[Language], String] = {
+fn loaded_from(ds: List[package_api.Definition]) -> List[Language] = {
   var out: List[Language] = list.with_capacity(list.len(ds))
-  for d in ds { list.push(out, compile(d)!) }
-  ok(out)
+  for d in ds { list.push(out, compile(d)) }
+  out
 }
-fn engines() -> Result[Engines, String] = ok(Engines { loaded: loaded_from(registry.packages())! })
-fn engines_for(paths: List[String]) -> Result[Engines, String] = ok(Engines {
-  loaded: loaded_from(list.filter(registry.packages(), (d) => list.any(paths, (path) => list.any(d.extensions, (ext) => string.ends_with(path, ext)))))!
-})
+fn engines(packages: List[package_api.Definition]) -> Engines = Engines { loaded: loaded_from(packages) }
+// Only the packages some path in the batch needs: `check src/*.go` compiles
+// the Go grammar and no other.
+fn engines_for(packages: List[package_api.Definition], paths: List[String]) -> Engines = Engines {
+  loaded: loaded_from(list.filter(packages, (d) => list.any(paths, (path) => list.any(d.extensions, (ext) => string.ends_with(path, ext)))))
+}
 fn loaded_for(e: Engines, path: String) -> Result[Language, String] = {
   let found = list.filter(e.loaded, (l) => list.any(l.definition.extensions, (ext) => string.ends_with(path, ext)))
   guard list.len(found) <= 1 else err(path + ": ambiguous language packages")
   list.first(found) |> option.to_result(unknown_ext(path))
+}
+fn supports_in(e: Engines, path: String, capability: String) -> Bool = match loaded_for(e, path) {
+  ok(l) => list.contains(l.definition.capabilities, capability), err(_) => false,
 }
 fn tokenize(l: Language, src: String, recover: Bool) -> Result[List[tree.Token], lex.LexError] = {
   let scan = l.tokenize
@@ -107,11 +107,11 @@ fn verify_lang(l: Language, path: String, src: String) -> Result[Unit, String] =
 }
 
 // One file, compiling its grammar for this call alone.
-fn read_source(path: String, src: String) -> Result[Reading, String] = read_lang(language_of(path)!, path, src)
-fn parse_source(path: String, src: String) -> Result[parser.Parsed, String] = parse_lang(language_of(path)!, path, src)
-fn verify_source(path: String, src: String) -> Result[Unit, String] = verify_lang(language_of(path)!, path, src)
+fn read_source(packages: List[package_api.Definition], path: String, src: String) -> Result[Reading, String] = read_lang(language_of(packages, path)!, path, src)
+fn parse_source(packages: List[package_api.Definition], path: String, src: String) -> Result[parser.Parsed, String] = parse_lang(language_of(packages, path)!, path, src)
+fn verify_source(packages: List[package_api.Definition], path: String, src: String) -> Result[Unit, String] = verify_lang(language_of(packages, path)!, path, src)
 
-// Resolve cached engines without language-specific fields or dispatch branches.
+// The same through engines a batch already compiled.
 fn read_with(e: Engines, path: String, src: String) -> Result[Reading, String] = read_lang(loaded_for(e, path)!, path, src)
 fn parse_with(e: Engines, path: String, src: String) -> Result[parser.Parsed, String] = parse_lang(loaded_for(e, path)!, path, src)
 fn verify_with(e: Engines, path: String, src: String) -> Result[Unit, String] = verify_lang(loaded_for(e, path)!, path, src)

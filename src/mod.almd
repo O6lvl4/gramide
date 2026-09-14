@@ -1,0 +1,12 @@
+// gramide — the engine behind gramide.
+//
+// A lexer over bytes (lex), a parser that interprets a grammar value
+// (parser), the tree it produces (tree, names), the readers over that tree
+// (tags, symbols, map, balance), a host that turns a file into a reading
+// (lang), and the command line as a library (cli). A language is not here:
+// it is a separate package — gramide_almide, gramide_go, gramide_rust,
+// gramide_python — that hands the host a `package_api.Definition`, and a
+// binary is whichever of those a `cli.Program` composes.
+import self.about
+
+fn version() -> String = about.VERSION

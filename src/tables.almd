@@ -1,0 +1,118 @@
+// tables — a compiled grammar, written down as Almide source.
+//
+// A language package ships its grammar already compiled, in `src/table.almd`:
+// compiling the rule tree cost 0.8 ms of every run before the file was
+// opened, and a binary that only reads the table never links a rule
+// constructor. The package's own binary writes the file (`gen-table`, see
+// `cli/main.almd` in any language package), and its CI fails when the grammar
+// and the committed table disagree.
+import self.parser
+
+let WIDTH = 100
+let FIELDS = ["ops", "kids", "spelling", "spelling_start", "spelling_end", "bucket_at", "bucket_next",
+  "lit_mask", "head_kinds", "head_mask", "head_start", "head_len", "head_run", "kind_of"]
+
+fn hex4(n: Int) -> String = {
+  let digits = "0123456789abcdef"
+  var out = ""
+  var k = 3
+  while k >= 0 {
+    let d = int.band(int.bshr(n, k * 4), 15)
+    out = out + (string.byte_slice(digits, d, d + 1) ?? "0")
+    k = k - 1
+  }
+  out
+}
+
+// An Almide string literal for the name table: names end to end with a NUL
+// between them, and NUL is written as `\u{0000}` like any other control byte.
+fn quoted(text: String) -> String = {
+  var out = "\""
+  for ch in string.chars(text) {
+    let code = string.codepoint(ch) ?? 0
+    if ch == "\\" then out = out + "\\\\"
+    else if ch == "\"" then out = out + "\\\""
+    else if code < 32 or code == 127 then out = out + "\\u{" + hex4(code) + "}"
+    else out = out + ch
+  }
+  out + "\""
+}
+
+// `fn name() -> List[Int] = [1,2,3]`, folded at WIDTH columns.
+fn ints(name: String, xs: List[Int]) -> String = {
+  let prefix = "fn " + name + "() -> List[Int] = ["
+  var lines: List[String] = []
+  var line = prefix
+  let count = list.len(xs)
+  var i = 0
+  for x in xs {
+    let piece = int.to_string(x) + (if i + 1 < count then "," else "")
+    if string.len(line) + string.len(piece) > WIDTH and line != prefix then {
+      list.push(lines, line)
+      line = "  " + piece
+    } else line = line + piece
+    i = i + 1
+  }
+  list.push(lines, line + "]")
+  list.join(lines, "\n")
+}
+
+fn field_of(t: parser.Tables, name: String) -> List[Int] =
+  if name == "ops" then t.ops
+  else if name == "kids" then t.kids
+  else if name == "spelling" then t.spelling
+  else if name == "spelling_start" then t.spelling_start
+  else if name == "spelling_end" then t.spelling_end
+  else if name == "bucket_at" then t.bucket_at
+  else if name == "bucket_next" then t.bucket_next
+  else if name == "lit_mask" then t.lit_mask
+  else if name == "head_kinds" then t.head_kinds
+  else if name == "head_mask" then t.head_mask
+  else if name == "head_start" then t.head_start
+  else if name == "head_len" then t.head_len
+  else if name == "head_run" then t.head_run
+  else t.kind_of
+
+// The module a language package commits as `src/table.almd`.
+fn render(id: String, g: parser.Grammar) -> String = {
+  let t = parser.to_tables(parser.compile(g))
+  var body: List[String] = [
+    "// Generated from the " + id + " package's grammar by its own `gen-table`. Do not edit:",
+    "// regenerate it (see cli/main.almd), and CI fails when the grammar and this file disagree.",
+    "import gramide.parser",
+    ""
+  ]
+  for name in FIELDS { list.push(body, ints(name, field_of(t, name))) }
+  list.push(body, "fn blob() -> String = " + quoted(t.blob))
+  list.push(body, "fn tables() -> parser.Tables = parser.Tables {\n"
+    + list.join(list.map(FIELDS, (name) => "  " + name + ": " + name + "(),"), "\n")
+    + "\n  blob: blob(),\n  start: " + int.to_string(t.start) + ",\n  extra: " + int.to_string(t.extra) + ",\n}")
+  list.push(body, "fn compiled() -> parser.Compiled = parser.from_tables(tables())")
+  // no terminator: `println` supplies the file's last newline
+  list.join(body, "\n")
+}
+
+test "a name table round-trips through its literal" {
+  assert_eq(quoted("a\u{0000}b\"c\\"), "\"a\\u{0000}b\\\"c\\\\\"")
+  assert_eq(hex4(0), "0000")
+  assert_eq(hex4(127), "007f")
+}
+
+test "an int list folds at the width and keeps every element" {
+  let xs = list.map(list.range(0, 60), (i) => i * 1000)
+  let text = ints("xs", xs)
+  assert(string.starts_with(text, "fn xs() -> List[Int] = [0,1000,"))
+  assert(string.ends_with(text, "59000]"))
+  assert(list.all(string.lines(text), (l) => string.len(l) <= WIDTH + 8))
+}
+
+test "a rendered table reads back as the grammar it was compiled from" {
+  let g = parser.grammar("root", [("root", parser.wrap("root", parser.seq([parser.tok("identifier"), parser.lit("=")])))])
+  let text = render("demo", g)
+  assert(string.contains(text, "import gramide.parser"))
+  assert(string.contains(text, "fn compiled() -> parser.Compiled = parser.from_tables(tables())"))
+  assert(string.contains(text, "fn blob() -> String = \""))
+  assert(string.contains(text, "root") and string.contains(text, "\\u{0000}"))
+  let again = parser.from_tables(parser.to_tables(parser.compile(g)))
+  assert_eq(list.len(again.ops), list.len(parser.compile(g).ops))
+}

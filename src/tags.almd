@@ -15,10 +15,6 @@ import self.names as nametable
 import json
 import self.tree
 import self.package_api
-import self.lex
-import self.packages.gramide_almide as lang_almide
-import self.packages.gramide_go as lang_go
-import self.packages.gramide_rust as lang_rust
 import self.parser
 
 // Local copies of the tree helpers that take the token list: a list handed to
@@ -281,14 +277,6 @@ fn of_tree(root: tree.Node, toks: List[tree.Token], source: Bytes, names: nameta
 fn tags(root: tree.Node, toks: List[tree.Token], source: Bytes, names: nametable.Names, sep: String, rules: package_api.SymbolRules) -> List[String] =
   list.map(of_tree(root, toks, source, names, sep, rules), (t) => render(t))
 
-test "definitions, calls and type mentions" {
-  let src = "type P = { x: Int }\nfn area(p: P) -> Int = int.abs(p.x) * sq(2)\n"
-  let source = bytes.from_string(src)
-  let toks = lex.tokenize(src, lang_almide.spec()) |> result.map_err((e) => e.message)!
-  let p = parser.parse(lang_almide.almide(), source, toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert_eq(tags(p.root, toks, source, p.names, ".", lang_almide.symbol_rules()), ["def type P L1-1", "def field x L1-1", "ref type Int L1", "def function area L2-2", "ref type P L2", "ref type Int L2", "ref call int.abs L2", "ref call sq L2"])
-}
-
 // `outline`: the definitions only, one per line, nested ones indented by
 // how many definitions enclose them. The name is qualified here too, even
 // though the indentation already shows what encloses what, so that one line
@@ -319,66 +307,6 @@ fn outline_walk(n: tree.Node, toks: List[tree.Token], source: Bytes, depth: Int,
     i = i + 1
   }
   out
-}
-
-test "a Rust method is named with the type it is implemented on" {
-  let src = """mod inner {
-    pub struct S { pub a: u8 }
-    impl S { pub fn new() -> S { S { a: 0 } } }
-    impl fmt::Display for S { fn fmt(&self) -> u8 { 0 } }
-    pub trait T { fn go(&self) -> u8; }
-}
-"""
-  let source = bytes.from_string(src)
-  let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
-  let p = parser.parse(lang_rust.rust(), source, toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert_eq(outline(p.root, toks, source, p.names, "::", lang_rust.symbol_rules()), [
-    "L1-6 mod inner",
-    "  L2-2 type S",
-    "    L2-2 field a",
-    "  L3-3 impl S",
-    "    L3-3 method S::new",
-    // `impl Display for S` is an impl of S, so its methods are S's
-    "  L4-4 impl fmt::Display for S",
-    "    L4-4 method S::fmt",
-    "  L5-5 type T",
-    "    L5-5 method T::go",
-  ])
-}
-
-test "a Go method is named with its receiver, which is not where it is written" {
-  let src = "package p\n\ntype Shape struct{ w int }\n\nfunc (s *Shape) Area() int { return s.w }\n"
-  let source = bytes.from_string(src)
-  let toks = lex.tokenize(src, lang_go.spec()) |> result.map_err((e) => e.message)!
-  let p = parser.parse(lang_go.go(), source, toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert(list.contains(outline(p.root, toks, source, p.names, ".", lang_go.symbol_rules()), "L5-5 method Shape.Area"))
-}
-
-test "a function in a plain module keeps its own name" {
-  let src = "mod inner { pub fn free() -> u8 { 0 } }\n"
-  let source = bytes.from_string(src)
-  let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
-  let p = parser.parse(lang_rust.rust(), source, toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert_eq(outline(p.root, toks, source, p.names, "::", lang_rust.symbol_rules()), ["L1-1 mod inner", "  L1-1 function free"])
-}
-
-test "a multi-byte character above a name does not shift the name" {
-  // Every token offset counts bytes; `string.slice` counts characters. Cut a
-  // name out of the source and this file gives `eDb {}` where it should give
-  // `SpineDb`, one byte per non-ASCII character above it.
-  let src = "//! ≥ and — and §\nimpl salsa::Database for SpineDb {}\n"
-  let source = bytes.from_string(src)
-  let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
-  let p = parser.parse(lang_rust.rust(), source, toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert_eq(outline(p.root, toks, source, p.names, "::", lang_rust.symbol_rules()), ["L2-2 impl salsa::Database for SpineDb"])
-}
-
-test "a function written inside a method body is not a method of the type" {
-  let src = "impl S { fn m() { fn helper() -> u8 { 0 } } }\n"
-  let source = bytes.from_string(src)
-  let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
-  let p = parser.parse(lang_rust.rust(), source, toks) |> result.map_err((f) => parser.format_failure(f))!
-  assert_eq(outline(p.root, toks, source, p.names, "::", lang_rust.symbol_rules()), ["L1-1 impl S", "  L1-1 method S::m", "    L1-1 function helper"])
 }
 
 // Keep this walk beside the shared naming helpers. Cross-module calls in
@@ -421,17 +349,6 @@ fn symbol_rows_in(n: tree.Node, start: Int, toks: List[tree.Token], source: Byte
 fn symbol_rows(n: tree.Node, toks: List[tree.Token], source: Bytes, names: nametable.Names, scope: String, sep: String, rules: package_api.SymbolRules) -> List[Value] =
   symbol_rows_in(n, n.start, toks, source, names, scope, "", sep, rules, declaration_table(rules, names))
 
-test "flat Rust names preserve nested modules and trait display without changing bases" {
-  let src = "mod outer { mod inner { impl PartialEq<S> for S { fn eq(&self) {} } fn free() {} } }"
-  let source = bytes.from_string(src)
-  let toks = lex.tokenize(src, lang_rust.spec()) |> result.map_err((e) => e.message)!
-  let p = parser.parse(lang_rust.rust(), source, toks) |> result.map_err((f) => parser.format_failure(f))!
-  let defs = list.filter(of_tree(p.root, toks, source, p.names, "::", lang_rust.symbol_rules()), (t) => t.role == "def")
-  assert_eq(list.map(defs, (t) => t.name), ["outer", "outer::inner", "PartialEq<S> for outer::inner::S", "outer::inner::S::eq", "outer::inner::free"])
-  assert_eq(list.map(defs, (t) => t.base), ["outer", "inner", "S", "eq", "free"])
-  assert_eq(list.map(defs, (t) => t.kind), ["mod", "mod", "impl", "method", "function"])
-}
-
 // Recovery ranges are in source order and disjoint: ERROR nodes have no children.
 type ErrorRange = { start: Int, end: Int, start_byte: Int, end_byte: Int }
 fn append_errors(n: tree.Node, toks: List[tree.Token], source: Bytes, error: Int, mut ranges: List[ErrorRange]) -> Unit = {
@@ -469,9 +386,11 @@ fn error_free_rows(rows: List[Value], ranges: List[ErrorRange]) -> List[Value] =
   kept
 }
 
-
 test "prepared declarations preserve first mapping including empty kinds" {
-  let rules = lang_almide.symbol_rules()
+  let rules = package_api.SymbolRules {
+    declarations: [], scopes: [], namespaces: [], callables: [], lexical_owners: false, envelopes: [], unnamed_envelopes: [],
+    arguments: "arguments", field_access: "field_access", type_mentions: ["type_name"]
+  }
   let names = nametable.names_of(["hidden", "item", "missing"])
   let table = declaration_table(package_api.SymbolRules { ...rules, declarations: [("hidden", ""), ("hidden", "function"), ("item", "first"), ("item", "second")] }, names)
   assert_eq(decl_kind(0, table), "")

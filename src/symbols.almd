@@ -7,8 +7,8 @@ import self.tree
 import self.tags
 import self.lang
 
-fn document(path: String, source: String) -> Result[String, String] = {
-  let d = lang.read_source(path, source)!
+fn document(packages: List[package_api.Definition], path: String, source: String) -> Result[String, String] = {
+  let d = lang.read_source(packages, path, source)!
   match d.error { some(e) => err(e), none => {
     let language = d.language
     ok(json.stringify(value.object([
@@ -23,10 +23,11 @@ fn document(path: String, source: String) -> Result[String, String] = {
 fn collect(n: tree.Node, toks: List[tree.Token], source: Bytes, names: nametable.Names, scope: String, sep: String, rules: package_api.SymbolRules) -> List[Value] =
   tags.symbol_rows(n, toks, source, names, scope, sep, rules)
 
-// Explicit opt-in: only Python's recovery policy currently supplies this contract.
-fn recovered_document(path: String, source: String) -> Result[String, String] = {
-  guard lang.supports(path, "symbols-recovered") else err(path + ": language package does not provide recovered symbols")
-  let d = lang.read_source(path, source)!
+// Explicit opt-in: a package advertises `symbols-recovered` only when its
+// recovery never keeps a partial declaration head.
+fn recovered_document(packages: List[package_api.Definition], path: String, source: String) -> Result[String, String] = {
+  guard lang.supports(packages, path, "symbols-recovered") else err(path + ": language package does not provide recovered symbols")
+  let d = lang.read_source(packages, path, source)!
   let bytes_source = bytes.from_string(source)
   let ranges = tags.error_ranges(d.parsed.root, d.parsed.toks, bytes_source, d.parsed.names)
   guard option.is_none(d.error) or not list.is_empty(ranges) else err(path + ": recovered parse has no bounded error ranges")

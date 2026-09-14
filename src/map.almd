@@ -11,6 +11,7 @@ import fs
 import self.tree
 import self.tags
 import self.lang
+import self.package_api
 
 let MENTIONED_MUL = 10.0
 let WELL_NAMED_MUL = 10.0
@@ -39,15 +40,15 @@ fn skipped(rel: String) -> Bool = list.any(string.split(rel, "/"), (seg) => list
 // file that does not parse is read as far as the grammar can and reported;
 // leaving it out entirely would hide whatever an agent is halfway through
 // editing, which is exactly the file it most wants on the map.
-effect fn scan(root: String) -> Result[Scan, String] = {
+effect fn scan(packages: List[package_api.Definition], root: String) -> Result[Scan, String] = {
   let all = fs.walk(root) |> result.map_err((e) => root + ": " + e)!
   var files: List[FileTags] = []
   var errors: List[String] = []
   // compiled once for the whole walk, not once per file
-  let engines = lang.engines_for(all)!
+  let engines = lang.engines_for(packages, all)
   for p in list.sort(all) {
     let rel = if string.starts_with(p, root + "/") then string.slice(p, string.len(root) + 1, string.len(p)) else p
-    if lang.supports(p, "map") and not skipped(rel) then {
+    if lang.supports_in(engines, p, "map") and not skipped(rel) then {
       let size = fs.file_size(p) ?? 0
       if size > MAX_FILE_BYTES then list.push(errors, rel + ": skipped, larger than 512 KB")
       else match fs.read_text(p) {

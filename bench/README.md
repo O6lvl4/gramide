@@ -1,3 +1,20 @@
+# The board
+
+This file is the record of the engine's performance work, one measurement per
+section, oldest first. It was written while every language lived in the
+gramide repository, and the tooling it names has since moved with the
+languages: `bench/python_*.py`, `bench/python_outline_oracle.py` and
+`bench/tree_sitter_python.c` are in
+[gramide-python](https://github.com/O6lvl4/gramide-python/tree/main/bench),
+`bench/symbols.py` and `bench/tree_sitter_go.c` in
+[gramide-go](https://github.com/O6lvl4/gramide-go/tree/main/bench), and
+`./gramide` is any binary composed from this engine — the shipped
+[gramide-cli](https://github.com/O6lvl4/gramide-cli), or a package's own. The
+engine-level tools (`corpus_check.py`, `startup_floor.py`, `verb_timing.py`,
+`count_writes.py`, `profile_outline.py`, `instrument_allocations.py`) are
+still beside this file. Evidence links point at the repository that holds each
+measurement now.
+
 # Structured-read comparison
 
 This benchmark measures fresh-process file reading, full parsing, and JSON
@@ -25,7 +42,7 @@ python3 bench/symbols.py --gramide ./gramide --before /path/to/previous/gramide 
   --output /tmp/symbols-benchmark.json
 ```
 
-The committed [measurement](../docs/evidence/symbol-walk-benchmark.json) includes
+The committed [measurement](https://github.com/O6lvl4/gramide-go/blob/main/docs/evidence/symbol-walk-benchmark.json) includes
 binary hashes, platform, source hashes, raw timings, and reference commits.
 It is a focused regression benchmark, not a general parser ranking.
 
@@ -65,7 +82,7 @@ sysctl calls. Peak RSS includes runtime/process overhead, not just parser memory
 The normal gramide JSON also contains metadata and syntax kinds; the C output
 contains only compared fields. Neither implementation reuses an old tree.
 
-[Initial evidence](../docs/evidence/python-symbols-benchmark.json) covers three
+[Initial evidence](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-symbols-benchmark.json) covers three
 generated function files and 12 complete standard-library files. All 15 inputs
 match CPython's declaration contract. Gramide loses on both time and memory for
 all of these inputs: 800 functions take about 77 ms versus 7.5 ms and peak RSS is
@@ -83,7 +100,7 @@ child. Leaves cannot have the required declaration-name child, so the walk skips
 them. Names, owners, envelopes and end positions retain the same contract.
 
 Pass `--before /path/to/previous/gramide` to include the old binary in the same
-shuffled sample sequence. The [paired evidence](../docs/evidence/python-symbols-subtree-borrow.json)
+shuffled sample sequence. The [paired evidence](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-symbols-subtree-borrow.json)
 compares the final change with the pre-change binary and tree-sitter on the same
 15 sources, after the full test suite finished. All three outputs match CPython.
 
@@ -110,7 +127,7 @@ node. Declaration-kind lookup also avoids creating a copied list for `find`.
 The first-match and missing-field contracts are unchanged. This shared helper
 also serves outline and tags; the measurements here still cover symbols only.
 
-[Paired measurements](../docs/evidence/python-symbols-field-lookup.json) compare
+[Paired measurements](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-symbols-field-lookup.json) compare
 against the preceding subtree-borrow change, with the same 15 inputs and oracle.
 All outputs match CPython; 24 complete Python symbol/outline JSON/text outputs
 are additionally byte-identical to the previous binary. The full suite and real
@@ -135,14 +152,14 @@ forward vector retained as a node's children. The move-only pop/push algorithm
 and ordering remain unchanged. This avoids growth reallocations and spare
 capacity in the resulting tree; it does not introduce a copy-based reversal.
 
-The [Python paired run](../docs/evidence/python-tree-capacity.json) preserves
+The [Python paired run](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-tree-capacity.json) preserves
 all 15 CPython comparisons. Typing.py changes from 78.25 to 73.00 ms and from
 19.94 MB peak RSS to 15.27 MB. Inspect.py changes from 79.19 to 73.11 ms and from
 20.23 MB to 15.43/17.27 MB in the two RSS samples. Small-input timing and RSS
 still vary; keyword.py's median increased by about 0.02 ms. Tree-sitter remains
 faster and smaller throughout this corpus.
 
-A separate [Go comparison](../docs/evidence/go-tree-capacity.json) retains
+A separate [Go comparison](https://github.com/O6lvl4/gramide-go/blob/main/docs/evidence/go-tree-capacity.json) retains
 identical ranges at 100, 400 and 800 generated functions. Its timings are
 roughly unchanged (800 functions: 21.03 to 21.08 ms); this is not a claimed Go
 speed win. All raw samples and binary/source hashes are retained.
@@ -180,7 +197,7 @@ could use additional source analysis, changing the results. Gramide uses its
 production `symbols-recovered` interface. Both parse the full input from scratch;
 this experiment measures neither latency, memory nor incremental editing.
 
-The [initial evidence](../docs/evidence/python-recovery-comparison.json) records
+The [initial evidence](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-recovery-comparison.json) records
 all inputs, expected and actual rows, failures, binary/source hashes and reference
 commits. Gramide matches 17/20 cases and cannot return a document for 3;
 tree-sitter with this adapter matches 16/20, returns documents for all 20,
@@ -203,14 +220,14 @@ for 12 complete stdlib files (634 declarations in Python 3.14.4). Run it with
 Python 3.14; it uses the existing AST oracle and records source hashes.
 
 After atomic interpolation rollback, the same unchanged 20-case corpus gives
-[19 exact gramide cases and one unavailable result](../docs/evidence/python-interpolation-recovery.json).
+[19 exact gramide cases and one unavailable result](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-interpolation-recovery.json).
 The f/t-string losses are resolved; the unmatched outer bracket remains
 unsupported. The tree-sitter adapter results are unchanged. The broader 239-case
 recovery gate also covers conservative tail omission for damaged replacements
 and nested strings; this is still not general recovery or incremental parity.
 
 After EOF delimiter recovery, the same unchanged corpus gives
-[20 exact gramide cases, with no unavailable results](../docs/evidence/python-delimiter-recovery.json).
+[20 exact gramide cases, with no unavailable results](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-delimiter-recovery.json).
 The adapter remains at 16 exact cases. This only closes the gaps in these 20
 hand-selected inputs, not general recovery accuracy: mismatched closers, other
 lexical failures and ambiguous damaged replacement fields remain gaps, while
@@ -251,8 +268,8 @@ documents, while the tree-sitter adapter matched 217/275 and returned all 275.
 After recovering unknown ASCII characters and unmatched closing delimiters with
 an empty bracket stack, gramide matches 275/275. Tree-sitter adapter results
 remain unchanged (227 missing and 49 spurious declarations under this policy).
-See [before](../docs/evidence/python-edit-corpus-before.json) and
-[after](../docs/evidence/python-edit-corpus.json).
+See [before](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-edit-corpus-before.json) and
+[after](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-edit-corpus.json).
 
 This measures five invalid-line insertion families, not arbitrary character
 edits, representative editor traffic or all Python. The existing stdlib corpus
@@ -269,7 +286,7 @@ the matching byte width. Generated Rust uses `for op in ops.iter()` and a plain
 integer cursor. A helper taking the list by value still cloned the whole table
 at its call site, so that intermediate approach was not retained.
 
-The [paired evidence](../docs/evidence/python-operator-lookup.json) compares the
+The [paired evidence](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-operator-lookup.json) compares the
 merged isolated-error recovery binary with this change. All three binaries
 match CPython declaration names, owners and ranges on all 15 inputs before
 measurement. Five shuffled wall-time samples include startup/read/full parse/
@@ -315,8 +332,8 @@ python3 bench/profile_outline.py --gramide ./gramide --profiled /tmp/profile \
   --runtime-rlib /path/to/libalmide_rt.rlib --output /tmp/allocations.json
 ```
 
-[Before](../docs/evidence/python-outline-allocations-before.json) and
-[after](../docs/evidence/python-outline-allocations-after.json) record the
+[Before](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-outline-allocations-before.json) and
+[after](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-outline-allocations-after.json) record the
 instrumented/normal binaries, generated source, runtime rlib and instrumenter
 hashes. Both profiles use the same runtime rlib. On all five inputs, instrumented
 stdout equals the corresponding normal binary; before/after output hashes also
@@ -355,7 +372,7 @@ python3 bench/python_outline.py --gramide ./gramide --before /path/to/old-gramid
   --output /tmp/outline-timing.json
 ```
 
-[Five shuffled samples](../docs/evidence/python-newline-outline.json) include
+[Five shuffled samples](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-newline-outline.json) include
 process startup, read, full parse and identical outline output. The code-heavy
 examples improve modestly: inspect 64.87→62.83 ms, argparse 59.62→57.24 ms,
 _pydecimal 92.95→89.09 ms; ast.py is effectively unchanged. The string-heavy
@@ -382,7 +399,7 @@ first-match semantics even if the first mapped kind is empty. A regression cover
 empty maps, unknown syntax and duplicate mappings with an empty first result.
 
 Compared with the preceding newline-predicate profile, the
-[new same-runtime profile](../docs/evidence/python-kind-borrow-allocations.json)
+[new same-runtime profile](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-kind-borrow-allocations.json)
 reduces declaration-lookup allocations on inspect.py from 206,313 to 162 and on
 typing.py from 200,587 to 253. The prepared Python table costs 19 allocation
 requests once per traversal. Total instrumented allocations drop from 1,309,507
@@ -390,13 +407,13 @@ to 1,103,375 on inspect and 2,012,359 to 1,688,636 on _pydecimal; all five norma
 output hashes and source hashes match the baseline. These remain diagnostic
 request counts, not timing or peak-RSS measurements.
 
-[Normal Python outline timing](../docs/evidence/python-kind-borrow-outline.json)
+[Normal Python outline timing](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-kind-borrow-outline.json)
 requires CPython-equivalent output for all 15 old/new/tree-sitter runs. Fourteen
 medians decrease: inspect 63.16→60.00 ms, typing 65.47→61.83 ms, argparse
 61.63→55.58 ms, _pydecimal 105.66→92.14 ms. genericpath increases 7.27→7.48 ms;
 that sample is retained. Tree-sitter is still faster throughout.
 
-Because the lookup is shared, a [Go structured-symbol comparison](../docs/evidence/go-kind-borrow-symbols.json)
+Because the lookup is shared, a [Go structured-symbol comparison](https://github.com/O6lvl4/gramide-go/blob/main/docs/evidence/go-kind-borrow-symbols.json)
 also checks 100/400/800 generated functions against unchanged old/new/tree-sitter
 ranges. The 800-function median decreases 19.68→18.03 ms (tree-sitter 6.89 ms).
 This small generated Go corpus is not general Go or Rust performance evidence.
@@ -416,7 +433,7 @@ uses the allocation-free `None` branch. Existing frame copies within active
 interpolations remain. The 21 strict-command diagnostic checks cover Unicode,
 CRLF, invalid continuations, f/t strings and excessive interpolation nesting.
 
-The [same-runtime allocation profile](../docs/evidence/python-scalar-mode-allocations.json)
+The [same-runtime allocation profile](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-scalar-mode-allocations.json)
 compared with the preceding declaration-table change reports:
 
 | File | Total allocations before → after | Physical scanner before → after |
@@ -432,7 +449,7 @@ profile. Counts attribute Rust allocation requests to the innermost generated
 function, not exact call sites, live memory, RSS or all libc allocations.
 Instrumentation can affect optimization; timings use normal binaries instead.
 
-The [paired normal-binary outline comparison](../docs/evidence/python-scalar-mode-outline.json)
+The [paired normal-binary outline comparison](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-scalar-mode-outline.json)
 checks identical text against CPython AST for all 15 files before timing.
 Fourteen medians improve; token.py increases from 5.283 to 5.314 ms and is retained.
 inspect.py improves from 58.02 to 56.00 ms, argparse.py from 54.59 to 52.60 ms,
@@ -458,7 +475,7 @@ copies, not evidence that gramide shares their ownership or incremental design.
 The internal record here addresses the actual generated native call convention;
 the public token preparation input and output remain lists.
 
-[Same-runtime allocation evidence](../docs/evidence/python-token-preparation-allocations.json)
+[Same-runtime allocation evidence](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-token-preparation-allocations.json)
 compared with scalar scanner dispatch:
 
 | File | Total allocations before → after | Preparation before → after |
@@ -474,7 +491,7 @@ Counts remain exclusive generated-function Rust allocation attribution, not
 exact call sites, live heap, RSS or all libc allocations. Instrumentation may
 change optimization.
 
-[Uninstrumented paired timing](../docs/evidence/python-token-preparation-outline.json)
+[Uninstrumented paired timing](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-token-preparation-outline.json)
 validates all 15 outlines against CPython AST before taking five shuffled
 samples with startup included. Fourteen medians decrease, with stat.py effectively
 unchanged. copyreg.py increases from 6.59 to 7.28 ms; that result is retained.
@@ -549,7 +566,7 @@ failures, binary hashes and reference revisions. Oracle errors and gramide misma
 fail the command after saving the report; comparator mismatches are retained in the
 report without hiding otherwise valid gramide results. An empty corpus fails.
 
-The [Python 3.14.4 result](../docs/evidence/python-full-stdlib.json), using gramide
+The [Python 3.14.4 result](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-full-stdlib.json), using gramide
 from PR #43, covers **721 files / 12,175,027 bytes** with no oracle errors:
 
 | Implementation | Exact CPython outline matches |

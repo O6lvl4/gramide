@@ -1,5 +1,6 @@
-// A deliberately tiny external syntax, not a Python grammar. Its lexer and
-// node names differ from the built-ins so this tests the extension boundary.
+// A deliberately tiny external syntax, not a real language. Its lexer and
+// node names differ from every bundled package, so this tests the extension
+// boundary: what a language package has to hand the host, and nothing more.
 import self.package_api
 import self.registry
 import self.lang
@@ -7,12 +8,27 @@ import self.lex
 import self.tree
 import self.parser
 import self.symbols
-import self.packages.gramide_go as lang_go
 import json
 
+fn demo_spec() -> lex.Spec = lex.Spec {
+  keywords: ["action"],
+  operators: ["{", "}", ";"],
+  numbers: lex.N_GO,
+  strings: lex.S_GO,
+  newlines: lex.NL_NONE,
+  ends_kw: [],
+  line_comment: [35],                     // #
+  block_open: [60, 35],                   // <#
+  block_close: [35, 62],                  // #>
+  nested_block: false,
+  block_comment_newline: false,
+  upper_is_type: false,
+  backtick_ident: false,
+  neg_token: false,
+}
 fn demo_scan(source: String, recovering: Bool) -> Result[List[tree.Token], lex.LexError] = {
   guard string.starts_with(source, "@") else err(lex.LexError { line: 1, col: 1, message: "demo source needs @" })
-  let toks = lex.tokenize_with(string.drop(source, 1), lang_go.spec(), recovering)!
+  let toks = lex.tokenize_with(string.drop(source, 1), demo_spec(), recovering)!
   ok(list.map(toks, (t) => tree.Token { ...t, start: t.start + 1, end: t.end + 1, col: if t.line == 1 then t.col + 1 else t.col }))
 }
 fn demo_grammar() -> parser.Grammar = parser.grammar("root", [
@@ -23,18 +39,19 @@ fn demo_grammar() -> parser.Grammar = parser.grammar("root", [
   ])))
 ])
 fn demo() -> package_api.Definition = package_api.Definition {
-  id: "example", package_name: "gramide-example", version: "0.1.0", extensions: [".example"], capabilities: ["check", "symbols"],
-  lexer: () => (source, recovering) => demo_scan(source, recovering), grammar: some(() => demo_grammar()), sep: ".",
+  id: "example", package_name: "gramide-example", version: "0.1.0", extensions: [".example"], capabilities: ["check", "symbols", "outline"],
+  lexer: () => (source, recovering) => demo_scan(source, recovering), grammar: () => parser.compile(demo_grammar()), sep: ".",
   symbols: package_api.SymbolRules {
     declarations: [("custom_owner", "class"), ("custom_action", "function")], scopes: ["custom_owner"], namespaces: [], callables: ["custom_action"],
     lexical_owners: false, envelopes: [], unnamed_envelopes: [],
     arguments: "arguments", field_access: "field_access", type_mentions: ["type_name"]
   }
 }
+fn other() -> package_api.Definition = package_api.Definition { ...demo(), id: "other", package_name: "gramide-other", extensions: [".other"] }
 
 test "an unregistered package supplies lexer grammar and semantic roles" {
   let d = registry.resolve_in([demo()], "demo.example")!
-  let engine = lang.compile(d)!
+  let engine = lang.compile(d)
   let read = lang.read_lang(engine, "demo.example", "@Box { action read; }")!
   assert_eq(read.language, "example")
   assert_eq(read.error, none)
@@ -50,14 +67,27 @@ test "an unregistered package supplies lexer grammar and semantic roles" {
 test "registration rejects ambiguity and batch engines are lazy" {
   assert(result.is_err(registry.resolve_in([demo(), demo()], "demo.example")))
   assert(result.is_err(registry.resolve_in([demo()], "demo.py")))
-  assert_eq(list.len(lang.engines_for(["a.rs", "b.rs"])!.loaded), 1)
-  assert_eq(list.len(lang.engines_for(["a.rs", "b.go"])!.loaded), 2)
-  let engines = lang.Engines { loaded: [lang.compile(demo())!, lang.compile(demo())!] }
+  assert_eq(list.len(lang.engines_for([demo(), other()], ["a.example", "b.example"]).loaded), 1)
+  assert_eq(list.len(lang.engines_for([demo(), other()], ["a.example", "b.other"]).loaded), 2)
+  let engines = lang.Engines { loaded: [lang.compile(demo()), lang.compile(demo())] }
   assert(result.is_err(lang.loaded_for(engines, "demo.example")))
+}
+
+test "a composition that registers an id or an extension twice is refused by name" {
+  assert_eq(registry.conflict([demo(), other()]), none)
+  assert_eq(registry.conflict([demo(), demo()]), some("two language packages register the id example"))
+  let same_ext = package_api.Definition { ...other(), extensions: [".example"] }
+  assert_eq(registry.conflict([demo(), same_ext]), some("two language packages register the extension .example"))
 }
 
 test "read-only packages cannot become write gates" {
   let d = demo()
   let reader = package_api.Definition { ...d, capabilities: ["symbols"] }
-  assert(result.is_err(lang.verify_lang(lang.compile(reader)!, "demo.example", "@Box { action read; }")))
+  assert(result.is_err(lang.verify_lang(lang.compile(reader), "demo.example", "@Box { action read; }")))
+}
+
+test "the manifest lists every package with its extensions and capabilities" {
+  let j = json.parse(registry.manifest([demo(), other()]))!
+  assert_eq(json.get_int(j, "schema_version"), some(1))
+  assert_eq(list.len(json.get_array(j, "packages") ?? []), 2)
 }

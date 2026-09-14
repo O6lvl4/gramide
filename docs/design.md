@@ -467,7 +467,7 @@ subtrees; gramide still has tree allocation and traversal costs to address.
 These numbers say nothing about incremental parsing or general language coverage.
 The gramide JSON contains more fields than the small C baseline. See
 [benchmark instructions and scope](../bench/README.md) and the
-[raw measurements](evidence/symbol-walk-benchmark.json).
+[raw measurements](https://github.com/O6lvl4/gramide-go/blob/main/docs/evidence/symbol-walk-benchmark.json).
 
 An independent Go AST oracle still matches all 551 functions/methods across 38
 reference files. CI now exercises 2,000 generated functions against that oracle

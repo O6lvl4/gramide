@@ -1,5 +1,7 @@
-// Static language package contract. Lexer factories may implement layout,
-// interpolation or other language-specific scanning outside the shared engine.
+// The language package contract. A language is a separate Almide package that
+// hands the host one of these; the host and the readers know nothing else about
+// it. Lexer factories may implement layout, interpolation or other
+// language-specific scanning outside the shared engine.
 import self.lex
 import self.tree
 import self.parser
@@ -21,11 +23,11 @@ type SymbolRules = {
 }
 type Definition = {
   id: String, package_name: String, version: String, extensions: List[String], capabilities: List[String],
-  // A built-in package ships its arena compiled (src/packages/tables), and its
-  // rule tree is the generator's input, not the binary's: carrying the factory
-  // here linked every rule constructor for every language into a binary that
-  // never calls one — 38% of its executable code. `none` says "read the table";
-  // a package that has no table says how to build one.
-  lexer: () -> Tokenizer, grammar: Option[() -> parser.Grammar],
+  // Both are thunks, run once per loaded language. A package ships its grammar
+  // compiled (`src/table.almd`, written by its own `gen-table`) and hands a
+  // thunk that reads it: a binary that only reads tables never links a rule
+  // constructor, which is 38% of the executable code of one that does. A
+  // package with only a rule tree hands `() => parser.compile(rules())`.
+  lexer: () -> Tokenizer, grammar: () -> parser.Compiled,
   sep: String, symbols: SymbolRules
 }

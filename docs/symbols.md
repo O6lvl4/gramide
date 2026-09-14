@@ -1,7 +1,7 @@
 # Structured symbols, schema 1
 
-`gramide symbols FILE` writes one JSON object to stdout on success. It supports
-Almide, Go and Rust. Unlike the display outline, it exits nonzero without JSON
+`gramide symbols FILE` writes one JSON object to stdout on success. Every
+shipped package answers it. Unlike the display outline, it exits nonzero without JSON
 when lexing/parsing requires recovery. `complete` describes parser completion,
 not semantic validity or a proof that every possible declaration is modeled.
 
@@ -21,20 +21,22 @@ formatting stays available; `parse` now exposes Rust `item_envelope` nodes.
 ## Reference comparison
 
 The Go AST contract uses `Pos()` at the first token and `End()` immediately after
-the declaration. The oracle in `ci/reference_ranges.go` uses the standard parser,
-independently of gramide, and compares concrete function/method declarations.
+the declaration. The oracle in `ci/reference_ranges.go` of the [gramide-go](https://github.com/O6lvl4/gramide-go)
+package uses the standard parser, independently of gramide, and compares
+concrete function/method declarations.
 Interface method signatures are not `ast.FuncDecl` and are outside this oracle.
 
 At Go reference commit `e51216de8e26247ee0f3d2cfa576233b0d29f542`, the 38 `.go`
 files under `src/go/ast`, `src/go/parser` and `src/go/token`, excluding `testdata`,
 matched on all 551 function/method names, line ranges and byte ranges. There were
 no reference-invalid files or gramide rejections. See
-[evidence with source hashes](evidence/go-ranges.json).
+[evidence with source hashes](https://github.com/O6lvl4/gramide-go/blob/main/docs/evidence/go-ranges.json).
 
-Reproduce with a checkout of that Go commit and Go installed:
+Reproduce in the gramide-go package, with a checkout of that Go commit and Go
+installed:
 
 ```sh
-almide build
+almide build cli/main.almd -o gramide_go
 python3 ci/reference_corpus.py /path/to/go /tmp/go-ranges.json
 ```
 
