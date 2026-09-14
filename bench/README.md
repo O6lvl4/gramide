@@ -2406,23 +2406,26 @@ on 200 files each of Go, Rust and Almide, and `check` over all of
 `GOROOT/src`, the Almide compiler's `.rs` files and the Almide repository's
 `.almd` files rejects the same files with the same diagnostics.
 
-The process-level comparison, taken once the stray job had finished but with
-the machine still at load 7–10 (a security agent holds one core here; every
-absolute number in this table, tree-sitter's included, is a third above the
-quiet-machine runs earlier on the board, so the ratios are what to read):
+The process-level comparison, taken in the quietest window this machine
+offered (load 3–4; a security agent holds one core here at all times, so
+every absolute number, tree-sitter's included, sits above what a quiet
+machine would show — the ratios are what to read):
 
 | | gramide 0.2.2 | tree-sitter | |
 |---|---:|---:|---:|
-| Go, 800 generated functions, `symbols` | 6.56 ms | 7.79 ms | 0.84x |
-| Go, 400 | 5.24 ms | 6.98 ms | 0.75x |
-| Go, 100 | 4.15 ms | 4.20 ms | 0.99x |
-| Python, 15 stdlib files, `outline` | faster on 10 | faster on 5 | |
-| `check` over `GOROOT/src`, 7,702 files | 0.491 s, 183 MB/s | | |
-| `check` over the compiler's `.rs`, 1,022 files | 0.077 s, 225 MB/s | | |
-| `check` over the Almide repository's `.almd`, 3,383 files | 0.105 s, 41 MB/s | | |
+| Go, 800 generated functions, `symbols` | 6.07 ms | 7.77 ms | 0.78x |
+| Go, 400 | 4.69 ms | 5.23 ms | 0.90x |
+| Go, 100 | 3.37 ms | 3.94 ms | 0.86x |
+| Python, 15 stdlib files, `outline` | faster on 11 | faster on 4 | |
+| Python, whole stdlib, parse time only | 0.23 s | 0.46 s | 0.51x |
+| Python, whole stdlib, startup included | 3.12 s | 3.08 s | 1.01x |
+| `check` over `GOROOT/src`, 7,702 files | 0.427 s, 211 MB/s | | |
+| `check` over the compiler's `.rs`, 1,022 files | 0.080 s, 215 MB/s | | |
+| `check` over the Almide repository's `.almd`, 3,383 files | 0.103 s, 42 MB/s | | |
 
 ([Go](https://github.com/O6lvl4/gramide-go/blob/main/docs/evidence/symbol-walk-lexer.json),
 [Python](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-outline-lexer.json),
+[Python corpus](../docs/evidence/corpus-parse-rate-lexer.json),
 [Go corpus](https://github.com/O6lvl4/gramide-go/blob/main/docs/evidence/corpus-check-go-lexer.json),
 [Rust corpus](https://github.com/O6lvl4/gramide-rust/blob/main/docs/evidence/corpus-check-rust-lexer.json),
 [Almide corpus](https://github.com/O6lvl4/gramide-almide/blob/main/docs/evidence/corpus-check-almide-lexer.json).)
@@ -2430,3 +2433,16 @@ The Go corpus was 132 MB/s at the start of this stretch and 154 after the
 ladder; the Rust one 156 and 166. The Almide grammar's ladder allows a
 newline on either side of an operator, which a `prec` level cannot, so its
 rate is the lexer's gain alone.
+
+**What is left is the floor, and it is not where it looked.** Minimum of 151
+runs, same window: `/usr/bin/true` 1.70 ms; a Rust hello world 2.21, the same
+with `#![no_main]` 2.01; gramide with no arguments 2.09, reading a one-line
+file 2.14–2.45 whatever the command or the language; the tree-sitter adapter
+reading the same one-line Python file **2.73**. At the floor gramide is ahead
+on an empty file too. Where it loses — keyword.py at the median, 3.41 to 2.93;
+the whole-stdlib run with startup counted, 1.01x — is where the two floors
+sit under load: gramide's median moves further from its minimum than the C
+binary's does, which is the cost of a larger binary and a runtime's worth of
+pages and syscalls before `main`, and 0.2 ms of it is `std::rt::init`, which
+the compiler could skip by emitting a `#![no_main]` entry. That is the one
+lever left, and it is the compiler's, not this repository's.
