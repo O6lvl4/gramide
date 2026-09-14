@@ -2406,11 +2406,27 @@ on 200 files each of Go, Rust and Almide, and `check` over all of
 `GOROOT/src`, the Almide compiler's `.rs` files and the Almide repository's
 `.almd` files rejects the same files with the same diagnostics.
 
-The process-level comparison was taken on a machine two other jobs were
-saturating (load 7–9, tree-sitter's own numbers 20% above their earlier
-runs), so only the interleaved ratios are worth writing down: `check` over
-`GOROOT/src`, previous lexer then this one, twice, 113.6/117.7 and
-116.5/120.4 MB/s; the compiler's `.rs`, 110 → 129 MB/s. The Go read against
-tree-sitter is to be re-measured when the machine is quiet; the in-process
-numbers say what to expect.
+The process-level comparison, taken once the stray job had finished but with
+the machine still at load 7–10 (a security agent holds one core here; every
+absolute number in this table, tree-sitter's included, is a third above the
+quiet-machine runs earlier on the board, so the ratios are what to read):
 
+| | gramide 0.2.2 | tree-sitter | |
+|---|---:|---:|---:|
+| Go, 800 generated functions, `symbols` | 6.56 ms | 7.79 ms | 0.84x |
+| Go, 400 | 5.24 ms | 6.98 ms | 0.75x |
+| Go, 100 | 4.15 ms | 4.20 ms | 0.99x |
+| Python, 15 stdlib files, `outline` | faster on 10 | faster on 5 | |
+| `check` over `GOROOT/src`, 7,702 files | 0.491 s, 183 MB/s | | |
+| `check` over the compiler's `.rs`, 1,022 files | 0.077 s, 225 MB/s | | |
+| `check` over the Almide repository's `.almd`, 3,383 files | 0.105 s, 41 MB/s | | |
+
+([Go](https://github.com/O6lvl4/gramide-go/blob/main/docs/evidence/symbol-walk-lexer.json),
+[Python](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-outline-lexer.json),
+[Go corpus](https://github.com/O6lvl4/gramide-go/blob/main/docs/evidence/corpus-check-go-lexer.json),
+[Rust corpus](https://github.com/O6lvl4/gramide-rust/blob/main/docs/evidence/corpus-check-rust-lexer.json),
+[Almide corpus](https://github.com/O6lvl4/gramide-almide/blob/main/docs/evidence/corpus-check-almide-lexer.json).)
+The Go corpus was 132 MB/s at the start of this stretch and 154 after the
+ladder; the Rust one 156 and 166. The Almide grammar's ladder allows a
+newline on either side of an operator, which a `prec` level cannot, so its
+rate is the lexer's gain alone.
