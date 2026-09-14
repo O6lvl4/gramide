@@ -1,0 +1,127 @@
+{
+  "platform": "macOS-15.4.1-arm64-arm-64bit",
+  "samples_per_binary": 151,
+  "almide": "almide 0.62.0",
+  "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+  "binary_sha256": {
+    "true": "5556ee0f6f63c8e873889f6299ca5636b2358fe93739d9a6b78681965c76e7d6",
+    "c_hello": "85b20644d7642309d09e40991c53df3ef18e75f84562b840ddaebcc36ba4aa0a",
+    "c_padded": "8c4303415ab7223b8b5d310ef3ed8517087661677996586639464f654fe6c4b5",
+    "rust_no_main": "5118ef00093d2a006d318da02548d72a6d6871e0f98cf8d178541eca262c7a61",
+    "rust_main_write": "91c3287ccec97f2edb351d29b6e87d819b2d22be67aff262d54753abddb7340c",
+    "rust_println": "92d68abff9865dbe136789c88e78e9f61f6b456051345592a512516a6b057e55",
+    "almide_println": "24aba3cbc4b3279fe01497a65945a77e506f33b322047de581d18cbd0af43aa2",
+    "gramide_noargs": "edc7c9325b65c9a48bd2e9070c1ba1b10c754553cc6eed071e72a3cdd69bbe48",
+    "gramide_tiny": "edc7c9325b65c9a48bd2e9070c1ba1b10c754553cc6eed071e72a3cdd69bbe48",
+    "tree_sitter_tiny": "488321ddbae86065b95dc63dfbcaaaa02bdd0e4d11482b146f41fe34d8304987"
+  },
+  "mode": "fresh process per sample, shuffled; the minimum is reported because a floor is what a startup cost is, and the median only adds this machine's load",
+  "bytes": {
+    "true": 84128,
+    "c_hello": 33432,
+    "c_padded": 429736,
+    "rust_no_main": 49968,
+    "rust_main_write": 437776,
+    "rust_println": 440816,
+    "almide_println": 354848,
+    "gramide_noargs": 1472400,
+    "gramide_tiny": 1472400,
+    "tree_sitter_tiny": 700912
+  },
+  "cases": {
+    "true": {
+      "what": "the cost of starting any process at all",
+      "command": [
+        "true"
+      ],
+      "min_ms": 1.7715840367600322,
+      "median_ms": 2.083666971884668,
+      "over_true_ms": 0.0
+    },
+    "c_hello": {
+      "what": "C, 33 KB, one puts",
+      "command": [
+        "c_hello"
+      ],
+      "min_ms": 1.8590830732136965,
+      "median_ms": 2.199874958023429,
+      "over_true_ms": 0.0874990364536643
+    },
+    "c_padded": {
+      "what": "the same C binary padded past 400 KB: mach-o size is not a startup cost",
+      "command": [
+        "c_padded"
+      ],
+      "min_ms": 1.8928749486804008,
+      "median_ms": 2.17720796354115,
+      "over_true_ms": 0.12129091192036867
+    },
+    "rust_no_main": {
+      "what": "Rust with no std::rt::init at all: #![no_main] and write(2)",
+      "command": [
+        "rust_no_main"
+      ],
+      "min_ms": 1.7687920480966568,
+      "median_ms": 2.1774580236524343,
+      "over_true_ms": -0.0027919886633753777
+    },
+    "rust_main_write": {
+      "what": "Rust, ordinary main, write(2) \u2014 std::rt::init and nothing else",
+      "command": [
+        "rust_main_write"
+      ],
+      "min_ms": 2.0782500505447388,
+      "median_ms": 2.416540984995663,
+      "over_true_ms": 0.3066660137847066
+    },
+    "rust_println": {
+      "what": "Rust, ordinary main, one println! \u2014 the same, plus all of Stdout",
+      "command": [
+        "rust_println"
+      ],
+      "min_ms": 2.045665984041989,
+      "median_ms": 2.361625083722174,
+      "over_true_ms": 0.2740819472819567
+    },
+    "almide_println": {
+      "what": "Almide, one println: what every Almide binary pays",
+      "command": [
+        "almide_hello"
+      ],
+      "min_ms": 2.0827919943258166,
+      "median_ms": 2.454333007335663,
+      "over_true_ms": 0.31120795756578445
+    },
+    "gramide_noargs": {
+      "what": "gramide with no arguments: it prints usage and exits",
+      "command": [
+        "gramide"
+      ],
+      "min_ms": 2.1527920616790652,
+      "median_ms": 2.483916934579611,
+      "over_true_ms": 0.38120802491903305
+    },
+    "gramide_tiny": {
+      "what": "gramide reading a one-line file",
+      "command": [
+        "gramide",
+        "outline",
+        "/var/folders/q3/fnffs_1j7sl7x8x1vtkth6vm0000gr/T/tmpjt89qvxn/tiny.py"
+      ],
+      "min_ms": 2.2902089403942227,
+      "median_ms": 2.683500060811639,
+      "over_true_ms": 0.5186249036341906
+    },
+    "tree_sitter_tiny": {
+      "what": "tree-sitter reading the same one-line file",
+      "command": [
+        "gramide-tree-sitter-python-outline",
+        "--outline",
+        "/var/folders/q3/fnffs_1j7sl7x8x1vtkth6vm0000gr/T/tmpjt89qvxn/tiny.py"
+      ],
+      "min_ms": 2.010042080655694,
+      "median_ms": 2.362458035349846,
+      "over_true_ms": 0.23845804389566183
+    }
+  }
+}

@@ -97,14 +97,17 @@ fn render(t: Tag) -> String =
 // A node's kind is a number, so the rules a package states by name are
 // resolved once per file and compared as numbers from then on. A name this
 // grammar never uses answers -1, which no node carries.
-type DeclarationEntry = { syntax: Int, kind: String }
+// `name` is the syntax kind's own name, resolved here once so that the walk
+// that prints it never carries the name table down the tree: a Names record
+// is a blob and two lists, and a parameter like that is copied per visit.
+type DeclarationEntry = { syntax: Int, name: String, kind: String }
 type DeclarationTable = { entries: List[DeclarationEntry], scopes: List[Int], namespaces: List[Int],
   callables: List[Int], envelopes: List[Int], unnamed_envelopes: List[Int],
   type_name: Int, identifier: Int, arguments: Int, field_access: Int, type_mentions: List[Int],
   f_name: Int, f_trait: Int, f_receiver: Int, f_field: Int }
 fn declaration_table(rules: package_api.SymbolRules, names: nametable.Names) -> DeclarationTable =
   DeclarationTable {
-    entries: list.map(rules.declarations, (d) => DeclarationEntry { syntax: nametable.id_of(names, d.0), kind: d.1 }),
+    entries: list.map(rules.declarations, (d) => DeclarationEntry { syntax: nametable.id_of(names, d.0), name: d.0, kind: d.1 }),
     scopes: list.map(rules.scopes, (k) => nametable.id_of(names, k)),
     namespaces: list.map(rules.namespaces, (k) => nametable.id_of(names, k)),
     callables: list.map(rules.callables, (k) => nametable.id_of(names, k)),
@@ -121,6 +124,16 @@ fn decl_kind(k: Int, table: DeclarationTable) -> String = {
   var matched = false
   for entry in table.entries {
     if not matched and entry.syntax == k then { found = entry.kind; matched = true } else ()
+  }
+  found
+}
+
+// The syntax kind's name, for a node `decl_kind` answered for.
+fn syntax_name(k: Int, table: DeclarationTable) -> String = {
+  var found = ""
+  var matched = false
+  for entry in table.entries {
+    if not matched and entry.syntax == k then { found = entry.name; matched = true } else ()
   }
   found
 }
@@ -281,13 +294,17 @@ fn tags(root: tree.Node, toks: List[tree.Token], source: Bytes, names: nametable
 // how many definitions enclose them. The name is qualified here too, even
 // though the indentation already shows what encloses what, so that one line
 // cut out of the output still says what it is.
-fn outline(root: tree.Node, toks: List[tree.Token], source: Bytes, names: nametable.Names, sep: String, rules: package_api.SymbolRules) -> List[String] =
-  outline_walk(root, toks, source, 0, "", sep, rules, declaration_table(rules, names))
+fn outline(root: tree.Node, toks: List[tree.Token], source: Bytes, names: nametable.Names, sep: String, rules: package_api.SymbolRules) -> List[String] = {
+  var out: List[String] = []
+  outline_walk(root, toks, source, 0, "", sep, rules, declaration_table(rules, names), out)
+  out
+}
 
-fn outline_walk(n: tree.Node, toks: List[tree.Token], source: Bytes, depth: Int, scope: String, sep: String, rules: package_api.SymbolRules, table: DeclarationTable) -> List[String] = {
+// The lines go onto one list the caller owns and hands down; returning them a
+// level at a time copied every line once per level of nesting.
+fn outline_walk(n: tree.Node, toks: List[tree.Token], source: Bytes, depth: Int, scope: String, sep: String, rules: package_api.SymbolRules, table: DeclarationTable, mut out: List[String]) -> Unit = {
   let kind = decl_kind(n.kind, table)
   let name = if kind != "" then name_of(n, toks, source, table) else ""
-  var out: List[String] = []
   if name != "" then {
     let own = owner_for(n, scope, toks, source, table)
     list.push(out, string.repeat("  ", depth) + "L" + int.to_string(first_line(n, toks)) + "-" + int.to_string(last_line(n, toks, source))
@@ -297,37 +314,45 @@ fn outline_walk(n: tree.Node, toks: List[tree.Token], source: Bytes, depth: Int,
   else ()
   let deeper = if name == "" then depth else depth + 1
   let inner = scope_under(n, scope, toks, source, table)
-  var i = 0
-  let count = list.len(n.kids)
-  while i < count {
-    match list.get(n.kids, i) {
-      some(k) => for l in outline_walk(k, toks, source, deeper, inner, sep, rules, table) { list.push(out, l) },
-      none => (),
-    }
-    i = i + 1
+  for k in n.kids {
+    if not list.is_empty(k.kids) then outline_walk(k, toks, source, deeper, inner, sep, rules, table, out) else ()
   }
-  out
 }
 
 // Keep this walk beside the shared naming helpers. Cross-module calls in
 // the current native backend copy the token list; doing that per node makes
 // structured reads quadratic in the size of the source.
-// Stable machine-readable declaration ranges: byte offsets are zero-based,
-// end-exclusive; line ranges are one-based and inclusive.
-fn symbol_rows_in(n: tree.Node, start: Int, toks: List[tree.Token], source: Bytes, names: nametable.Names, scope: String, namespace: String, sep: String, rules: package_api.SymbolRules, table: DeclarationTable) -> List[Value] = {
-  var out: List[Value] = []
+//
+// A row is its JSON object, rendered the moment the declaration is found, and
+// the rows are pushed onto one list the caller owns and hands down. Building
+// them as `Value` trees, returning them up a level at a time and stringifying
+// the lot cost 4.6 ms for 800 Go functions — half of what `symbols` took, and
+// more than the parse. Byte offsets are zero-based, end-exclusive; line ranges
+// are one-based and inclusive. The byte range rides beside the text because
+// the recovered document filters on it.
+type SymbolRow = { json: String, start_byte: Int, end_byte: Int }
+
+// A JSON string literal. Names are identifiers and paths, so nearly every one
+// takes the fast path, decided by native scans and no allocation; anything
+// holding a quote, a backslash or a line break goes through the library's
+// escaping instead. Another control byte cannot reach here on its own: every
+// name is joined from tokens, and the only token that can hold one is a
+// string, which the quote check already sends the slow way.
+fn json_string(s: String) -> String =
+  if string.contains(s, "\"") or string.contains(s, "\\") or string.contains(s, "\n") or string.contains(s, "\r") or string.contains(s, "\t")
+  then json.stringify(value.str(s))
+  else "\"" + s + "\""
+
+fn symbol_rows_in(n: tree.Node, start: Int, toks: List[tree.Token], source: Bytes, scope: String, namespace: String, sep: String, rules: package_api.SymbolRules, table: DeclarationTable, mut out: List[SymbolRow]) -> Unit = {
   let kind = decl_kind(n.kind, table)
   let name = if kind == "" then "" else name_of(n, toks, source, table)
   if name != "" then {
     let own = owner_for(n, scope, toks, source, table)
     match (list.get(toks, start), list.get(toks, code_end(n, toks) - 1)) {
-      (some(first), some(last)) => list.push(out, value.object([
-        ("kind", value.str(if own == "" then kind else "method")),
-        ("name", value.str(flat_name(n, name, own, namespace, toks, source, sep, rules, table))),
-        ("owner", value.str(if rules.lexical_owners and own != "" then namespace else own)), ("syntax_kind", value.str(nametable.name_at(names, n.kind))),
-        ("start", value.int(first.line)), ("end", value.int(last_line(n, toks, source))),
-        ("start_byte", value.int(first.start)), ("end_byte", value.int(last.end))
-      ])),
+      // one interpolation, one allocation: a chain of `+` allocated a string per piece
+      (some(first), some(last)) => list.push(out, SymbolRow {
+        json: "{\"kind\":${json_string(if own == "" then kind else "method")},\"name\":${json_string(flat_name(n, name, own, namespace, toks, source, sep, rules, table))},\"owner\":${json_string(if rules.lexical_owners and own != "" then namespace else own)},\"syntax_kind\":${json_string(syntax_name(n.kind, table))},\"start\":${int.to_string(first.line)},\"end\":${int.to_string(last_line(n, toks, source))},\"start_byte\":${int.to_string(first.start)},\"end_byte\":${int.to_string(last.end)}}",
+        start_byte: first.start, end_byte: last.end }),
       _ => (),
     }
   } else ()
@@ -340,14 +365,45 @@ fn symbol_rows_in(n: tree.Node, start: Int, toks: List[tree.Token], source: Byte
     // A leaf cannot contain the name field required for a declaration.
     if not list.is_empty(k.kids) then {
       let first = if envelope and decl_kind(k.kind, table) != "" then start else k.start
-      for sym in symbol_rows_in(k, first, toks, source, names, inner, inner_namespace, sep, rules, table) { list.push(out, sym) }
+      symbol_rows_in(k, first, toks, source, inner, inner_namespace, sep, rules, table, out)
     } else ()
   }
+}
+
+fn symbol_rows(n: tree.Node, toks: List[tree.Token], source: Bytes, names: nametable.Names, scope: String, sep: String, rules: package_api.SymbolRules) -> List[SymbolRow] = {
+  var out: List[SymbolRow] = []
+  symbol_rows_in(n, n.start, toks, source, scope, "", sep, rules, declaration_table(rules, names), out)
   out
 }
 
-fn symbol_rows(n: tree.Node, toks: List[tree.Token], source: Bytes, names: nametable.Names, scope: String, sep: String, rules: package_api.SymbolRules) -> List[Value] =
-  symbol_rows_in(n, n.start, toks, source, names, scope, "", sep, rules, declaration_table(rules, names))
+test "a JSON string takes the fast path unless it has to be escaped" {
+  assert_eq(json_string("Box::read"), "\"Box::read\"")
+  assert_eq(json_string("a\"b"), "\"a\\\"b\"")
+  assert_eq(json_string("a\\b"), "\"a\\\\b\"")
+  assert_eq(json_string("tab\there"), "\"tab\\there\"")
+  assert_eq(json_string("two\nlines"), "\"two\\nlines\"")
+}
+
+// What `symbols` reports as total_lines, counted in one pass over the bytes
+// rather than by splitting the source into a list of lines: the same number
+// `string.lines` gives, which is what a reader compares it with.
+fn line_count(source: Bytes) -> Int = {
+  let n = bytes.len(source)
+  var count = 0
+  var i = 0
+  while i < n {
+    if bytes.get_or(source, i, 0) == 10 then count = count + 1 else ()
+    i = i + 1
+  }
+  if n > 0 and bytes.get_or(source, n - 1, 0) != 10 then count + 1 else count
+}
+
+test "line_count says what string.lines says" {
+  for s in ["", "a", "a\n", "a\nb", "a\nb\n", "\n", "\n\n", "a\r\nb\r\n", "a\r\nb", "日本語\n", "a\n\nb"] {
+    assert_eq(line_count(bytes.from_string(s)), list.len(string.lines(s)))
+  }
+}
+
 
 // Recovery ranges are in source order and disjoint: ERROR nodes have no children.
 type ErrorRange = { start: Int, end: Int, start_byte: Int, end_byte: Int }
@@ -376,12 +432,10 @@ fn overlaps(ranges: List[ErrorRange], start: Int, end: Int) -> Bool = {
   }
   match list.get(ranges, lo) { some(r) => r.start_byte < end, none => false }
 }
-fn error_free_rows(rows: List[Value], ranges: List[ErrorRange]) -> List[Value] = {
-  var kept: List[Value] = []
+fn error_free_rows(rows: List[SymbolRow], ranges: List[ErrorRange]) -> List[SymbolRow] = {
+  var kept: List[SymbolRow] = []
   for row in rows {
-    let start = json.get_int(row, "start_byte") ?? -1
-    let end = json.get_int(row, "end_byte") ?? -1
-    if start >= 0 and end > start and not overlaps(ranges, start, end) then list.push(kept, row) else ()
+    if row.start_byte >= 0 and row.end_byte > row.start_byte and not overlaps(ranges, row.start_byte, row.end_byte) then list.push(kept, row) else ()
   }
   kept
 }

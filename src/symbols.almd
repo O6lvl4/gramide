@@ -1,26 +1,28 @@
 // Versioned parser output for source readers. Never export a recovered tree
 // as complete: readers must choose an explicit fallback instead.
+//
+// The document is text from the start: each row is rendered where it is
+// found (tags.symbol_rows), and this joins them. Nothing here builds a Value.
 import self.names as nametable
 import self.package_api
-import json
 import self.tree
 import self.tags
 import self.lang
 
+fn rows_text(rows: List[tags.SymbolRow]) -> String = list.join(list.map(rows, (r) => r.json), ",")
+
 fn document(packages: List[package_api.Definition], path: String, source: String) -> Result[String, String] = {
   let d = lang.read_source(packages, path, source)!
   match d.error { some(e) => err(e), none => {
-    let language = d.language
-    ok(json.stringify(value.object([
-      ("schema_version", value.int(1)), ("complete", value.bool(true)),
-      ("lang", value.str(language)), ("total_lines", value.int(list.len(string.lines(source)))),
-      ("symbols", value.array(collect(d.parsed.root, d.parsed.toks, bytes.from_string(source), d.parsed.names, "", d.sep, d.symbols)))
-    ])))
+    let bytes_source = bytes.from_string(source)
+    let found = rows(d.parsed.root, d.parsed.toks, bytes_source, d.parsed.names, "", d.sep, d.symbols)
+    ok("{\"schema_version\":1,\"complete\":true,\"lang\":${tags.json_string(d.language)},\"total_lines\":${int.to_string(tags.line_count(bytes_source))},\"symbols\":[${rows_text(found)}]}")
   } }
 }
 
-// One module boundary per document, rather than per node in the walk.
-fn collect(n: tree.Node, toks: List[tree.Token], source: Bytes, names: nametable.Names, scope: String, sep: String, rules: package_api.SymbolRules) -> List[Value] =
+// One module boundary per document, rather than per node in the walk. Not
+// `collect`: tree has one, and an unqualified call is not reliably the local one.
+fn rows(n: tree.Node, toks: List[tree.Token], source: Bytes, names: nametable.Names, scope: String, sep: String, rules: package_api.SymbolRules) -> List[tags.SymbolRow] =
   tags.symbol_rows(n, toks, source, names, scope, sep, rules)
 
 // Explicit opt-in: a package advertises `symbols-recovered` only when its
@@ -31,16 +33,14 @@ fn recovered_document(packages: List[package_api.Definition], path: String, sour
   let bytes_source = bytes.from_string(source)
   let ranges = tags.error_ranges(d.parsed.root, d.parsed.toks, bytes_source, d.parsed.names)
   guard option.is_none(d.error) or not list.is_empty(ranges) else err(path + ": recovered parse has no bounded error ranges")
-  let rows = collect(d.parsed.root, d.parsed.toks, bytes_source, d.parsed.names, "", d.sep, d.symbols)
-  ok(json.stringify(value.object([
-    ("schema_version", value.int(1)), ("complete", value.bool(option.is_none(d.error))),
-    ("recovery_policy", value.str("error-free-declarations-v1")),
-    ("lang", value.str(d.language)), ("total_lines", value.int(list.len(string.lines(source)))),
-    ("diagnostic", value.str(d.error ?? "")),
-    ("errors", value.array(list.map(ranges, (r) => value.object([
-      ("start", value.int(r.start)), ("end", value.int(r.end)),
-      ("start_byte", value.int(r.start_byte)), ("end_byte", value.int(r.end_byte))
-    ])))),
-    ("symbols", value.array(tags.error_free_rows(rows, ranges)))
-  ])))
+  let found = rows(d.parsed.root, d.parsed.toks, bytes_source, d.parsed.names, "", d.sep, d.symbols)
+  let errors = list.map(ranges, (r) => "{\"start\":" + int.to_string(r.start) + ",\"end\":" + int.to_string(r.end)
+    + ",\"start_byte\":" + int.to_string(r.start_byte) + ",\"end_byte\":" + int.to_string(r.end_byte) + "}")
+  ok("{\"schema_version\":1,\"complete\":" + (if option.is_none(d.error) then "true" else "false")
+    + ",\"recovery_policy\":\"error-free-declarations-v1\""
+    + ",\"lang\":" + tags.json_string(d.language)
+    + ",\"total_lines\":" + int.to_string(tags.line_count(bytes_source))
+    + ",\"diagnostic\":" + tags.json_string(d.error ?? "")
+    + ",\"errors\":[" + list.join(errors, ",") + "]"
+    + ",\"symbols\":[" + rows_text(tags.error_free_rows(found, ranges)) + "]}")
 }

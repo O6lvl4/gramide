@@ -1,0 +1,26 @@
+{
+  "platform": "macOS-15.4.1-arm64-arm-64bit-Mach-O",
+  "binary_sha256": {
+    "gramide": "485d07ce917759961a1ff43c31565dedd80617c7ecc5be4dfa50f1a34ca8a7a5",
+    "tree_sitter": "488321ddbae86065b95dc63dfbcaaaa02bdd0e4d11482b146f41fe34d8304987"
+  },
+  "mode": "issue #37's method: one process a file, 5 interleaved passes, medians; the same count of runs on a one-line file is startup and is subtracted",
+  "files": 721,
+  "bytes": 12175027,
+  "cases": {
+    "gramide": {
+      "corpus_seconds": 2.6175134159857407,
+      "startup_seconds": 2.0994038339704275,
+      "parse_seconds": 0.5181095820153132,
+      "megabytes_per_second": 23.49894196637374
+    },
+    "tree_sitter": {
+      "corpus_seconds": 2.6662109589669853,
+      "startup_seconds": 1.8048579579917714,
+      "parse_seconds": 0.861353000975214,
+      "megabytes_per_second": 14.134770513617035
+    }
+  },
+  "parse_ratio": 0.6015066777833427,
+  "corpus_ratio": 0.9817353001203954
+}

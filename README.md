@@ -123,7 +123,7 @@ Requires Almide 0.62 or later. A package depends on this one with
 
 ```toml
 [dependencies]
-gramide = { git = "https://github.com/O6lvl4/gramide", tag = "v0.1.0" }
+gramide = { git = "https://github.com/O6lvl4/gramide", tag = "v0.1.1" }
 ```
 
 ## License

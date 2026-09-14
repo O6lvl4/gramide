@@ -69,8 +69,16 @@ effect fn note(d: lang.Reading) -> Unit = match d.error {
 effect fn print_lines(lines: List[String]) -> Unit =
   if list.is_empty(lines) then () else println(list.join(lines, "\n"))
 
+// An extension no package registers, and a package that has no such command,
+// are different answers; the batch path says the same two things.
+fn provides(packages: List[package_api.Definition], path: String, cmd: String) -> Result[Unit, String] = {
+  let d = registry.resolve_in(packages, path)!
+  guard list.contains(d.capabilities, cmd) else err(path + ": no language package provides " + cmd)
+  ok(())
+}
+
 effect fn run_one(p: Program, cmd: String, path: String) -> Result[Unit, String] = {
-  guard cmd == "balance" or registry.supports(p.packages, path, cmd) else err(path + ": no language package provides " + cmd)
+  if cmd == "balance" then () else provides(p.packages, path, cmd)!
   let src = read(path)!
   match cmd {
     "tokens" => {
@@ -222,16 +230,20 @@ effect fn run_map(packages: List[package_api.Definition], argv: List[String]) ->
 
 effect fn fail(e: String) -> Unit = { eprintln(e); process.exit(1) }
 
-// `check` and `balance` over one or more files are a batch, and a batch is
+// `check` and `balance` over two or more files are a batch, and a batch is
 // the one thing a binary runs itself: `fan` arms may carry only values
 // without closures, a language package's lexer is one, and so the arms have
 // to build the packages by name, which only the binary that composes them
 // can do. A binary asks this first and hands the answer to its own
 // `parallel` (or to `sequential`), then `report`; everything else is `run`.
+//
+// One file is not a batch. It is what an agent checks after every write, and
+// spawning eight threads to hand seven of them nothing cost it 0.45 ms of a
+// 3 ms run; `run_one` answers it with the same text and the same exit code.
 fn batch_of(argv: List[String]) -> Option[(String, List[String])] = {
   let cmd = list.get(argv, 0) ?? ""
   let rest = list.drop(argv, 1)
-  if (cmd == "check" or cmd == "balance") and list.len(rest) > 0 then some((cmd, rest)) else none
+  if (cmd == "check" or cmd == "balance") and list.len(rest) > 1 then some((cmd, rest)) else none
 }
 
 // Every command but a batch. A binary that skips `batch_of` still gets a
@@ -259,9 +271,10 @@ effect fn run(p: Program, argv: List[String]) -> Unit = {
   }
 }
 
-test "a batch is check or balance over at least one file" {
+test "a batch is check or balance over two or more files" {
   assert_eq(batch_of(["check", "a.go", "b.go"]), some(("check", ["a.go", "b.go"])))
-  assert_eq(batch_of(["balance", "a.java"]), some(("balance", ["a.java"])))
+  assert_eq(batch_of(["balance", "a.java", "b.java"]), some(("balance", ["a.java", "b.java"])))
+  assert_eq(batch_of(["check", "a.go"]), none)
   assert_eq(batch_of(["check"]), none)
   assert_eq(batch_of(["outline", "a.go"]), none)
 }

@@ -111,7 +111,7 @@ Almide 0.62 以降が必要です。パッケージからは次のように依�
 
 ```toml
 [dependencies]
-gramide = { git = "https://github.com/O6lvl4/gramide", tag = "v0.1.0" }
+gramide = { git = "https://github.com/O6lvl4/gramide", tag = "v0.1.1" }
 ```
 
 ## ライセンス

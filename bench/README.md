@@ -2302,3 +2302,81 @@ before a single value (another quarter), a walrus tried before every expression,
 and a store target tried before every plain assignment. None of them was in the
 engine; all of them were visible the moment each failed call was charged for its
 own subtree.
+
+## One file is not a batch, and a row is its text
+
+Measured 2026-09-14 on the split binary (gramide-cli composing gramide 0.1.1
+and the four packages), against the tree-sitter reference binaries in
+`almide-references/built`, on the same machine within the same hour.
+
+**Where a small run went.** `bench/startup_floor.py`
+([evidence](../docs/evidence/startup-floor-batch.json)): a C hello world
+starts in 1.86 ms, a Rust or Almide one in 2.05–2.08 — 0.2 ms of `std::rt`
+that no binary this compiler emits can skip — and gramide reading a one-line
+file in 2.29. tree-sitter reads the same file in 2.01. So the four smallest
+files in the Python outline benchmark lose by the Rust runtime and nothing
+else, and the table a package ships is not the cost it looked like: reading
+the largest one, Rust's, into a `Compiled` is 33 µs.
+
+What was gramide's own was `check` on one file, which cut the list into eight
+byte-balanced slices and spawned eight threads to hand seven of them nothing:
+0.45 ms of a 3 ms run, paid on the one command an agent runs after every
+write. `cli.batch_of` now says a batch is two files or more; one goes through
+`run_one`, same text, same exit code (tiny `check`, Go: 3.40 → 2.38 ms; the
+`outline` beside it, 2.94, is the floor plus the read).
+
+**Where a structured read of 800 Go functions went**, in this process, before
+and after (`symbols` on the 31 KB file `bench/symbols.py` generates):
+
+| stage | before | after |
+|---|---:|---:|
+| lex | 0.78 ms | 0.66 ms |
+| verify (no tree) | 0.49 ms | 0.51 ms |
+| parse (tree) | 0.79 ms | 0.83 ms |
+| outline walk | 0.62 ms | 0.40 ms |
+| symbol rows | **2.76 ms** | **0.87 ms** |
+| `symbols.document` in all | 4.20 ms | 2.61 ms |
+
+The rows cost more than the parse. Each was a `Value` tree of nine fields,
+returned up the recursion a level at a time and stringified at the end; each
+now is its JSON text, rendered where the declaration is found with one
+interpolation, and pushed onto the one list the caller hands down — the shape
+`parse_rule` already had. That was half of it. The other half was one
+parameter: the walk carried the name table, a blob and two lists, and a
+record parameter like that is copied per visit. It carried it to print the
+node's syntax kind; the kind's name is resolved into the declaration table
+once instead, and the parameter is gone (2.56 → 0.85 ms by itself). The
+helpers a row calls — `name_of`, `owner_for`, `flat_name`, `last_line` —
+cost 5 to 46 µs per 800 calls between them and were never the problem, which
+the probe had to say before the parameter was suspected. `outline` was given
+the same accumulator (0.62 → 0.40 ms).
+
+**Where the Go grammar went.** Its five binary levels were nested `leftf`
+folds, a rule visit per level before the operand; they are one `prec`
+ladder now, as Python's have been since the walrus section above, and Rust's
+nine are three ladders around the `>>` that has to stay two tokens.
+`GOROOT/src`: 132 → 154 MB/s, the same 32 files rejected at the same
+positions (two of them now name a different expected set, which is the ladder
+answering for its levels at once); the Almide compiler's 1,022 `.rs` files:
+156 → 166 MB/s, the same four with the same diagnostics ([Go](https://github.com/O6lvl4/gramide-go/blob/main/docs/evidence/corpus-check-go-ladder.json),
+[Rust](https://github.com/O6lvl4/gramide-rust/blob/main/docs/evidence/corpus-check-rust.json)).
+
+**Against tree-sitter, after all three** — fresh process, startup included,
+output identical to the reference:
+
+| | gramide | tree-sitter | |
+|---|---:|---:|---:|
+| Go, 800 generated functions, `symbols` | 5.38 ms | 5.91 ms | 0.91x |
+| Go, 400 | 3.99 ms | 3.83 ms | 1.04x |
+| Go, 100 | 3.16 ms | 2.78 ms | 1.14x |
+| Python, inspect.py, `outline` | 7.21 ms | 10.79 ms | 0.67x |
+| Python, 15 stdlib files | faster on 11 | faster on 4 | |
+| Python, whole stdlib, parse time only | 0.52 s | 0.86 s | 0.60x |
+| Python, whole stdlib, startup included | 2.62 s | 2.67 s | 0.98x |
+
+([Go](https://github.com/O6lvl4/gramide-go/blob/main/docs/evidence/symbol-walk-ladder.json),
+[Python files](https://github.com/O6lvl4/gramide-python/blob/main/docs/evidence/python-outline-rows.json),
+[Python corpus](../docs/evidence/corpus-parse-rate-rows.json).) The Go read
+was 1.55x tree-sitter's when this stretch began. What loses now is the
+process floor, and what is still not here is incremental parsing.
+
