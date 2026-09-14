@@ -2380,3 +2380,37 @@ output identical to the reference:
 was 1.55x tree-sitter's when this stretch began. What loses now is the
 process floor, and what is still not here is incremental parsing.
 
+## The lexer compared strings
+
+The probe above put lexing 31 KB of Go at 0.66–0.78 ms — more than verifying
+it — and the driver said why. Every word was cut out of the source as a
+String and compared against every keyword with `list.contains`, twenty-five
+string comparisons and two allocations per identifier; every operator pattern
+was cloned and compared, in list order, for every punctuation token, and `,`
+is the fortieth of Go's forty-seven. The parser had stopped comparing strings
+long ago; the lexer never had.
+
+A `Spec`'s keywords and operators are now packed once per loaded language
+(`lex.prepare`): the spellings end to end in one Bytes, their bounds beside
+them, and for each first byte a chain through the spellings that begin with
+it, in spec order — longest first, so the first match in a chain is the first
+match the whole list would have given. A word is a keyword or not by one
+chain walk over the source bytes where it sits, without a String; an operator
+is found the same way, without a clone. The three packages that use the
+shared lexer prepare it in `prepare_lexer` and hand every file
+`lex.tokenize_prepared`.
+
+In this process, the same 31 KB: **lex 655 → 288 µs**, and the structured
+read 2.61 → 2.20 ms. Token streams are byte-identical to the previous lexer's
+on 200 files each of Go, Rust and Almide, and `check` over all of
+`GOROOT/src`, the Almide compiler's `.rs` files and the Almide repository's
+`.almd` files rejects the same files with the same diagnostics.
+
+The process-level comparison was taken on a machine two other jobs were
+saturating (load 7–9, tree-sitter's own numbers 20% above their earlier
+runs), so only the interleaved ratios are worth writing down: `check` over
+`GOROOT/src`, previous lexer then this one, twice, 113.6/117.7 and
+116.5/120.4 MB/s; the compiler's `.rs`, 110 → 129 MB/s. The Go read against
+tree-sitter is to be re-measured when the machine is quiet; the in-process
+numbers say what to expect.
+

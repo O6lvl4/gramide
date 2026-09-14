@@ -150,7 +150,12 @@ only for an error. Together: a 116k-line Go file from 188 s to 7.6 s.
 **Nothing that repeats compares strings.** `compile` numbers every distinct text a
 terminal asks for, and the token stream is numbered against the same table once per
 parse. A terminal match is an integer compare, and the engine never reads the token
-record, so it never copies a value that owns two strings. This is also the way round
+record, so it never copies a value that owns two strings. The lexer kept two string
+comparisons per token for a long while after this was written — every word cut out
+as a String and compared against every keyword, every operator pattern cloned and
+compared for every punctuation token — and lexing a file cost more than parsing it
+until the spec's spellings were packed once per language and looked up by first
+byte over the source bytes (`lex.prepare`); see the board. This is also the way round
 a backend that renders `t.kind == want` as a clone of both operands (almide/almide#2066)
 and `list.get` as a copy of the element (almide/almide#2070).
 

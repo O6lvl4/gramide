@@ -22,9 +22,12 @@ type Tokenizer = (String, Bool) -> Result[List[Token], LexError]   // the Bool a
 ```
 
 **`lexer`** returns a callback that turns source into tokens. Almide, Go and
-Rust hand a `lex.Spec` to the shared lexer in `gramide.lex`; Python has
-its own scanner, because indentation, f-strings and Unicode identifiers are
-not things a table can describe. The callback's boolean asks for recovery: an
+Rust hand a `lex.Spec` to the shared lexer in `gramide.lex` — packed once
+by `lex.prepare`, so that the keywords and operators are looked up by first
+byte over the source bytes rather than compared as strings per token, and
+the callback is `lex.tokenize_prepared` over that; Python has its own
+scanner, because indentation, f-strings and Unicode identifiers are not
+things a table can describe. The callback's boolean asks for recovery: an
 unreadable run becomes an `error` token rather than a failure, so a reader can
 still answer about the file.
 

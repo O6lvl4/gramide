@@ -361,20 +361,99 @@ fn scan_string(buffer: Bytes, start: Int, family: Int) -> Option[Int] = {
 
 // A plain loop, not `list.find` with a lambda: a lambda that reads the
 // captured `buffer` clones the whole source per call.
-fn scan_operator(buffer: Bytes, start: Int, ops: List[String], patterns: List[Bytes]) -> Option[String] = {
-  var found = -1
+// ── words and operators, packed ───────────────────────────────────────────
+//
+// The keywords and the operators of a Spec, packed once per loaded language:
+// the spellings end to end in one Bytes, their bounds beside them, and for
+// each first byte a chain through the spellings that begin with it, in the
+// order the spec lists them — longest first, so the first match in a chain is
+// the first match the whole list would have given. A word is then a keyword
+// or not by one chain walk over the source bytes where it sits, and an
+// operator is found the same way. Before this, every identifier was cut out
+// of the source as a String and compared against every keyword, and every
+// operator pattern was cloned and compared for every punctuation token: `,`
+// was the fortieth of Go's, and lexing 31 KB of Go took longer than parsing it.
+type Packed = { flat: Bytes, start: List[Int], end: List[Int], head: List[Int], next: List[Int] }
+
+fn pack(spellings: List[String]) -> Packed = {
+  var flat = bytes.from_string("")
+  var start: List[Int] = list.with_capacity(list.len(spellings))
+  var end: List[Int] = list.with_capacity(list.len(spellings))
+  var next: List[Int] = list.with_capacity(list.len(spellings))
+  var head: List[Int] = list.with_capacity(256)
+  var b = 0
+  while b < 256 { list.push(head, -1); b = b + 1 }
   var idx = 0
-  while found < 0 and idx < list.len(ops) {
-    let pattern = patterns[idx]
-    var k = 0
-    var same = true
-    while same and k < bytes.len(pattern) {
-      if source_byte_at(buffer, start + k) != bytes.get_or(pattern, k, -2) then same = false else k = k + 1
-    }
-    if same then found = idx else idx = idx + 1
+  for spelling in spellings {
+    let raw = bytes.from_string(spelling)
+    list.push(start, bytes.len(flat))
+    var j = 0
+    while j < bytes.len(raw) { bytes.push(flat, bytes.get_or(raw, j, 0)); j = j + 1 }
+    list.push(end, bytes.len(flat))
+    // onto the end of its first byte's chain, so spec order is kept
+    let first = bytes.get_or(raw, 0, 0)
+    let h = match list.get(head, first) { some(v) => v, none => -1 }
+    if h < 0 then head = list.set(head, first, idx)
+    else next = list.set(next, chain_tail(next, h), idx)
+    list.push(next, -1)
+    idx = idx + 1
   }
-  list.get(ops, found)
+  Packed { flat: flat, start: start, end: end, head: head, next: next }
 }
+
+// The last member of the chain that starts at `from`.
+fn chain_tail(next: List[Int], from: Int) -> Int = {
+  var at = from
+  var step = match list.get(next, at) { some(n) => n, none => -1 }
+  while step >= 0 {
+    at = step
+    step = match list.get(next, at) { some(n) => n, none => -1 }
+  }
+  at
+}
+
+fn same_bytes(a: Bytes, a_at: Int, b: Bytes, b_at: Int, width: Int) -> Bool = {
+  var k = 0
+  var same = true
+  while same and k < width {
+    if bytes.get_or(a, a_at + k, -2) != bytes.get_or(b, b_at + k, -1) then same = false else k = k + 1
+  }
+  same
+}
+
+fn packed_start(p: Packed, idx: Int) -> Int = match list.get(p.start, idx) { some(v) => v, none => 0 }
+fn packed_end(p: Packed, idx: Int) -> Int = match list.get(p.end, idx) { some(v) => v, none => 0 }
+fn packed_next(p: Packed, idx: Int) -> Int = match list.get(p.next, idx) { some(v) => v, none => -1 }
+fn packed_len(p: Packed, idx: Int) -> Int = packed_end(p, idx) - packed_start(p, idx)
+
+// The spelling that is exactly the source from `i` to `e`, or -1: a word is a
+// keyword only whole.
+fn packed_word(p: Packed, buffer: Bytes, i: Int, e: Int) -> Int = {
+  var at = match list.get(p.head, source_byte_at(buffer, i)) { some(v) => v, none => -1 }
+  var found = -1
+  while found < 0 and at >= 0 {
+    let s = packed_start(p, at)
+    if packed_end(p, at) - s == e - i and same_bytes(p.flat, s, buffer, i, e - i) then found = at else at = packed_next(p, at)
+  }
+  found
+}
+
+// The first spelling in its chain that the source at `i` begins with, or -1.
+fn packed_prefix(p: Packed, buffer: Bytes, i: Int) -> Int = {
+  var at = match list.get(p.head, source_byte_at(buffer, i)) { some(v) => v, none => -1 }
+  var found = -1
+  while found < 0 and at >= 0 {
+    let s = packed_start(p, at)
+    if same_bytes(p.flat, s, buffer, i, packed_end(p, at) - s) then found = at else at = packed_next(p, at)
+  }
+  found
+}
+
+// A Spec with its tables packed: what a language package prepares once and
+// hands every file to.
+type Prepared = { spec: Spec, keywords: Packed, operators: Packed }
+
+fn prepare(spec: Spec) -> Prepared = Prepared { spec: spec, keywords: pack(spec.keywords), operators: pack(spec.operators) }
 
 // The operators a statement may end on, read from the source: `++`, `--` and
 // the three closing delimiters, and nothing else one or two bytes long.
@@ -419,9 +498,11 @@ fn to_eol(buffer: Bytes, from: Int) -> Int = {
   e
 }
 
-fn tokenize_with(source: String, spec: Spec, recover: Bool) -> Result[List[tree.Token], LexError] = {
+fn tokenize_with(source: String, spec: Spec, recover: Bool) -> Result[List[tree.Token], LexError] = tokenize_prepared(source, prepare(spec), recover)
+
+fn tokenize_prepared(source: String, prepared: Prepared, recover: Bool) -> Result[List[tree.Token], LexError] = {
+  let spec = prepared.spec
   let buffer = bytes.from_string(source)
-  let operator_patterns = list.map(spec.operators, (op) => bytes.from_string(op))
   let n = bytes.len(buffer)
   var toks: List[tree.Token] = []
   var i = 0
@@ -490,8 +571,7 @@ fn tokenize_with(source: String, spec: Spec, recover: Bool) -> Result[List[tree.
     }
     else if is_alpha(b) or b >= 128 then {
       let e = scan_word(buffer, i)
-      let word = text(buffer, i, e)
-      let kind = if list.contains(spec.keywords, word) then tree.T_KEYWORD
+      let kind = if packed_word(prepared.keywords, buffer, i, e) >= 0 then tree.T_KEYWORD
         else if spec.upper_is_type and is_upper(b) then tree.T_TYPE_NAME
         else tree.T_IDENTIFIER
       list.push(toks, mk(kind, i, e, line, line_start))
@@ -509,19 +589,21 @@ fn tokenize_with(source: String, spec: Spec, recover: Bool) -> Result[List[tree.
         i = e
       }
     }
-    else match scan_operator(buffer, i, spec.operators, operator_patterns) {
-      some(op) => {
+    else {
+      let op = packed_prefix(prepared.operators, buffer, i)
+      if op >= 0 then {
+        let width = packed_len(prepared.operators, op)
         // a line-initial `-` glued to its operand starts a statement (`-1`),
         // it never continues the line above as a binary minus
         let at_line_start = match list.last(toks) { some(t) => t.kind == tree.T_NEWLINE, none => true }
-        let glued = spec.neg_token and op == "-" and at_line_start and not is_space(source_byte_at(buffer, i + 1)) and source_byte_at(buffer, i + 1) != 10
-        list.push(toks, mk(if glued then tree.T_NEG else tree.T_PUNCT, i, i + string.len(op), line, line_start))
-        i = i + string.len(op)
-      },
-      none => if recover then {
+        let glued = spec.neg_token and width == 1 and b == 45 and at_line_start and not is_space(source_byte_at(buffer, i + 1)) and source_byte_at(buffer, i + 1) != 10
+        list.push(toks, mk(if glued then tree.T_NEG else tree.T_PUNCT, i, i + width, line, line_start))
+        i = i + width
+      }
+      else if recover then {
         list.push(toks, mk(tree.T_ERROR, i, i + 1, line, line_start))
         i = i + 1
-      } else { failure = some(LexError { line: line, col: i - line_start + 1, message: "unexpected character " + string.from_bytes([b]) }) },
+      } else { failure = some(LexError { line: line, col: i - line_start + 1, message: "unexpected character " + string.from_bytes([b]) }) }
     }
   }
   match failure {
@@ -577,4 +659,24 @@ test "the newline policies differ, and nothing else has to" {
     block_open: toy().block_open, block_close: toy().block_close, nested_block: false,
     block_comment_newline: false, upper_is_type: false, backtick_ident: false, neg_token: false }
   assert_eq(list.len(list.filter(tokenize("a\n+\nb\n", semi)!, (t) => t.kind == tree.T_NEWLINE)), 2)
+}
+
+test "packed spellings answer by first byte, in spec order" {
+  let ops = pack(["<<=", "<<", "<", "==", "=", ","])
+  let src = bytes.from_string("<<= << < == = , x")
+  assert_eq(packed_prefix(ops, src, 0), 0)
+  assert_eq(packed_len(ops, 0), 3)
+  assert_eq(packed_prefix(ops, src, 4), 1)
+  assert_eq(packed_prefix(ops, src, 7), 2)
+  assert_eq(packed_prefix(ops, src, 9), 3)
+  assert_eq(packed_prefix(ops, src, 12), 4)
+  assert_eq(packed_prefix(ops, src, 14), 5)
+  assert_eq(packed_prefix(ops, src, 16), -1)
+  assert_eq(packed_prefix(ops, src, 40), -1)
+  let words = pack(["fn", "func", "for"])
+  let w = bytes.from_string("func fnord for")
+  assert_eq(packed_word(words, w, 0, 4), 1)
+  assert_eq(packed_word(words, w, 5, 10), -1)
+  assert_eq(packed_word(words, w, 11, 14), 2)
+  assert_eq(packed_word(words, w, 5, 7), 0)
 }
