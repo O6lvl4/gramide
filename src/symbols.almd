@@ -11,14 +11,20 @@ import self.lang
 
 fn rows_text(rows: List[tags.SymbolRow]) -> String = list.join(list.map(rows, (r) => r.json), ",")
 
-fn document(packages: List[package_api.Definition], path: String, source: String) -> Result[String, String] = {
-  let d = lang.read_source(packages, path, source)!
+// One file, compiling its grammar for this call alone; a batch uses
+// `document_with` over engines it compiled once (lang.engines_for), which on
+// a 700-file tree is the difference between one table decode and 700.
+fn document(packages: List[package_api.Definition], path: String, source: String) -> Result[String, String] =
+  complete_document(lang.read_source(packages, path, source)!, source)
+fn document_with(e: lang.Engines, path: String, source: String) -> Result[String, String] =
+  complete_document(lang.read_with(e, path, source)!, source)
+
+fn complete_document(d: lang.Reading, source: String) -> Result[String, String] =
   match d.error { some(e) => err(e), none => {
     let bytes_source = bytes.from_string(source)
     let found = rows(d.parsed.root, d.parsed.toks, bytes_source, d.parsed.names, "", d.sep, d.symbols)
     ok("{\"schema_version\":1,\"complete\":true,\"lang\":${tags.json_string(d.language)},\"total_lines\":${int.to_string(tags.line_count(bytes_source))},\"symbols\":[${rows_text(found)}]}")
   } }
-}
 
 // One module boundary per document, rather than per node in the walk. Not
 // `collect`: tree has one, and an unqualified call is not reliably the local one.
@@ -29,7 +35,14 @@ fn rows(n: tree.Node, toks: List[tree.Token], source: Bytes, names: nametable.Na
 // recovery never keeps a partial declaration head.
 fn recovered_document(packages: List[package_api.Definition], path: String, source: String) -> Result[String, String] = {
   guard lang.supports(packages, path, "symbols-recovered") else err(path + ": language package does not provide recovered symbols")
-  let d = lang.read_source(packages, path, source)!
+  recovered_of(lang.read_source(packages, path, source)!, path, source)
+}
+fn recovered_document_with(e: lang.Engines, path: String, source: String) -> Result[String, String] = {
+  guard lang.supports_in(e, path, "symbols-recovered") else err(path + ": language package does not provide recovered symbols")
+  recovered_of(lang.read_with(e, path, source)!, path, source)
+}
+
+fn recovered_of(d: lang.Reading, path: String, source: String) -> Result[String, String] = {
   let bytes_source = bytes.from_string(source)
   let ranges = tags.error_ranges(d.parsed.root, d.parsed.toks, bytes_source, d.parsed.names)
   guard option.is_none(d.error) or not list.is_empty(ranges) else err(path + ": recovered parse has no bounded error ranges")

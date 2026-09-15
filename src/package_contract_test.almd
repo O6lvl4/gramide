@@ -74,6 +74,14 @@ test "registration rejects ambiguity and batch engines are lazy" {
   assert(result.is_err(lang.loaded_for(engines, "demo.example")))
 }
 
+test "a document over compiled engines is the document compiled for the call" {
+  let src = "@w { action go; }"
+  let once = lang.engines_for([demo(), other()], ["a.example"])
+  assert_eq(symbols.document_with(once, "a.example", src), symbols.document([demo(), other()], "a.example", src))
+  assert(result.is_err(symbols.document_with(once, "b.other", src)))
+  assert(result.is_err(symbols.recovered_document_with(once, "a.example", src)))
+}
+
 test "a composition that registers an id or an extension twice is refused by name" {
   assert_eq(registry.conflict([demo(), other()]), none)
   assert_eq(registry.conflict([demo(), demo()]), some("two language packages register the id example"))
