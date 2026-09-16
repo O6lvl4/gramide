@@ -368,6 +368,13 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   var head_ok = true
   var head = eof
   if at_eof then () else {
+    // a scanner that closes its input with an empty separator (Go's automatic
+    // `;`, Almide's line end) puts one after the head: it is the slice's end,
+    // not the file's, and is dropped
+    var trailing = true
+    while trailing and head_len > 0 and list.len(toks) > 1 {
+      match list.last(toks) { some(t) => if t.start == t.end then { let _ = list.pop(toks) } else { trailing = false }, none => { trailing = false } }
+    }
     head = list.pop(toks) ?? eof
     head_ok = head.kind == head_kind and head.start == new_end - base.byte and head.end - head.start == head_len
   }
