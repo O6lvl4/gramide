@@ -78,6 +78,16 @@ path follows. A line comment the edit opens runs to the end of its line,
 so the run must hold that line's end (or end the file) for the check to
 see what it swallows; otherwise the ordinary path.
 
+The same path takes an edit that touches exactly one token — a letter
+typed into a name, or put right after it, or deleted from it — when the run
+lexes again to the same tokens with only that one longer or shorter. What
+the parser reads of a token is its kind and the grammar literal its text
+spells (a contextual keyword such as `type` is a name that spells one), so
+each run keeps that atom per token, and a retyped token may neither spell
+a literal before nor after; then the tree is the same tree and only
+positions move. A token that changes kind, splits, or joins its neighbour
+gives other tokens and the ordinary path follows.
+
 When the window parses, its nodes are cut into units the same way, the
 parent's placeholders are renumbered and the pieces between them
 re-counted, and the totals along the path are summed again.
