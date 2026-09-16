@@ -400,16 +400,18 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
     while trailing and head_len > 0 and list.len(toks) > 1 {
       match list.last(toks) { some(t) => if t.start == t.end then { let _ = list.pop(toks) } else { trailing = false }, none => { trailing = false } }
     }
-    head = list.pop(toks) ?? eof
+    head = list.last(toks) ?? eof
     head_ok = head.kind == head_kind and head.start == new_end - base.byte and head.end - head.start == head_len
   }
   guard head_ok else {
     list.push(u.trace, "head expected kind " + int.to_string(head_kind) + " len " + int.to_string(head_len) + " at " + int.to_string(new_end - base.byte) + ", got kind " + int.to_string(head.kind) + " " + int.to_string(head.start) + "-" + int.to_string(head.end) + " in: …" + string.take_end(bytes.to_string_lossy(slice), 120))
     NO_HEAD
   }
+  // the head stays in the window, before the EOF, so that an item rule that
+  // looks ahead at what follows it (a block's tail expression at `}`) sees it
   list.push(toks, eof)
   let num = parser.number(c, slice, toks)
-  let eof_index = list.len(toks) - 1
+  let eof_index = if at_eof then list.len(toks) - 1 else list.len(toks) - 2
   // the window's first item stands where child i stood, and takes its site:
   // the one that reads a list's first item, or the one that reads the rest
   let old_site = match list.get(u.kids, i) { some(k) => parser.site_of(k.node), none => u.child_site }
@@ -424,7 +426,6 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   }
   // the token at `eof_index` is where the window ends: the head that follows
   // it, or the file's EOF; either is excluded from the items and gives their end
-  if at_eof then () else { let _ = list.pop(toks); list.push(toks, head) }
   // the window as a unit of its own, then its children moved into `u`
   let holder = tree.Node { kind: 0, field: -1, start: 0, end: eof_index, kids: nodes }
   var fresh = build(holder, toks, bytes.slice(slice, 0, new_end - base.byte), 0, eof_index, Pos { byte: 0, line: 1, col: 1 }, -1)
