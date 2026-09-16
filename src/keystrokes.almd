@@ -90,6 +90,6 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
     } else ()
     i = i + 1
   }
-  if dump != "" then { let _ = fs.write_text(dump, bytes.to_string_lossy(source)) } else ()
+  if dump != "" then { let _ = fs.write(dump, bytes.to_string_lossy(source)) } else ()
   ok(render(report))
 }

@@ -1,22 +1,23 @@
-// incremental — a parsed file kept as top-level items, so that an edit
-// re-reads the item it touched and nothing else.
+// incremental — a parsed file kept as recover items nested in recover
+// items, so that an edit re-reads the smallest item it touched.
 //
 // The full parse gives a tree whose token indices, byte offsets and lines
-// are absolute. Kept that way, an edit near the top of a file would move
-// every number after it, which is the whole file again. So the file is cut
-// at its top-level items — the kids of the start rule, each a `recover_all`
-// item — and each item keeps its tokens and its subtree relative to where
-// its own slice starts. Nothing in an item changes when something before
-// it does; only the running bases do, and those are summed on the way out.
+// are absolute. Kept that way, an edit near the top of a file moves every
+// number after it, which is the whole file again. So the file is cut at its
+// recover items — the nodes a `recover` or `recover_all` site read, which
+// the parser stamps with that site — and each item (a "unit") keeps only
+// its own tokens, in runs between its child units, with every offset
+// relative to where the run starts. Nothing in a unit changes when
+// something before it does; the running bases are summed on the way out.
 //
-// `reparse` re-lexes the slice an edit falls in, through the first token of
-// the next item, and parses it with the item rule until it reaches that
-// token. If the lexer or the parser disagree with what was there — the next
-// item's first token came out different, or the items did not end where
-// that token starts — the answer is `false` and the caller parses the whole
-// file. The identity `materialize(reparse(...)) == parse(whole)` is what the
-// tests hold, and what a language package's random-edit check holds on real
-// code.
+// `reparse` walks down to the deepest unit that holds the edit whole,
+// re-lexes the sibling window there through the first token after it, and
+// parses the window with the site's body until it reaches that token. If
+// the lexer or the parser disagree with what was there — the token after
+// the window came out different, or the items did not end where it starts
+// — the answer is `false` and the caller parses the whole file. The
+// identity `materialize(reparse(...)) == parse(whole)` is what the tests
+// hold, and what a language package's random-edit check holds on real code.
 import self.tree
 import self.parser
 import self.names as nametable
@@ -24,244 +25,444 @@ import self.lex
 
 type Edit = { start: Int, old_end: Int, new_end: Int }
 
-// One item: the tokens from where its slice starts to where the next item's
-// first token starts, and the nodes over them, all relative to the slice.
-// `lines` is how many line breaks the slice holds; `next_col` the column,
-// within the slice's coordinates, of the next item's first token.
-type Item = { nodes: List[tree.Node], toks: List[tree.Token], lines: Int, next_col: Int }
+// A node standing for a child unit in its parent's subtree: `field` is the
+// child's index, and it takes one slot of the parent's own token space.
+let PLACEHOLDER = -1
 
-type Document = {
-  kind: Int, field: Int, names: nametable.Names, item: Int,
-  items: List[Item],
-  // beside the items, so that finding the item an edit touches and checking
-  // its neighbour's first token read integers and short strings, never a
-  // token list
-  sizes: List[Int], head_kinds: List[Int], head_texts: List[String],
+// A run of a unit's own tokens: before its first child, between two, after
+// the last. Offsets, lines and columns are relative to where the run
+// starts; `size` is the bytes to where the next thing starts, `lines` the
+// line breaks in those bytes, `tail` the bytes after the last of them (or
+// `size` when there is none).
+type Piece = { toks: List[tree.Token], size: Int, lines: Int, tail: Int }
+
+// One recover item. Its own token space is pieces and child slots in
+// order: piece 0, child 0, piece 1, child 1, …, the last piece. The
+// children's totals stand beside them so the parent finds its way through
+// integers and never reads a child.
+type Item = {
+  site: Int, child_site: Int, node: tree.Node,
+  pieces: List[Piece], kids: List[Item],
+  kid_sizes: List[Int], kid_lines: List[Int], kid_tails: List[Int], kid_toks: List[Int], kid_heads: List[Int], kid_head_lens: List[Int],
+  size: Int, lines: Int, tail: Int, toks: Int,
 }
+
+type Document = { root: Item, names: nametable.Names }
+
+fn empty_unit() -> Item = Item { site: -1, child_site: -1, node: tree.node(0, [], 0, 0), pieces: [], kids: [], kid_sizes: [], kid_lines: [], kid_tails: [], kid_toks: [], kid_heads: [], kid_head_lens: [], size: 0, lines: 0, tail: 0, toks: 0 }
 
 fn rebase_token(t: tree.Token, byte: Int, line: Int, col: Int) -> tree.Token =
   tree.Token { kind: t.kind, start: t.start - byte, end: t.end - byte, line: t.line - line + 1, col: if t.line == line then t.col - col + 1 else t.col }
 
-fn shift_node(n: tree.Node, by: Int) -> tree.Node =
-  tree.Node { kind: n.kind, field: n.field, start: n.start + by, end: n.end + by, kids: list.map(n.kids, (k) => shift_node(k, by)) }
+// Where a range of tokens ends: the token at `at`, or the end of the file
+// (the EOF token's own position) when `at` is past the last token.
+type Pos = { byte: Int, line: Int, col: Int }
+fn pos_of(toks: List[tree.Token], at: Int, size: Int) -> Pos = match list.get(toks, at) {
+  some(t) => Pos { byte: t.start, line: t.line, col: t.col },
+  none => match list.last(toks) { some(e) => Pos { byte: size, line: e.line, col: e.col }, none => Pos { byte: size, line: 1, col: 1 } },
+}
+fn tail_of(size: Int, lines: Int, end: Pos) -> Int = if lines == 0 then size else end.col - 1
+// the base after a thing of `size` bytes, `lines` breaks and `tail` bytes after the last
+fn after(p: Pos, size: Int, lines: Int, tail: Int) -> Pos =
+  Pos { byte: p.byte + size, line: p.line + lines, col: if lines == 0 then p.col + tail else 1 + tail }
 
-// Cut `nodes` over `toks` (coordinates relative to a slice of `size` bytes,
-// followed by `next`, the first token after the slice) into items. A new
-// item starts at every node whose first token starts after the previous
-// boundary; the first item starts at the slice's own start.
-fn split(nodes: List[tree.Node], toks: List[tree.Token], next: tree.Token, size: Int, source: Bytes, mut doc: Document) -> Unit = {
-  let count = list.len(nodes)
-  var starts: List[Int] = []       // token index each item starts at
+// The stamped nodes under `n`, in order, not descending into them.
+fn find_units(n: tree.Node, mut out: List[tree.Node]) -> Unit = {
+  for k in n.kids { if parser.site_of(k) >= 0 then list.push(out, k) else { let _ = find_units(k, out) } }
+  ()
+}
+
+// The unit for stamped node `n` over `toks` (coordinates of one slice):
+// its tokens are [t_begin, t_end) — the node's, then the separators to the
+// next item's head — and it starts at `start` in the slice.
+fn build(n: tree.Node, toks: List[tree.Token], source: Bytes, t_begin: Int, t_end: Int, start: Pos, site: Int) -> Item = {
+  let source_size = bytes.len(source)
+  var children: List[tree.Node] = []
+  let _ = find_units(n, children)
+  let count = list.len(children)
+  // each child's tokens extend to the next child's head, or to the first own token after it
+  var c_start: List[Int] = []
+  var c_end: List[Int] = []
   var k = 0
-  var boundary = -1
   while k < count {
-    let n = list.get(nodes, k) ?? tree.node(0, [], 0, 0)
-    let at = match list.get(toks, n.start) { some(t) => t.start, none => 0 }
-    if k == 0 then list.push(starts, 0)
-    else if at > boundary then list.push(starts, n.start) else ()
-    boundary = at
+    let ck = list.get(children, k) ?? tree.node(0, [], 0, 0)
+    list.push(c_start, ck.start)
+    let next_start = match list.get(children, k + 1) { some(nx) => nx.start, none => -1 }
+    list.push(c_end, if next_start >= 0 then next_start else own_after(toks, source, ck.end, t_end))
     k = k + 1
   }
-  var i = 0
-  var node_index = 0
-  while i < list.len(starts) {
-    let t0 = list.get(starts, i) ?? 0
-    let t1 = if i + 1 < list.len(starts) then list.get(starts, i + 1) ?? 0 else list.len(toks)
-    let first = list.get(toks, t0) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 1, col: 1 }
-    let byte = if i == 0 then 0 else first.start
-    let line = if i == 0 then 1 else first.line
-    let col = if i == 0 then 1 else first.col
-    let after = if i + 1 < list.len(starts) then list.get(toks, t1) ?? next else next
-    let end_byte = if i + 1 < list.len(starts) then after.start else size
-    var item_toks: List[tree.Token] = list.with_capacity(t1 - t0)
-    var ti = t0
-    while ti < t1 { match list.get(toks, ti) { some(t) => list.push(item_toks, rebase_token(t, byte, line, col)), none => () }; ti = ti + 1 }
-    var item_nodes: List[tree.Node] = []
-    while node_index < count and (match list.get(nodes, node_index) { some(n) => n.start < t1, none => false }) {
-      match list.get(nodes, node_index) { some(n) => list.push(item_nodes, shift_node(n, 0 - t0)), none => () }
-      node_index = node_index + 1
-    }
-    let head = list.get(toks, if i == 0 then (match list.first(nodes) { some(n) => n.start, none => 0 }) else t0) ?? first
-    list.push(doc.items, Item { nodes: item_nodes, toks: item_toks, lines: after.line - line, next_col: if after.line == line then after.col - col + 1 else after.col })
-    list.push(doc.sizes, end_byte - byte)
-    list.push(doc.head_kinds, head.kind)
-    list.push(doc.head_texts, tree.token_text(source, head))
-    i = i + 1
+  var u = empty_unit()
+  u.site = site
+  u.child_site = match list.first(children) { some(ck) => parser.site_of(ck), none => -1 }
+  // pieces: [t_begin, c_start0), [c_end0, c_start1), …, [c_end_last, t_end)
+  var ta = t_begin
+  var piece_start = start
+  k = 0
+  var own_count = 0
+  while k <= count {
+    let tb = if k < count then list.get(c_start, k) ?? ta else t_end
+    if k > 0 then piece_start = pos_of(toks, ta, source_size) else ()
+    let end = pos_of(toks, tb, source_size)
+    var piece_toks: List[tree.Token] = list.with_capacity(tb - ta)
+    var ti = ta
+    while ti < tb { match list.get(toks, ti) { some(t) => list.push(piece_toks, rebase_token(t, piece_start.byte, piece_start.line, piece_start.col)), none => () }; ti = ti + 1 }
+    let size = end.byte - piece_start.byte
+    let lines = end.line - piece_start.line
+    own_count = own_count + (tb - ta)
+    list.push(u.pieces, Piece { toks: piece_toks, size: size, lines: lines, tail: tail_of(size, lines, end) })
+    if k < count then {
+      let cs = list.get(c_start, k) ?? 0
+      let ce = list.get(c_end, k) ?? 0
+      let ck = list.get(children, k) ?? tree.node(0, [], 0, 0)
+      let head = list.get(toks, cs) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 1, col: 1 }
+      let kid = build(ck, toks, source, cs, ce, Pos { byte: head.start, line: head.line, col: head.col }, parser.site_of(ck))
+      list.push(u.kid_sizes, kid.size); list.push(u.kid_lines, kid.lines); list.push(u.kid_tails, kid.tail); list.push(u.kid_toks, kid.toks)
+      list.push(u.kid_heads, head.kind); list.push(u.kid_head_lens, head.end - head.start)
+      list.push(u.kids, kid)
+      ta = ce
+    } else ()
+    k = k + 1
   }
+  let end = pos_of(toks, t_end, source_size)
+  u.size = end.byte - start.byte
+  u.lines = end.line - start.line
+  u.tail = tail_of(u.size, u.lines, end)
+  u.toks = own_count + list.sum(u.kid_toks)
+  u.node = cut(n, t_begin, c_start, c_end, 0)
+  u
 }
-
-fn eof_of(toks: List[tree.Token]) -> tree.Token = list.last(toks) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 1, col: 1 }
-
-// The document of a whole-file parse.
-fn from_parsed(p: parser.Parsed, source: Bytes, c: parser.Compiled) -> Document = {
-  var doc = Document { kind: p.root.kind, field: p.root.field, names: p.names, item: parser.item_op(c), items: [], sizes: [], head_kinds: [], head_texts: [] }
-  let eof = eof_of(p.toks)
-  // the EOF token stays with the last item's tokens; `next` for that item is the EOF itself
-  split(p.root.kids, p.toks, eof, bytes.len(source), source, doc)
-  if list.is_empty(doc.items) then {
-    // a file with no items: one item holding the tokens (separators, EOF)
-    list.push(doc.items, Item { nodes: [], toks: p.toks, lines: eof.line - 1, next_col: eof.col })
-    list.push(doc.sizes, bytes.len(source)); list.push(doc.head_kinds, eof.kind); list.push(doc.head_texts, "")
-  } else ()
-  doc
+// An item's node ends at its last real token; the separators after it —
+// line breaks, `;` — were read by the same item rule, and go with the item.
+// The first token after them is the parent's own (`}`, the EOF) or the next
+// item's head.
+fn separator(t: tree.Token, source: Bytes) -> Bool = t.kind == tree.T_NEWLINE or (t.end - t.start == 1 and bytes.get_or(source, t.start, -1) == 59)
+fn own_after(toks: List[tree.Token], source: Bytes, from: Int, t_end: Int) -> Int = {
+  var t = from
+  while t < t_end and (match list.get(toks, t) { some(tok) => separator(tok, source), none => false }) { t = t + 1 }
+  t
 }
-
-fn total_bytes(doc: Document) -> Int = list.sum(doc.sizes)
-
-// The absolute tree and tokens again, for a reader that wants the whole file.
-fn materialize(doc: Document) -> parser.Parsed = {
-  var toks: List[tree.Token] = []
-  var kids: List[tree.Node] = []
-  var byte = 0
-  var line = 1
-  var col = 1
-  var tok_base = 0
-  for it in doc.items {
-    for t in it.toks {
-      list.push(toks, tree.Token { kind: t.kind, start: t.start + byte, end: t.end + byte, line: t.line + line - 1, col: if t.line == 1 then t.col + col - 1 else t.col })
-    }
-    for n in it.nodes { list.push(kids, shift_node(n, tok_base)) }
-    let size = list.get(doc.sizes, list.len(kids) - list.len(kids)) ?? 0   // placeholder, replaced below
-    tok_base = tok_base + list.len(it.toks)
-    col = if it.lines == 0 then col + it.next_col - 1 else it.next_col
-    line = line + it.lines
-    byte = byte + 0
-  }
-  // bytes are summed from sizes, in step with the items above
-  var toks2: List[tree.Token] = list.with_capacity(list.len(toks))
-  var ti = 0
-  var i = 0
-  var base = 0
-  for it in doc.items {
-    let n = list.len(it.toks)
-    var k = 0
-    while k < n {
-      match list.get(toks, ti) { some(t) => list.push(toks2, tree.Token { ...t, start: t.start + base, end: t.end + base }), none => () }
-      ti = ti + 1
-      k = k + 1
-    }
-    base = base + (list.get(doc.sizes, i) ?? 0)
-    i = i + 1
-  }
-  let end = int.max(list.len(toks2) - 1, 0)
-  parser.Parsed { root: tree.Node { kind: doc.kind, field: doc.field, start: 0, end: end, kids: kids }, toks: toks2, names: doc.names }
-}
-
-// Which item holds byte `at`: the last item whose slice starts at or before it.
-fn item_at(doc: Document, at: Int) -> (Int, Int) = {
-  var i = 0
-  var base = 0
-  var found = 0
-  var found_base = 0
-  for size in doc.sizes {
-    if base <= at then { found = i; found_base = base } else ()
-    base = base + size
-    i = i + 1
-  }
-  (found, found_base)
-}
-
-fn splice(mut doc: Document, from: Int, to: Int, mut items: List[Item], mut sizes: List[Int], mut kinds: List[Int], mut texts: List[String]) -> Unit = {
-  var keep_items: List[Item] = []
-  var keep_sizes: List[Int] = []
-  var keep_kinds: List[Int] = []
-  var keep_texts: List[String] = []
-  while list.len(doc.items) > to + 1 {
-    match list.pop(doc.items) { some(x) => list.push(keep_items, x), none => () }
-    match list.pop(doc.sizes) { some(x) => list.push(keep_sizes, x), none => () }
-    match list.pop(doc.head_kinds) { some(x) => list.push(keep_kinds, x), none => () }
-    match list.pop(doc.head_texts) { some(x) => list.push(keep_texts, x), none => () }
-  }
-  while list.len(doc.items) > from {
-    let _ = list.pop(doc.items); let _ = list.pop(doc.sizes); let _ = list.pop(doc.head_kinds); let _ = list.pop(doc.head_texts)
-  }
-  // the new items were pushed in order; move them over in order
-  var rev_items: List[Item] = []
-  var rev_sizes: List[Int] = []
-  var rev_kinds: List[Int] = []
-  var rev_texts: List[String] = []
-  while list.len(items) > 0 {
-    match list.pop(items) { some(x) => list.push(rev_items, x), none => () }
-    match list.pop(sizes) { some(x) => list.push(rev_sizes, x), none => () }
-    match list.pop(kinds) { some(x) => list.push(rev_kinds, x), none => () }
-    match list.pop(texts) { some(x) => list.push(rev_texts, x), none => () }
-  }
-  while list.len(rev_items) > 0 {
-    match list.pop(rev_items) { some(x) => list.push(doc.items, x), none => () }
-    match list.pop(rev_sizes) { some(x) => list.push(doc.sizes, x), none => () }
-    match list.pop(rev_kinds) { some(x) => list.push(doc.head_kinds, x), none => () }
-    match list.pop(rev_texts) { some(x) => list.push(doc.head_texts, x), none => () }
-  }
-  while list.len(keep_items) > 0 {
-    match list.pop(keep_items) { some(x) => list.push(doc.items, x), none => () }
-    match list.pop(keep_sizes) { some(x) => list.push(doc.sizes, x), none => () }
-    match list.pop(keep_kinds) { some(x) => list.push(doc.head_kinds, x), none => () }
-    match list.pop(keep_texts) { some(x) => list.push(doc.head_texts, x), none => () }
-  }
-}
-
-// Re-read the items an edit touched. `source` is the text after the edit.
-// True when the document now describes `source`; false when the caller must
-// parse the whole file (the document is then unchanged).
-fn reparse(mut doc: Document, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Bool = {
-  guard doc.item >= 0 and not list.is_empty(doc.items) else false
-  let delta = edit.new_end - edit.old_end
-  let count = list.len(doc.items)
-  let (i0, base0) = item_at(doc, edit.start)
-  // an edit at an item's first byte can join it to the item before
-  let i = if i0 > 0 and base0 == edit.start then i0 - 1 else i0
-  let (j0, _) = item_at(doc, int.max(edit.old_end - 1, edit.start))
-  let j = int.max(i, j0)
-  var base = 0
+// `n` rewritten into own token space: children collapse to one slot each
+fn own_index(t: Int, t_begin: Int, c_start: List[Int], c_end: List[Int]) -> Int = {
+  var shrink = 0
   var k = 0
-  while k < i { base = base + (list.get(doc.sizes, k) ?? 0); k = k + 1 }
-  var window_end = base
-  k = i
-  while k <= j { window_end = window_end + (list.get(doc.sizes, k) ?? 0); k = k + 1 }
-  window_end = window_end + delta
-  let last = j == count - 1
-  let head_text = if last then "" else list.get(doc.head_texts, j + 1) ?? ""
-  let head_kind = if last then tree.T_EOF else list.get(doc.head_kinds, j + 1) ?? -1
-  let stop = if last then bytes.len(source) else window_end + bytes.len(bytes.from_string(head_text))
-  guard stop <= bytes.len(source) and window_end >= base else false
-  let slice = bytes.slice(source, base, stop)
-  var toks = match tokenize(bytes.to_string_lossy(slice), false) { ok(t) => t, err(_) => ([]: List[tree.Token]) }
-  guard not list.is_empty(toks) else false
-  // the lexed slice ends with the next item's first token and EOF; the token
-  // must be what it was, and it is not this window's
-  let eof = list.pop(toks) ?? eof_of(toks)
-  var next = eof
-  if last then list.push(toks, eof)
-  else {
-    let h = list.pop(toks) ?? eof
-    guard h.kind == head_kind and h.start == window_end - base and tree.token_text(slice, h) == head_text else false
-    next = h
-    list.push(toks, eof)
+  while k < list.len(c_end) {
+    let ce = list.get(c_end, k) ?? 0
+    if ce <= t then shrink = shrink + (ce - (list.get(c_start, k) ?? 0)) - 1 else ()
+    k = k + 1
   }
+  t - t_begin - shrink
+}
+fn cut(n: tree.Node, t_begin: Int, c_start: List[Int], c_end: List[Int], depth: Int) -> tree.Node = {
+  var kids: List[tree.Node] = list.with_capacity(list.len(n.kids))
+  var next = 0
+  for k in n.kids {
+    if parser.site_of(k) >= 0 then {
+      // which child: the one whose start this is
+      var which = -1
+      var m = 0
+      while which < 0 and m < list.len(c_start) { if (list.get(c_start, m) ?? -1) == k.start and (list.get(c_end, m) ?? -1) >= k.end then which = m else (); m = m + 1 }
+      let slot = own_index(k.start, t_begin, c_start, c_end)
+      list.push(kids, tree.Node { kind: PLACEHOLDER, field: which, start: slot, end: slot + 1, kids: [] })
+    } else list.push(kids, cut(k, t_begin, c_start, c_end, depth + 1))
+  }
+  tree.Node { kind: n.kind, field: n.field, start: own_index(n.start, t_begin, c_start, c_end), end: own_index(n.end, t_begin, c_start, c_end), kids: kids }
+}
+
+// The document of a whole-file parse. The root unit is the file: its own
+// tokens are what lies before the first item and the EOF after the last.
+fn from_parsed(p: parser.Parsed, source: Bytes, c: parser.Compiled) -> Document = {
+  let root = build(p.root, p.toks, source, 0, list.len(p.toks), Pos { byte: 0, line: 1, col: 1 }, -1)
+  Document { root: root, names: p.names }
+}
+
+// ── the whole file again ─────────────────────────────────────────────────
+fn emit(u: Item, base: Pos, tok_base: Int, mut toks: List[tree.Token]) -> tree.Node = {
+  // the slot each child sits at, and the token count before each
+  var slots: List[Int] = []
+  var kid_bases: List[Int] = []
+  var own = 0
+  var acc = tok_base
+  var k = 0
+  var p = base
+  var kid_nodes: List[tree.Node] = []
+  while k < list.len(u.pieces) {
+    let piece = list.get(u.pieces, k) ?? Piece { toks: [], size: 0, lines: 0, tail: 0 }
+    for t in piece.toks {
+      list.push(toks, tree.Token { kind: t.kind, start: t.start + p.byte, end: t.end + p.byte, line: t.line + p.line - 1, col: if t.line == 1 then t.col + p.col - 1 else t.col })
+    }
+    own = own + list.len(piece.toks)
+    acc = acc + list.len(piece.toks)
+    p = after(p, piece.size, piece.lines, piece.tail)
+    if k < list.len(u.kids) then {
+      list.push(slots, own)
+      list.push(kid_bases, acc)
+      let kid = list.get(u.kids, k) ?? empty_unit()
+      list.push(kid_nodes, emit(kid, p, acc, toks))
+      own = own + 1
+      acc = acc + kid.toks
+      p = after(p, kid.size, kid.lines, kid.tail)
+    } else ()
+    k = k + 1
+  }
+  expand(u.node, tok_base, slots, u.kid_toks, kid_nodes)
+}
+fn abs_index(o: Int, tok_base: Int, slots: List[Int], kid_toks: List[Int]) -> Int = {
+  var grow = 0
+  var k = 0
+  while k < list.len(slots) {
+    if (list.get(slots, k) ?? 0) < o then grow = grow + (list.get(kid_toks, k) ?? 0) - 1 else ()
+    k = k + 1
+  }
+  tok_base + o + grow
+}
+fn expand(n: tree.Node, tok_base: Int, slots: List[Int], kid_toks: List[Int], kid_nodes: List[tree.Node]) -> tree.Node =
+  if n.kind == PLACEHOLDER then (list.get(kid_nodes, n.field) ?? tree.node(0, [], 0, 0))
+  else tree.Node { kind: n.kind, field: n.field, start: abs_index(n.start, tok_base, slots, kid_toks), end: abs_index(n.end, tok_base, slots, kid_toks), kids: list.map(n.kids, (k) => expand(k, tok_base, slots, kid_toks, kid_nodes)) }
+
+fn materialize(doc: Document) -> parser.Parsed = {
+  var toks: List[tree.Token] = list.with_capacity(doc.root.toks)
+  let root = emit(doc.root, Pos { byte: 0, line: 1, col: 1 }, 0, toks)
+  parser.Parsed { root: root, toks: toks, names: doc.names }
+}
+
+// ── an edit ──────────────────────────────────────────────────────────────
+let DONE = 0       // the unit now describes the edited text
+let FALLBACK = 1   // parse the whole file
+let ME = 2         // the edit is in this unit's own tokens: re-read it at the parent's level
+
+// The bases of every child, from the unit's start.
+fn kid_bases(u: Item, base: Pos) -> List[Pos] = {
+  var out: List[Pos] = []
+  var p = base
+  var k = 0
+  while k < list.len(u.kids) {
+    let piece = list.get(u.pieces, k) ?? Piece { toks: [], size: 0, lines: 0, tail: 0 }
+    p = after(p, piece.size, piece.lines, piece.tail)
+    list.push(out, p)
+    p = after(p, list.get(u.kid_sizes, k) ?? 0, list.get(u.kid_lines, k) ?? 0, list.get(u.kid_tails, k) ?? 0)
+    k = k + 1
+  }
+  out
+}
+
+fn retotal(mut u: Item, delta: Int) -> Unit = {
+  u.size = u.size + delta
+  var lines = 0
+  var tail = 0
+  var toks = 0
+  var k = 0
+  while k < list.len(u.pieces) {
+    let piece = list.get(u.pieces, k) ?? Piece { toks: [], size: 0, lines: 0, tail: 0 }
+    lines = lines + piece.lines
+    tail = if piece.lines > 0 then piece.tail else tail + piece.size
+    toks = toks + list.len(piece.toks)
+    if k < list.len(u.kids) then {
+      let kl = list.get(u.kid_lines, k) ?? 0
+      lines = lines + kl
+      tail = if kl > 0 then list.get(u.kid_tails, k) ?? 0 else tail + (list.get(u.kid_sizes, k) ?? 0)
+      toks = toks + (list.get(u.kid_toks, k) ?? 0)
+    } else ()
+    k = k + 1
+  }
+  u.lines = lines
+  u.tail = tail
+  u.toks = toks
+  ()
+}
+
+// Move kids `to+1..` aside, drop `from..to`, push `fresh` in order, put the rest back.
+fn splice(mut u: Item, from: Int, to: Int, mut fresh: Item) -> Unit = {
+  let count = list.len(fresh.kids)
+  var aside: List[Item] = []
+  var aside_i: List[Int] = []
+  while list.len(u.kids) > to + 1 {
+    match list.pop(u.kids) { some(x) => list.push(aside, x), none => () }
+    list.push(aside_i, list.pop(u.kid_sizes) ?? 0); list.push(aside_i, list.pop(u.kid_lines) ?? 0); list.push(aside_i, list.pop(u.kid_tails) ?? 0)
+    list.push(aside_i, list.pop(u.kid_toks) ?? 0); list.push(aside_i, list.pop(u.kid_heads) ?? 0); list.push(aside_i, list.pop(u.kid_head_lens) ?? 0)
+  }
+  while list.len(u.kids) > from {
+    let _ = list.pop(u.kids); let _ = list.pop(u.kid_sizes); let _ = list.pop(u.kid_lines); let _ = list.pop(u.kid_tails)
+    let _ = list.pop(u.kid_toks); let _ = list.pop(u.kid_heads); let _ = list.pop(u.kid_head_lens)
+  }
+  var rev: List[Item] = []
+  var rev_i: List[Int] = []
+  while list.len(fresh.kids) > 0 {
+    match list.pop(fresh.kids) { some(x) => list.push(rev, x), none => () }
+    list.push(rev_i, list.pop(fresh.kid_head_lens) ?? 0); list.push(rev_i, list.pop(fresh.kid_heads) ?? 0); list.push(rev_i, list.pop(fresh.kid_toks) ?? 0)
+    list.push(rev_i, list.pop(fresh.kid_tails) ?? 0); list.push(rev_i, list.pop(fresh.kid_lines) ?? 0); list.push(rev_i, list.pop(fresh.kid_sizes) ?? 0)
+  }
+  while list.len(rev) > 0 {
+    match list.pop(rev) { some(x) => list.push(u.kids, x), none => () }
+    list.push(u.kid_sizes, list.pop(rev_i) ?? 0); list.push(u.kid_lines, list.pop(rev_i) ?? 0); list.push(u.kid_tails, list.pop(rev_i) ?? 0)
+    list.push(u.kid_toks, list.pop(rev_i) ?? 0); list.push(u.kid_heads, list.pop(rev_i) ?? 0); list.push(u.kid_head_lens, list.pop(rev_i) ?? 0)
+  }
+  while list.len(aside) > 0 {
+    match list.pop(aside) { some(x) => list.push(u.kids, x), none => () }
+    list.push(u.kid_head_lens, list.pop(aside_i) ?? 0); list.push(u.kid_heads, list.pop(aside_i) ?? 0); list.push(u.kid_toks, list.pop(aside_i) ?? 0)
+    list.push(u.kid_tails, list.pop(aside_i) ?? 0); list.push(u.kid_lines, list.pop(aside_i) ?? 0); list.push(u.kid_sizes, list.pop(aside_i) ?? 0)
+  }
+  // one piece before every child and one after the last: the pieces between
+  // the replaced children (empty, or the parse would not have reached the
+  // token after them) become as many as the new children need
+  var aside_p: List[Piece] = []
+  while list.len(u.pieces) > to + 2 { match list.pop(u.pieces) { some(x) => list.push(aside_p, x), none => () } }
+  let closing = list.pop(u.pieces) ?? Piece { toks: [], size: 0, lines: 0, tail: 0 }
+  while list.len(u.pieces) > from + 1 { let _ = list.pop(u.pieces) }
+  var m = 1
+  while m < count { list.push(u.pieces, Piece { toks: [], size: 0, lines: 0, tail: 0 }); m = m + 1 }
+  list.push(u.pieces, closing)
+  while list.len(aside_p) > 0 { match list.pop(aside_p) { some(x) => list.push(u.pieces, x), none => () } }
+  ()
+}
+
+// The parent's subtree after children `from..to` became `count` children:
+// the placeholders in that range are replaced, later ones renumbered, and
+// own slots after the range move by the difference.
+fn renumber(n: tree.Node, from: Int, to: Int, count: Int, slot_from: Int, slot_delta: Int) -> tree.Node = {
+  var kids: List[tree.Node] = list.with_capacity(list.len(n.kids))
+  var placed = false
+  for k in n.kids {
+    if k.kind == PLACEHOLDER and k.field >= from and k.field <= to then {
+      if placed then () else {
+        var m = 0
+        while m < count { list.push(kids, tree.Node { kind: PLACEHOLDER, field: from + m, start: k.start + m, end: k.start + m + 1, kids: [] }); m = m + 1 }
+        placed = true
+      }
+    }
+    else if k.kind == PLACEHOLDER and k.field > to then list.push(kids, tree.Node { ...k, field: k.field + count - (to - from + 1), start: k.start + slot_delta, end: k.end + slot_delta })
+    else list.push(kids, renumber(k, from, to, count, slot_from, slot_delta))
+  }
+  tree.Node { kind: n.kind, field: n.field, start: if n.start > slot_from then n.start + slot_delta else n.start, end: if n.end > slot_from then n.end + slot_delta else n.end, kids: kids }
+}
+
+// Re-read children `i..j` of `u` from `source`, whose bytes for them now
+// run from `base.byte` to `new_end`; `next` is the byte where the token
+// after them starts, with its kind and length.
+fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
+  let last = j == list.len(u.kids) - 1
+  var head_kind = tree.T_EOF
+  var head_len = 0
+  if last then {
+    match list.get(u.pieces, j + 1) { some(piece) => match list.first(piece.toks) { some(t) => { head_kind = t.kind; head_len = t.end - t.start }, none => () }, none => () }
+  } else { head_kind = list.get(u.kid_heads, j + 1) ?? -1; head_len = list.get(u.kid_head_lens, j + 1) ?? 0 }
+  let at_eof = head_kind == tree.T_EOF
+  let stop = if at_eof then bytes.len(source) else new_end + head_len
+  guard stop <= bytes.len(source) and new_end >= base.byte else FALLBACK
+  let slice = bytes.slice(source, base.byte, stop)
+  var toks = match tokenize(bytes.to_string_lossy(slice), false) { ok(t) => t, err(_) => ([]: List[tree.Token]) }
+  guard list.len(toks) >= 2 or (list.len(toks) == 1 and at_eof) else FALLBACK
+  let eof = list.pop(toks) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 1, col: 1 }
+  var head_ok = true
+  var head = eof
+  if at_eof then () else {
+    head = list.pop(toks) ?? eof
+    head_ok = head.kind == head_kind and head.start == new_end - base.byte and head.end - head.start == head_len
+  }
+  guard head_ok else FALLBACK
+  list.push(toks, eof)
   let num = parser.number(c, slice, toks)
   let eof_index = list.len(toks) - 1
   var nodes: List[tree.Node] = []
   var pos = 0
   var fine = true
   while fine and pos < eof_index {
-    match parser.parse_item(c, doc.item, num, pos) {
+    match parser.parse_item(c, u.child_site, num, pos) {
       some((n, at)) => if at > pos then { list.push(nodes, n); pos = at } else { fine = false },
       none => { fine = false },
     }
   }
-  guard fine and pos == eof_index and not list.is_empty(nodes) else false
-  // the EOF was the parser's terminator; the file's own EOF stays with the last item
-  if last then () else { let _ = list.pop(toks) }
-  // cut the window into items the way the whole file was, then put them in
-  var fresh = Document { kind: doc.kind, field: doc.field, names: doc.names, item: doc.item, items: [], sizes: [], head_kinds: [], head_texts: [] }
-  split(nodes, toks, next, window_end - base, slice, fresh)
-  // the first item of a window that is not the file's first begins at its
-  // head; a window at the file's start keeps whatever came before its head
-  splice(doc, i, j, fresh.items, fresh.sizes, fresh.head_kinds, fresh.head_texts)
-  true
+  // no tokens at all is a window whose items were deleted; tokens that no
+  // item took are a failure
+  guard fine and pos == eof_index and (eof_index == 0 or not list.is_empty(nodes)) else FALLBACK
+  // the token at `eof_index` is where the window ends: the head that follows
+  // it, or the file's EOF; either is excluded from the items and gives their end
+  if at_eof then () else { let _ = list.pop(toks); list.push(toks, head) }
+  // the window as a unit of its own, then its children moved into `u`
+  let holder = tree.Node { kind: 0, field: -1, start: 0, end: eof_index, kids: nodes }
+  var fresh = build(holder, toks, bytes.slice(slice, 0, new_end - base.byte), 0, eof_index, Pos { byte: 0, line: 1, col: 1 }, -1)
+  let count = list.len(fresh.kids)
+  let old_slot = slot_of(u, i)
+  u.node = renumber(u.node, i, j, count, old_slot, count - (j - i + 1))
+  let _ = splice(u, i, j, fresh)
+  DONE
+}
+fn slot_of(u: Item, k: Int) -> Int = {
+  var slot = 0
+  var m = 0
+  while m <= k { slot = slot + list.len((list.get(u.pieces, m) ?? Piece { toks: [], size: 0, lines: 0, tail: 0 }).toks) + (if m < k then 1 else 0); m = m + 1 }
+  slot
 }
 
-// Are two whole-file answers the same, token for token and node for node?
+fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
+  let delta = edit.new_end - edit.old_end
+  let bases = kid_bases(u, base)
+  let count = list.len(u.kids)
+  // the child whose bytes hold the edit's start, and the one holding its end
+  var i = -1
+  var j = -1
+  var k = 0
+  while k < count {
+    let b = (list.get(bases, k) ?? base).byte
+    let e = b + (list.get(u.kid_sizes, k) ?? 0)
+    if i < 0 and edit.start >= b and edit.start < e then i = k else ()
+    if edit.old_end > edit.start and edit.old_end > b and edit.old_end <= e then j = k else ()
+    k = k + 1
+  }
+  // an insertion right after the last child, where nothing but the parent's
+  // closing token or the EOF follows, extends that child
+  if count > 0 then {
+    let last_end = (list.get(bases, count - 1) ?? base).byte + (list.get(u.kid_sizes, count - 1) ?? 0)
+    if i < 0 and edit.start == last_end then i = count - 1 else ()
+    if j < 0 and edit.old_end > edit.start and edit.old_end == last_end then j = count - 1 else ()
+  } else ()
+  if edit.old_end == edit.start then j = i else ()
+  if i < 0 or j < 0 or j < i then ME
+  else {
+    let head_edit = edit.start == (list.get(bases, i) ?? base).byte
+    if i == j and not head_edit then {
+      // inside child i: let it try first
+      var aside: List[Item] = []
+      while list.len(u.kids) > i + 1 { match list.pop(u.kids) { some(x) => list.push(aside, x), none => () } }
+      var kid = list.pop(u.kids) ?? empty_unit()
+      let status = reparse_in(kid, list.get(bases, i) ?? base, source, edit, tokenize, c)
+      let kid_size = kid.size
+      let kid_lines = kid.lines
+      let kid_tail = kid.tail
+      let kid_toks = kid.toks
+      list.push(u.kids, kid)
+      while list.len(aside) > 0 { match list.pop(aside) { some(x) => list.push(u.kids, x), none => () } }
+      if status == DONE then {
+        u.kid_sizes = list.set(u.kid_sizes, i, kid_size)
+        u.kid_lines = list.set(u.kid_lines, i, kid_lines)
+        u.kid_tails = list.set(u.kid_tails, i, kid_tail)
+        u.kid_toks = list.set(u.kid_toks, i, kid_toks)
+        let _ = retotal(u, delta)
+        DONE
+      }
+      else if status == ME then window(u, i, i, bases, delta, source, tokenize, c)
+      else FALLBACK
+    }
+    else {
+      // an edit at a child's first byte can join it to the child before
+      let from = if head_edit and i > 0 then i - 1 else i
+      window(u, from, j, bases, delta, source, tokenize, c)
+    }
+  }
+}
+fn window(mut u: Item, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
+  let base = list.get(bases, i) ?? Pos { byte: 0, line: 1, col: 1 }
+  let end = (list.get(bases, j) ?? base).byte + (list.get(u.kid_sizes, j) ?? 0) + delta
+  let status = rewindow(u, i, j, base, end, source, tokenize, c)
+  if status == DONE then { let _ = retotal(u, delta); DONE } else status
+}
+
+// Re-read what an edit touched. `source` is the text after the edit. True
+// when the document now describes `source`; false when the caller must
+// parse the whole file (the document is then unchanged).
+fn reparse(mut doc: Document, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Bool =
+  reparse_in(doc.root, Pos { byte: 0, line: 1, col: 1 }, source, edit, tokenize, c) == DONE
+
+// ── the same answer? ─────────────────────────────────────────────────────
 fn same_node(a: tree.Node, b: tree.Node) -> Bool =
   a.kind == b.kind and a.field == b.field and a.start == b.start and a.end == b.end and list.len(a.kids) == list.len(b.kids)
   and list.all(list.zip(a.kids, b.kids), (p) => same_node(p.0, p.1))
@@ -269,7 +470,6 @@ fn same_token(a: tree.Token, b: tree.Token) -> Bool = a.kind == b.kind and a.sta
 fn same(a: parser.Parsed, b: parser.Parsed) -> Bool =
   list.len(a.toks) == list.len(b.toks) and list.all(list.zip(a.toks, b.toks), (p) => same_token(p.0, p.1)) and same_node(a.root, b.root)
 
-// Where the answers first differ, for a test that failed.
 fn first_difference(a: parser.Parsed, b: parser.Parsed) -> String = {
   var i = 0
   var found = ""
@@ -280,14 +480,27 @@ fn first_difference(a: parser.Parsed, b: parser.Parsed) -> String = {
     }
     i = i + 1
   }
-  if found == "" and not same_node(a.root, b.root) then "tree differs" else found
+  if found == "" and not same_node(a.root, b.root) then "tree differs: " + node_difference(a.root, b.root, "") else found
 }
+fn node_difference(a: tree.Node, b: tree.Node, path: String) -> String =
+  if a.kind != b.kind or a.field != b.field or a.start != b.start or a.end != b.end or list.len(a.kids) != list.len(b.kids) then
+    path + " kind " + int.to_string(a.kind) + "/" + int.to_string(b.kind) + " field " + int.to_string(a.field) + "/" + int.to_string(b.field)
+    + " " + int.to_string(a.start) + "-" + int.to_string(a.end) + " vs " + int.to_string(b.start) + "-" + int.to_string(b.end) + " kids " + int.to_string(list.len(a.kids)) + "/" + int.to_string(list.len(b.kids))
+  else {
+    var out = ""
+    var k = 0
+    while out == "" and k < list.len(a.kids) {
+      out = node_difference(list.get(a.kids, k) ?? tree.node(0, [], 0, 0), list.get(b.kids, k) ?? tree.node(0, [], 0, 0), path + "/" + int.to_string(k))
+      k = k + 1
+    }
+    out
+  }
 
 // The text after an edit.
 fn apply(source: Bytes, edit: Edit, text: Bytes) -> Bytes =
   bytes.concat(bytes.concat(bytes.slice(source, 0, edit.start), text), bytes.slice(source, edit.old_end, bytes.len(source)))
 
-// ── tests, over a language of three-token items ──────────────────────────
+// ── tests, over a language of items holding statements ───────────────────
 fn spec() -> lex.Spec = lex.Spec {
   keywords: ["fn"], operators: ["{", "}", "(", ")", ";", "="], numbers: lex.N_GO, strings: lex.S_GO, newlines: lex.NL_NONE,
   ends_kw: [], line_comment: [35], block_open: [60, 35], block_close: [35, 62], nested_block: false, block_comment_newline: false,
@@ -297,15 +510,20 @@ fn scan(source: String, recovering: Bool) -> Result[List[tree.Token], lex.LexErr
 fn item_grammar() -> parser.Grammar = parser.grammar("source_file", [
   ("source_file", parser.wrap("source_file", parser.rep(parser.recover_all(parser.r("item"))))),
   ("item", parser.wrap("item", parser.seq([
-    parser.lit("fn"), parser.field("name", parser.tok("identifier")), parser.lit("("), parser.lit(")"), parser.lit("{"),
-    parser.rep(parser.alt([parser.tok("identifier"), parser.tok("number"), parser.wrap("call", parser.seq([parser.lit("("), parser.lit(")")]))])),
-    parser.lit("}")
+    parser.lit("fn"), parser.field("name", parser.tok("identifier")), parser.lit("("), parser.lit(")"), parser.r("block")
   ]))),
+  ("block", parser.wrap("block", parser.seq([parser.lit("{"), parser.rep(parser.recover(parser.r("stmt"))), parser.lit("}")]))),
+  ("stmt", parser.alt([
+    parser.wrap("assign", parser.seq([parser.tok("identifier"), parser.lit("="), parser.alt([parser.tok("identifier"), parser.tok("integer")]), parser.opt(parser.lit(";"))])),
+    parser.wrap("call", parser.seq([parser.tok("identifier"), parser.lit("("), parser.lit(")"), parser.opt(parser.lit(";"))])),
+    parser.r("block"),
+  ])),
 ])
 fn whole(c: parser.Compiled, text: String) -> parser.Parsed = match scan(text, false) {
   ok(toks) => match parser.parse_with(c, bytes.from_string(text), toks) { ok(p) => p, err(_) => parser.Parsed { root: tree.node(0, [], 0, 0), toks: [], names: c.names } },
   err(_) => parser.Parsed { root: tree.node(0, [], 0, 0), toks: [], names: c.names },
 }
+fn at(needle: String) -> Int = string.index_of(TEXT, needle) ?? -1
 fn edited(c: parser.Compiled, text: String, start: Int, old_end: Int, insert: String) -> (Bool, Bool, String) = {
   let source = bytes.from_string(text)
   var doc = from_parsed(whole(c, text), source, c)
@@ -316,68 +534,46 @@ fn edited(c: parser.Compiled, text: String, start: Int, old_end: Int, insert: St
   let got = materialize(doc)
   (ok_inc, same(got, full), first_difference(got, full))
 }
+let TEXT = "fn a() { x = 1; y() }\nfn b() { p = q\n  { r(); s = 2 }\n}\n\nfn c() { }"
 
 test "the document of a whole parse materializes to the parse itself" {
   let c = parser.compile(item_grammar())
-  let text = "fn a() { x }\nfn b() { y z }\n\nfn c() { }"
-  let p = whole(c, text)
-  let doc = from_parsed(p, bytes.from_string(text), c)
-  assert_eq(list.len(doc.items), 3)
-  assert_eq(doc.sizes, [13, 16, 10])
-  assert(same(materialize(doc), p))
+  let p = whole(c, TEXT)
+  assert(list.len(p.toks) > 0, "the test text must parse")
+  let doc = from_parsed(p, bytes.from_string(TEXT), c)
+  assert_eq(list.len(doc.root.kids), 3)
+  assert_eq(doc.root.kid_sizes, [22, 35, 10])
+  assert_eq(list.map(doc.root.kids, (u) => list.len(u.kids)), [2, 2, 0])
+  assert(same(materialize(doc), p), first_difference(materialize(doc), p))
 }
 
-test "an edit inside an item re-reads that item alone and matches the whole parse" {
+test "an edit inside a statement re-reads that statement and matches the whole parse" {
   let c = parser.compile(item_grammar())
-  let text = "fn a() { x }\nfn b() { y z }\n\nfn c() { }"
-  // `y` -> `yes`
-  let (inc, equal, why) = edited(c, text, 23, 24, "yes")
-  assert(inc)
-  assert(equal, why)
-  // a line break in the middle of an item, and an edit on the last item
-  let (inc2, equal2, why2) = edited(c, text, 25, 25, "\n  w ")
-  assert(inc2)
-  assert(equal2, why2)
-  let (inc3, equal3, why3) = edited(c, text, 38, 38, " q")
-  assert(inc3)
-  assert(equal3, why3)
+  // `y()` -> `yes()` in a; `q` -> `qq` in b's first statement; `s = 2` -> `s = 22` in the nested block
+  for case in [(at("y()"), at("y()") + 1, "yes"), (at("q\n"), at("q\n") + 1, "qq"), (at("2 }"), at("2 }") + 1, "22"), (at("}\n\nfn c"), at("}\n\nfn c"), "\n\n")] {
+    let (inc, equal, why) = edited(c, TEXT, case.0, case.1, case.2)
+    assert(inc, "not incremental at " + int.to_string(case.0))
+    assert(equal, why)
+  }
 }
 
-test "an edit that adds or removes an item, or joins two, still matches" {
+test "an edit that adds, removes or joins items or statements still matches" {
   let c = parser.compile(item_grammar())
-  let text = "fn a() { x }\nfn b() { y z }\n\nfn c() { }"
-  let (inc, equal, why) = edited(c, text, 40, 40, "\nfn d() { }")
-  assert(inc)
-  assert(equal, why)
-  // remove `fn b() { y z }\n` whole: the window covers b and the edit at its start joins a
-  let (inc2, equal2, why2) = edited(c, text, 13, 28, "")
-  assert(equal2, why2)
-  // typing a new item's head in the gap before c
-  let (inc3, equal3, why3) = edited(c, text, 29, 29, "fn e() { }\n")
-  assert(equal3, why3)
+  for case in [(bytes.len(bytes.from_string(TEXT)), bytes.len(bytes.from_string(TEXT)), "\nfn d() { }"), (at("fn b"), at("fn c"), ""), (at("fn c"), at("fn c"), "fn e() { }\n"),
+               (at("y() }") + 3, at("y() }") + 3, " z = 3;"), (at("x = 1;"), at("y()"), ""), (at("s = 2"), at("s = 2"), "t(); ")] {
+    let (inc, equal, why) = edited(c, TEXT, case.0, case.1, case.2)
+    assert(inc, "not incremental at " + int.to_string(case.0))
+    assert(equal, why + " at " + int.to_string(case.0))
+  }
 }
 
 test "an edit that breaks an item falls back, and the document is untouched" {
   let c = parser.compile(item_grammar())
-  let text = "fn a() { x }\nfn b() { y z }\n\nfn c() { }"
-  let source = bytes.from_string(text)
-  var doc = from_parsed(whole(c, text), source, c)
-  let edit = Edit { start: 23, old_end: 23, new_end: 24 }
+  let source = bytes.from_string(TEXT)
+  var doc = from_parsed(whole(c, TEXT), source, c)
+  let edit = Edit { start: at("x = 1"), old_end: at("x = 1"), new_end: at("x = 1") + 1 }
   let after = apply(source, edit, bytes.from_string("{"))
   assert(not reparse(doc, after, edit, (s, r) => scan(s, r), c))
-  assert(same(materialize(doc), whole(c, text)))
+  assert(same(materialize(doc), whole(c, TEXT)))
 }
 
-test "the items around an edit keep their sizes and tokens" {
-  let c = parser.compile(item_grammar())
-  let text = "fn a() { x }\nfn b() { y z }\n\nfn c() { }"
-  let source = bytes.from_string(text)
-  var doc = from_parsed(whole(c, text), source, c)
-  let edit = Edit { start: 25, old_end: 25, new_end: 30 }
-  let after = apply(source, edit, bytes.from_string("\n  w "))
-  let inc = reparse(doc, after, edit, (s, r) => scan(s, r), c)
-  assert_eq(doc.sizes, [13, 21, 10])
-  assert_eq(list.len(doc.items), 3)
-  assert_eq(list.map(doc.items, (it) => list.len(it.toks)), [7, 9, 7])
-  assert(inc)
-}

@@ -1421,7 +1421,7 @@ fn uncommon_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp:
   else {            // K_RECOVER and K_RECOVER_ALL: the rarest arm carries the chain
     let mark = list.len(out)
     let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
-    if o.ok then o
+    if o.ok then { stamp(out, mark, id); o }
     else {
       rollback(out, mark)
       if not wants(mode, M_RECOVER) then Out { ok: false, pos: pos }
@@ -1445,10 +1445,11 @@ fn uncommon_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp:
           let kept = h.ok and h.pos > pos and h.pos <= stop
           if not kept then rollback(out, mark) else ()
           let from = if kept then h.pos else pos
-          if real_between(num, from, stop) then list.push(out, tree.node(c.extra + X_ERROR, [], from, stop)) else ()
+          if real_between(num, from, stop) then { list.push(out, tree.node(c.extra + X_ERROR, [], from, stop)); stamp(out, list.len(out) - 1, id) } else ()
           if resume >= 0 then {
+            let resumed = list.len(out)
             let a = parse_rule(c, num, out, exp, far, mode, op.a, resume)
-            if a.ok then Out { ok: true, pos: a.pos } else {
+            if a.ok then { stamp(out, resumed, id); Out { ok: true, pos: a.pos } } else {
               rollback(out, mark)
               Out { ok: false, pos: pos }
             }
@@ -1458,6 +1459,19 @@ fn uncommon_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp:
     }
   }
 }
+
+// A recover item that came out as one node is stamped with the recover op
+// that read it, in the node's `field` below -1 where no field name lives:
+// the incremental reader re-reads such a node alone, with the same op.
+// A reader of fields compares against names, which are never negative, and
+// the s-expression prints a negative field as none.
+fn stamp(mut out: List[tree.Node], mark: Int, site: Int) -> Unit =
+  if list.len(out) == mark + 1 then match list.pop(out) {
+    some(n) => list.push(out, if n.field < 0 then tree.Node { ...n, field: 0 - 2 - site } else n),
+    none => (),
+  } else ()
+fn site_of(n: tree.Node) -> Int = if n.field <= -2 then 0 - 2 - n.field else -1
+fn body_of(c: Compiled, site: Int) -> Int = match list.get(c.ops, site) { some(o) => o.a, none => -1 }
 
 fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, pos: Int) -> Out = {
   let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
@@ -1710,9 +1724,10 @@ fn parse_recovering(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Resul
 
 // ── one top-level item at a time ─────────────────────────────────────────
 // A file whose start rule repeats a `recover_all` item can be read one item at
-// a time: `item_op` finds that item's rule under the start rule, and
-// `parse_item` parses one from a position in a numbered token stream. The
-// incremental reader is built on this; nothing here changes the grammar.
+// a time: `item_op` finds that recover op under the start rule (the site the
+// nodes are stamped with), and `parse_item` parses one item from a position
+// in a numbered token stream with a site's body. The incremental reader is
+// built on this; nothing here changes the grammar.
 fn child_ops(c: Compiled, op: Op) -> List[Int] =
   if op.kind == K_SEQ or op.kind == K_ALT or op.kind == K_WRAP_SEQ or op.kind == K_NEST_SEQ or op.kind == K_TERMS or op.kind == K_PREC then {
     var out: List[Int] = []
@@ -1732,7 +1747,7 @@ fn item_op(c: Compiled) -> Int = {
     if id < 0 or list.contains(seen, id) then () else {
       list.push(seen, id)
       let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
-      if op.kind == K_RECOVER_ALL then found = op.a
+      if op.kind == K_RECOVER_ALL then found = id
       else for k in child_ops(c, op) { list.push(pending, k) }
     }
   }
@@ -1743,12 +1758,12 @@ fn number(c: Compiled, source: Bytes, toks: List[tree.Token]) -> List[Int] = num
 
 // One item from `pos`: its node and where it ended, or none where the item
 // rule does not match there.
-fn parse_item(c: Compiled, item: Int, num: List[Int], pos: Int) -> Option[(tree.Node, Int)] = {
+fn parse_item(c: Compiled, site: Int, num: List[Int], pos: Int) -> Option[(tree.Node, Int)] = {
   var out: List[tree.Node] = []
   var exp: List[Int] = []
   var far: List[Int] = far_cell()
-  let o = parse_rule(c, num, out, exp, far, fresh(false), item, pos)
-  if o.ok and list.len(out) == 1 then (match list.pop(out) { some(n) => some((n, o.pos)), none => none }) else none
+  let o = parse_rule(c, num, out, exp, far, fresh(false), body_of(c, site), pos)
+  if o.ok and list.len(out) == 1 then { stamp(out, 0, site); match list.pop(out) { some(n) => some((n, o.pos)), none => none } } else none
 }
 
 // How much of the tree the parser had to give up on.
