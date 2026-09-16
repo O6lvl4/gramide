@@ -532,12 +532,20 @@ fn first_difference_named(a: parser.Parsed, b: parser.Parsed, names: nametable.N
   var found = ""
   while found == "" and i < int.max(list.len(a.toks), list.len(b.toks)) {
     match (list.get(a.toks, i), list.get(b.toks, i)) {
-      (some(x), some(y)) => if not same_token(x, y) then found = "token " + int.to_string(i) + ": " + int.to_string(x.kind) + "@" + int.to_string(x.start) + ":" + int.to_string(x.line) + ":" + int.to_string(x.col) + " vs " + int.to_string(y.kind) + "@" + int.to_string(y.start) + ":" + int.to_string(y.line) + ":" + int.to_string(y.col) else (),
+      (some(x), some(y)) => if not same_token(x, y) then found = "token " + int.to_string(i) + ": " + int.to_string(x.kind) + "@" + int.to_string(x.start) + ":" + int.to_string(x.line) + ":" + int.to_string(x.col) + " vs " + int.to_string(y.kind) + "@" + int.to_string(y.start) + ":" + int.to_string(y.line) + ":" + int.to_string(y.col)
+        + " | a: " + context(a.toks, i) + " | b: " + context(b.toks, i) else (),
       _ => { found = "token count " + int.to_string(list.len(a.toks)) + " vs " + int.to_string(list.len(b.toks)) },
     }
     i = i + 1
   }
   if found == "" and not same_node(a.root, b.root) then "tree differs: " + node_difference(a.root, b.root, "", names) else found
+}
+// the tokens around index `i`, as kind@start-end
+fn context(toks: List[tree.Token], i: Int) -> String = {
+  var out: List[String] = []
+  var k = int.max(i - 4, 0)
+  while k <= i + 4 { match list.get(toks, k) { some(t) => list.push(out, int.to_string(t.kind) + "@" + int.to_string(t.start) + "-" + int.to_string(t.end)), none => () }; k = k + 1 }
+  list.join(out, " ")
 }
 fn node_difference(a: tree.Node, b: tree.Node, path: String, names: nametable.Names) -> String =
   if a.kind != b.kind or a.field != b.field or a.start != b.start or a.end != b.end or list.len(a.kids) != list.len(b.kids) then
