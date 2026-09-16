@@ -390,7 +390,7 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   guard not list.contains(u.kid_kinds, parser.error_kind(c)) else ERROR_NEAR
   guard stop <= bytes.len(source) and new_end >= base.byte else { list.push(u.trace, "window out of range: " + int.to_string(base.byte) + ".." + int.to_string(new_end) + "+" + int.to_string(head_len) + " of " + int.to_string(bytes.len(source))); NO_HEAD }
   let slice = bytes.slice(source, base.byte, stop)
-  var toks = match tokenize(bytes.to_string_lossy(slice), false) { ok(t) => t, err(_) => ([]: List[tree.Token]) }
+  var toks = match tokenize(bytes.to_string_lossy(slice), false) { ok(t) => without_leading_empty(t), err(_) => ([]: List[tree.Token]) }
   guard list.len(toks) >= 2 or (list.len(toks) == 1 and at_eof) else NO_LEX
   let eof = list.pop(toks) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 1, col: 1 }
   var head_ok = true
@@ -545,7 +545,7 @@ fn same_tokens(old: List[tree.Token], fresh: List[tree.Token], retyped: Int, del
   // the file's last run carries the EOF token: compared without it, kept with the fresh one
   let old_eof = match list.last(old) { some(t) => t.kind == tree.T_EOF, none => false }
   let count = list.len(old) - (if old_eof then 1 else 0)
-  var toks = fresh
+  var toks = without_leading_empty(fresh)
   let eof = list.pop(toks) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 1, col: 1 }
   while list.len(toks) > count and (match list.last(toks) { some(t) => t.start == t.end, none => false }) { let _ = list.pop(toks) }
   if list.len(toks) != count then none
@@ -554,6 +554,14 @@ fn same_tokens(old: List[tree.Token], fresh: List[tree.Token], retyped: Int, del
     some(toks)
   }
   else none
+}
+// A slice lexed on its own may open with empty tokens that in the file
+// belong to what came before it (a layout scanner's `indent` for a line
+// deeper than column one): a window or run never starts with one
+fn without_leading_empty(toks: List[tree.Token]) -> List[tree.Token] = {
+  var n = 0
+  while n < list.len(toks) - 1 and (match list.get(toks, n) { some(t) => t.start == t.end, none => false }) { n = n + 1 }
+  if n == 0 then toks else list.drop(toks, n)
 }
 fn same_length(a: Option[tree.Token], b: Option[tree.Token], grown: Int) -> Bool = match (a, b) {
   (some(x), some(y)) => x.kind == y.kind and x.end - x.start + grown == y.end - y.start,
