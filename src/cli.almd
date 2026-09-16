@@ -19,6 +19,9 @@
 //   <name> map <dir> [--budget N] [--task TEXT]
 //                             a ranked map of a repository within N tokens (default 1024),
 //                             personalised toward what TEXT mentions
+//   <name> reparse-bench <file> [--edits N] [--seed S] [--verify K]
+//                             N keystroke edits re-read incrementally, timed; every K
+//                             edits the result is checked against a whole parse
 //
 // `check` is the gate: strict, and its exit code is the verdict. Every other
 // command is a reader, and a reader answers about the file it was given even
@@ -33,6 +36,7 @@ import self.tags
 import self.balance
 import self.map
 import self.symbols
+import self.keystrokes
 import self.package_api
 import fs
 import process
@@ -44,7 +48,8 @@ type Program = { name: String, version: String, packages: List[package_api.Defin
 
 fn usage(p: Program) -> String = "usage: " + p.name + " languages\n       " + p.name + " version\n       "
   + p.name + " (parse | tokens | outline | symbols | symbols-recovered | tags) <file>\n       "
-  + p.name + " (check | balance) <file>...\n       " + p.name + " map <dir> [--budget N] [--task TEXT]"
+  + p.name + " (check | balance) <file>...\n       " + p.name + " map <dir> [--budget N] [--task TEXT]\n       "
+  + p.name + " reparse-bench <file> [--edits N] [--seed S] [--verify K]"
 
 // One line per component, so a bug report can say exactly what was linked.
 fn version_lines(p: Program) -> List[String] =
@@ -228,6 +233,17 @@ effect fn run_map(packages: List[package_api.Definition], argv: List[String]) ->
   ok(())
 }
 
+effect fn run_reparse_bench(packages: List[package_api.Definition], argv: List[String]) -> Result[Unit, String] = {
+  let path = list.get(argv, 1) ?? ""
+  let edits = int.parse(option_after(argv, "--edits") ?? "1000") ?? 1000
+  let seed = int.parse(option_after(argv, "--seed") ?? "7") ?? 7
+  let verify = int.parse(option_after(argv, "--verify") ?? "50") ?? 50
+  let l = lang.language_of(packages, path)!
+  let src = read(path)!
+  println(keystrokes.run(l, bytes.from_string(src), edits, seed, verify)!)
+  ok(())
+}
+
 effect fn fail(e: String) -> Unit = { eprintln(e); process.exit(1) }
 
 // `check` and `balance` over two or more files are a batch, and a batch is
@@ -259,6 +275,7 @@ effect fn run(p: Program, argv: List[String]) -> Unit = {
   // matched here rather than handed to a helper: the native backend inserts
   // a `?` on an effect call in argument position, and not on one being matched
   else if cmd == "map" then match run_map(p.packages, argv) { ok(_) => (), err(e) => fail(e) }
+  else if cmd == "reparse-bench" then match run_reparse_bench(p.packages, argv) { ok(_) => (), err(e) => fail(e) }
   else match batch_of(argv) {
     some((batch, paths)) => {
       let parts = sequential(p.packages, batch, paths)!

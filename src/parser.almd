@@ -1708,6 +1708,49 @@ fn parse_recovering(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Resul
   }
 }
 
+// ── one top-level item at a time ─────────────────────────────────────────
+// A file whose start rule repeats a `recover_all` item can be read one item at
+// a time: `item_op` finds that item's rule under the start rule, and
+// `parse_item` parses one from a position in a numbered token stream. The
+// incremental reader is built on this; nothing here changes the grammar.
+fn child_ops(c: Compiled, op: Op) -> List[Int] =
+  if op.kind == K_SEQ or op.kind == K_ALT or op.kind == K_WRAP_SEQ or op.kind == K_NEST_SEQ or op.kind == K_TERMS or op.kind == K_PREC then {
+    var out: List[Int] = []
+    var k = 0
+    while k <= op.b { list.push(out, kid_at(c, op.a + k)); k = k + 1 }
+    out
+  }
+  else if op.kind == K_REF or single_child(op.kind) or op.kind == K_NEST or op.kind == K_LEFT then [op.a]
+  else []
+
+fn item_op(c: Compiled) -> Int = {
+  var seen: List[Int] = []
+  var pending: List[Int] = [c.start]
+  var found = -1
+  while found < 0 and not list.is_empty(pending) {
+    let id = list.pop(pending) ?? -1
+    if id < 0 or list.contains(seen, id) then () else {
+      list.push(seen, id)
+      let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+      if op.kind == K_RECOVER_ALL then found = op.a
+      else for k in child_ops(c, op) { list.push(pending, k) }
+    }
+  }
+  found
+}
+
+fn number(c: Compiled, source: Bytes, toks: List[tree.Token]) -> List[Int] = number_tokens(c, source, TokenInput { tokens: toks }).pairs
+
+// One item from `pos`: its node and where it ended, or none where the item
+// rule does not match there.
+fn parse_item(c: Compiled, item: Int, num: List[Int], pos: Int) -> Option[(tree.Node, Int)] = {
+  var out: List[tree.Node] = []
+  var exp: List[Int] = []
+  var far: List[Int] = far_cell()
+  let o = parse_rule(c, num, out, exp, far, fresh(false), item, pos)
+  if o.ok and list.len(out) == 1 then (match list.pop(out) { some(n) => some((n, o.pos)), none => none }) else none
+}
+
 // How much of the tree the parser had to give up on.
 // The number a recovered range answers to, for a reader that wants to count or
 // exclude them without knowing how the engine spells it.
