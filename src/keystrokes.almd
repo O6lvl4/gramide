@@ -18,6 +18,7 @@ import fs
 fn lcg(state: Int) -> Int = (state * 1103515245 + 12345) % 2147483648
 
 fn letter(b: Int) -> Bool = (b >= 97 and b <= 122) or (b >= 65 and b <= 90) or b == 95
+fn digit(b: Int) -> Bool = b >= 48 and b <= 57
 
 fn edit_position(text: Bytes, from: Int) -> Int = {
   let len = bytes.len(text)
@@ -29,7 +30,8 @@ fn edit_position(text: Bytes, from: Int) -> Int = {
       while p < len and not letter(bytes.get_or(text, p, -1)) { p = p + 1 }
       let s = p
       while p < len and letter(bytes.get_or(text, p, -1)) { p = p + 1 }
-      if p - s >= 13 then found = s + 6 else ()
+      // not the letters of a number (`0xFFFFFFFFFFFFFFFFn`)
+      if p - s >= 13 and not digit(bytes.get_or(text, s - 1, -1)) then found = s + 6 else ()
     }
     pass = pass + 1
   }
@@ -49,7 +51,7 @@ fn render(r: Report) -> String = {
     + ",\"median_us\":" + us(median(inc)) + ",\"p90_us\":" + us(percentile(inc, 90)) + ",\"max_us\":" + us(list.last(inc) ?? 0)
     + ",\"fallbacks\":" + int.to_string(r.fallbacks) + ",\"mismatches\":" + int.to_string(r.mismatches) + ",\"initial_mismatch\":" + (if r.initial_mismatch then "true" else "false")
     + ",\"fallback_reasons\":{\"no_lex\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_LEX)) + ",\"no_head\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_HEAD))
-    + ",\"no_parse\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_PARSE)) + ",\"no_site\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_SITE)) + ",\"root_own\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.ROOT_OWN)) + "}"
+    + ",\"no_parse\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_PARSE)) + ",\"no_site\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_SITE)) + ",\"root_own\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.ROOT_OWN)) + ",\"error_near\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.ERROR_NEAR)) + "}"
     + ",\"whole_parse_samples\":" + int.to_string(list.len(whole)) + ",\"whole_parse_median_us\":" + us(median(whole)) + "}"
 }
 
