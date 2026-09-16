@@ -389,10 +389,15 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   var pos = 0
   var fine = true
   while fine and pos < eof_index {
-    match parser.parse_item(c, u.child_site, num, pos) {
-      some((n, at)) => if at > pos then { list.push(nodes, n); pos = at } else { fine = false },
-      none => { fine = false },
-    }
+    // separators an item rule leaves behind (a grammar whose file rule reads
+    // the line ends between items) go with the item before, as `build` cuts them
+    pos = own_after(toks, slice, pos, eof_index)
+    if pos < eof_index then {
+      match parser.parse_item(c, u.child_site, num, pos) {
+        some((n, at)) => if at > pos then { list.push(nodes, n); pos = at } else { fine = false },
+        none => { fine = false },
+      }
+    } else ()
   }
   // no tokens at all is a window whose items were deleted; tokens that no
   // item took are a failure
