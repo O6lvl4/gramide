@@ -13,6 +13,7 @@ import self.parser
 import self.lang
 import self.incremental
 import datetime
+import fs
 
 fn lcg(state: Int) -> Int = (state * 1103515245 + 12345) % 2147483648
 
@@ -50,7 +51,7 @@ fn render(r: Report) -> String = {
     + ",\"whole_parse_samples\":" + int.to_string(list.len(whole)) + ",\"whole_parse_median_us\":" + us(median(whole)) + "}"
 }
 
-effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_every: Int) -> Result[String, String] = {
+effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_every: Int, dump: String) -> Result[String, String] = {
   let scan = l.tokenize
   let c = l.grammar
   var source = source0
@@ -89,5 +90,6 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
     } else ()
     i = i + 1
   }
+  if dump != "" then { let _ = fs.write_text(dump, bytes.to_string_lossy(source)) } else ()
   ok(render(report))
 }

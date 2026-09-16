@@ -240,7 +240,7 @@ effect fn run_reparse_bench(packages: List[package_api.Definition], argv: List[S
   let verify = int.parse(option_after(argv, "--verify") ?? "50") ?? 50
   let l = lang.language_of(packages, path)!
   let src = read(path)!
-  println(keystrokes.run(l, bytes.from_string(src), edits, seed, verify)!)
+  println(keystrokes.run(l, bytes.from_string(src), edits, seed, verify, option_after(argv, "--dump") ?? "")!)
   ok(())
 }
 
