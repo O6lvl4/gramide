@@ -688,3 +688,59 @@ test "an edit that breaks an item falls back, and the document is untouched" {
   assert(same(materialize(doc), whole(c, TEXT)))
 }
 
+
+// ── the same over a language whose file rule reads `sep item` after its first
+// item, from a scanner that closes its input with an empty separator ──
+fn line_spec() -> lex.Spec = lex.Spec { ...spec(), newlines: lex.NL_SEMI }
+fn line_scan(source: String, recovering: Bool) -> Result[List[tree.Token], lex.LexError] = lex.tokenize_with(source, line_spec(), recovering)
+fn line_grammar() -> parser.Grammar = {
+  let sep = parser.rep1(parser.tok("newline"))
+  parser.grammar("source_file", [
+    ("source_file", parser.wrap("source_file", parser.seq([parser.opt(sep),
+      parser.opt(parser.seq([parser.recover_all(parser.r("item")), parser.rep(parser.recover_all(parser.seq([sep, parser.r("item")])))])), parser.opt(sep)]))),
+    ("item", parser.wrap("item", parser.seq([
+      parser.lit("fn"), parser.field("name", parser.tok("identifier")), parser.lit("("), parser.lit(")"), parser.r("block")
+    ]))),
+    ("block", parser.wrap("block", parser.seq([parser.lit("{"), parser.opt(sep),
+      parser.opt(parser.seq([parser.recover(parser.r("stmt")), parser.rep(parser.recover(parser.seq([sep, parser.r("stmt")])))])), parser.opt(sep), parser.lit("}")]))),
+    ("stmt", parser.alt([
+      parser.wrap("assign", parser.seq([parser.tok("identifier"), parser.lit("="), parser.alt([parser.tok("identifier"), parser.tok("integer")])])),
+      parser.wrap("call", parser.seq([parser.tok("identifier"), parser.lit("("), parser.lit(")")])),
+      parser.r("block"),
+    ])),
+  ])
+}
+let LINES = "fn a() {\n  x = 1\n  y()\n}\nfn b() {\n  p = q\n  {\n    r()\n    s = 2\n  }\n}\n\nfn c() { }\n"
+fn line_whole(c: parser.Compiled, text: String) -> parser.Parsed = match line_scan(text, false) {
+  ok(toks) => match parser.parse_with(c, bytes.from_string(text), toks) { ok(p) => p, err(_) => parser.Parsed { root: tree.node(0, [], 0, 0), toks: [], names: c.names } },
+  err(_) => parser.Parsed { root: tree.node(0, [], 0, 0), toks: [], names: c.names },
+}
+fn line_at(needle: String) -> Int = string.index_of(LINES, needle) ?? -1
+fn line_edited(c: parser.Compiled, start: Int, old_end: Int, insert: String) -> (Bool, Bool, String) = {
+  let source = bytes.from_string(LINES)
+  var doc = from_parsed(line_whole(c, LINES), source, c)
+  let edit = Edit { start: start, old_end: old_end, new_end: start + bytes.len(bytes.from_string(insert)) }
+  let after = apply(source, edit, bytes.from_string(insert))
+  let ok_inc = reparse(doc, after, edit, (s, r) => line_scan(s, r), c)
+  let full = line_whole(c, bytes.to_string_lossy(after))
+  let got = materialize(doc)
+  (ok_inc, same(got, full), first_difference(got, full))
+}
+
+test "items after the first, read at a second site behind a separator, keep that site's stamp" {
+  let c = parser.compile(line_grammar())
+  let p = line_whole(c, LINES)
+  assert(list.len(p.toks) > 0, "the test text must parse")
+  let doc = from_parsed(p, bytes.from_string(LINES), c)
+  assert_eq(list.len(doc.root.kids), 3)
+  assert(doc.root.rest_site >= 0 and doc.root.rest_site != doc.root.child_site, "two sites at the top")
+  assert(same(materialize(doc), p), first_difference(materialize(doc), p))
+  // inside a statement, at the head of the second and third items, appending an item, inside a nested block
+  for case in [(line_at("y()"), line_at("y()") + 1, "yes"), (line_at("b()"), line_at("b()") + 1, "bb"), (line_at("c()"), line_at("c()") + 1, "cc"),
+               (bytes.len(bytes.from_string(LINES)), bytes.len(bytes.from_string(LINES)), "fn d() { }\n"), (line_at("2\n"), line_at("2\n") + 1, "22"),
+               (line_at("fn b"), line_at("fn c"), ""), (line_at("s = 2"), line_at("s = 2"), "t()\n    ")] {
+    let (inc, equal, why) = line_edited(c, case.0, case.1, case.2)
+    assert(inc, "not incremental at " + int.to_string(case.0))
+    assert(equal, why + " at " + int.to_string(case.0))
+  }
+}
