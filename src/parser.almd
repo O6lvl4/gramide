@@ -1477,8 +1477,13 @@ fn body_of(c: Compiled, site: Int) -> Int = match list.get(c.ops, site) { some(o
 fn reads_after_separator(c: Compiled, site: Int, first: Int) -> Bool = {
   let body = match list.get(c.ops, body_of(c, site)) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
   let target = body_of(c, first)
-  body.kind == K_SEQ and body.b >= 1 and (list.last(child_ops(c, body)) ?? -1) == target
+  body.kind == K_SEQ and body.b >= 1 and same_body(c, list.last(child_ops(c, body)) ?? -1, target)
 }
+// the same op, or two references to the same rule
+fn same_body(c: Compiled, x: Int, y: Int) -> Bool = x == y or (match (list.get(c.ops, x), list.get(c.ops, y)) {
+  (some(p), some(q)) => p.kind == K_REF and q.kind == K_REF and p.a == q.a,
+  _ => false,
+})
 // The recover site, of the same kind as `first`, that reads `first`'s items
 // after a separator; `first` itself when there is none.
 fn sibling_site(c: Compiled, first: Int) -> Int = {
