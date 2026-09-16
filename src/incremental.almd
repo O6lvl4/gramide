@@ -229,6 +229,12 @@ fn materialize(doc: Document) -> parser.Parsed = {
 let DONE = 0       // the unit now describes the edited text
 let FALLBACK = 1   // parse the whole file
 let ME = 2         // the edit is in this unit's own tokens: re-read it at the parent's level
+// why a window could not be re-read, for a benchmark's tally; all mean FALLBACK
+let NO_LEX = 11
+let NO_HEAD = 12
+let NO_PARSE = 13
+let NO_SITE = 14
+let ROOT_OWN = 15
 
 // The bases of every child, from the unit's start.
 fn kid_bases(u: Item, base: Pos) -> List[Pos] = {
@@ -347,10 +353,11 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   } else { head_kind = list.get(u.kid_heads, j + 1) ?? -1; head_len = list.get(u.kid_head_lens, j + 1) ?? 0 }
   let at_eof = head_kind == tree.T_EOF
   let stop = if at_eof then bytes.len(source) else new_end + head_len
-  guard stop <= bytes.len(source) and new_end >= base.byte else FALLBACK
+  guard u.child_site >= 0 else NO_SITE
+  guard stop <= bytes.len(source) and new_end >= base.byte else NO_HEAD
   let slice = bytes.slice(source, base.byte, stop)
   var toks = match tokenize(bytes.to_string_lossy(slice), false) { ok(t) => t, err(_) => ([]: List[tree.Token]) }
-  guard list.len(toks) >= 2 or (list.len(toks) == 1 and at_eof) else FALLBACK
+  guard list.len(toks) >= 2 or (list.len(toks) == 1 and at_eof) else NO_LEX
   let eof = list.pop(toks) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 1, col: 1 }
   var head_ok = true
   var head = eof
@@ -358,7 +365,7 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
     head = list.pop(toks) ?? eof
     head_ok = head.kind == head_kind and head.start == new_end - base.byte and head.end - head.start == head_len
   }
-  guard head_ok else FALLBACK
+  guard head_ok else NO_HEAD
   list.push(toks, eof)
   let num = parser.number(c, slice, toks)
   let eof_index = list.len(toks) - 1
@@ -373,7 +380,7 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   }
   // no tokens at all is a window whose items were deleted; tokens that no
   // item took are a failure
-  guard fine and pos == eof_index and (eof_index == 0 or not list.is_empty(nodes)) else FALLBACK
+  guard fine and pos == eof_index and (eof_index == 0 or not list.is_empty(nodes)) else NO_PARSE
   // the token at `eof_index` is where the window ends: the head that follows
   // it, or the file's EOF; either is excluded from the items and gives their end
   if at_eof then () else { let _ = list.pop(toks); list.push(toks, head) }
@@ -440,7 +447,7 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
         DONE
       }
       else if status == ME then window(u, i, i, bases, delta, source, tokenize, c)
-      else FALLBACK
+      else status
     }
     else {
       // an edit at a child's first byte can join it to the child before
@@ -460,7 +467,12 @@ fn window(mut u: Item, i: Int, j: Int, bases: List[Pos], delta: Int, source: Byt
 // when the document now describes `source`; false when the caller must
 // parse the whole file (the document is then unchanged).
 fn reparse(mut doc: Document, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Bool =
-  reparse_in(doc.root, Pos { byte: 0, line: 1, col: 1 }, source, edit, tokenize, c) == DONE
+  reparse_status(doc, source, edit, tokenize, c) == DONE
+// DONE, or why not: ME at the root means the edit fell in the file's own tokens
+fn reparse_status(mut doc: Document, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
+  let status = reparse_in(doc.root, Pos { byte: 0, line: 1, col: 1 }, source, edit, tokenize, c)
+  if status == ME then ROOT_OWN else status
+}
 
 // ── the same answer? ─────────────────────────────────────────────────────
 fn same_node(a: tree.Node, b: tree.Node) -> Bool =
@@ -470,7 +482,8 @@ fn same_token(a: tree.Token, b: tree.Token) -> Bool = a.kind == b.kind and a.sta
 fn same(a: parser.Parsed, b: parser.Parsed) -> Bool =
   list.len(a.toks) == list.len(b.toks) and list.all(list.zip(a.toks, b.toks), (p) => same_token(p.0, p.1)) and same_node(a.root, b.root)
 
-fn first_difference(a: parser.Parsed, b: parser.Parsed) -> String = {
+fn first_difference(a: parser.Parsed, b: parser.Parsed) -> String = first_difference_named(a, b, a.names)
+fn first_difference_named(a: parser.Parsed, b: parser.Parsed, names: nametable.Names) -> String = {
   var i = 0
   var found = ""
   while found == "" and i < int.max(list.len(a.toks), list.len(b.toks)) {
@@ -480,17 +493,17 @@ fn first_difference(a: parser.Parsed, b: parser.Parsed) -> String = {
     }
     i = i + 1
   }
-  if found == "" and not same_node(a.root, b.root) then "tree differs: " + node_difference(a.root, b.root, "") else found
+  if found == "" and not same_node(a.root, b.root) then "tree differs: " + node_difference(a.root, b.root, "", names) else found
 }
-fn node_difference(a: tree.Node, b: tree.Node, path: String) -> String =
+fn node_difference(a: tree.Node, b: tree.Node, path: String, names: nametable.Names) -> String =
   if a.kind != b.kind or a.field != b.field or a.start != b.start or a.end != b.end or list.len(a.kids) != list.len(b.kids) then
-    path + " kind " + int.to_string(a.kind) + "/" + int.to_string(b.kind) + " field " + int.to_string(a.field) + "/" + int.to_string(b.field)
+    path + " " + nametable.name_at(names, a.kind) + "/" + nametable.name_at(names, b.kind) + " field " + int.to_string(a.field) + "/" + int.to_string(b.field)
     + " " + int.to_string(a.start) + "-" + int.to_string(a.end) + " vs " + int.to_string(b.start) + "-" + int.to_string(b.end) + " kids " + int.to_string(list.len(a.kids)) + "/" + int.to_string(list.len(b.kids))
   else {
     var out = ""
     var k = 0
     while out == "" and k < list.len(a.kids) {
-      out = node_difference(list.get(a.kids, k) ?? tree.node(0, [], 0, 0), list.get(b.kids, k) ?? tree.node(0, [], 0, 0), path + "/" + int.to_string(k))
+      out = node_difference(list.get(a.kids, k) ?? tree.node(0, [], 0, 0), list.get(b.kids, k) ?? tree.node(0, [], 0, 0), path + "/" + int.to_string(k), names)
       k = k + 1
     }
     out

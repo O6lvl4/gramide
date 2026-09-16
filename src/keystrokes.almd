@@ -40,14 +40,16 @@ fn median(sorted: List[Int]) -> Int = list.get(sorted, list.len(sorted) / 2) ?? 
 fn percentile(sorted: List[Int], p: Int) -> Int = list.get(sorted, (list.len(sorted) * p) / 100) ?? 0
 fn us(ns: Int) -> String = int.to_string(ns / 1000) + "." + int.to_string((ns % 1000) / 100)
 
-type Report = { edits: Int, fallbacks: Int, mismatches: Int, incremental_ns: List[Int], whole_ns: List[Int] }
+type Report = { edits: Int, fallbacks: Int, mismatches: Int, incremental_ns: List[Int], whole_ns: List[Int], reasons: List[Int], initial_mismatch: Bool }
 
 fn render(r: Report) -> String = {
   let inc = list.sort(r.incremental_ns)
   let whole = list.sort(r.whole_ns)
   "{\"tool\":\"gramide\",\"edits\":" + int.to_string(r.edits)
     + ",\"median_us\":" + us(median(inc)) + ",\"p90_us\":" + us(percentile(inc, 90)) + ",\"max_us\":" + us(list.last(inc) ?? 0)
-    + ",\"fallbacks\":" + int.to_string(r.fallbacks) + ",\"mismatches\":" + int.to_string(r.mismatches)
+    + ",\"fallbacks\":" + int.to_string(r.fallbacks) + ",\"mismatches\":" + int.to_string(r.mismatches) + ",\"initial_mismatch\":" + (if r.initial_mismatch then "true" else "false")
+    + ",\"fallback_reasons\":{\"no_lex\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_LEX)) + ",\"no_head\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_HEAD))
+    + ",\"no_parse\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_PARSE)) + ",\"no_site\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_SITE)) + ",\"root_own\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.ROOT_OWN)) + "}"
     + ",\"whole_parse_samples\":" + int.to_string(list.len(whole)) + ",\"whole_parse_median_us\":" + us(median(whole)) + "}"
 }
 
@@ -59,7 +61,11 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
     |> result.map_err((f) => parser.format_failure(f))!
   var doc = incremental.from_parsed(first, source, c)
   var state = seed
-  var report = Report { edits: edits, fallbacks: 0, mismatches: 0, incremental_ns: [], whole_ns: [] }
+  var report = Report { edits: edits, fallbacks: 0, mismatches: 0, incremental_ns: [], whole_ns: [], reasons: [], initial_mismatch: false }
+  if verify_every > 0 and not incremental.same(incremental.materialize(doc), first) then {
+    report.initial_mismatch = true
+    eprintln("before any edit: " + incremental.first_difference(incremental.materialize(doc), first))
+  } else ()
   var i = 0
   while i < edits {
     state = lcg(state)
@@ -70,9 +76,11 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
     let insert = if i % 2 == 0 then typed else bytes.new(0)
     source = incremental.apply(source, edit, insert)
     let t0 = datetime.monotonic_ns()
-    let fine = incremental.reparse(doc, source, edit, scan, c)
+    let status = incremental.reparse_status(doc, source, edit, scan, c)
+    let fine = status == incremental.DONE
     if not fine then {
       report.fallbacks = report.fallbacks + 1
+      list.push(report.reasons, status)
       let again = parser.parse_with(c, source, scan(bytes.to_string_lossy(source), false) |> result.map_err((e) => "lex error after edit")!) |> result.map_err((f) => "parse error after edit " + int.to_string(i) + ": " + parser.format_failure(f))!
       doc = incremental.from_parsed(again, source, c)
     } else ()
