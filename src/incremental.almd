@@ -390,7 +390,7 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   guard not list.contains(u.kid_kinds, parser.error_kind(c)) else ERROR_NEAR
   guard stop <= bytes.len(source) and new_end >= base.byte else { list.push(u.trace, "window out of range: " + int.to_string(base.byte) + ".." + int.to_string(new_end) + "+" + int.to_string(head_len) + " of " + int.to_string(bytes.len(source))); NO_HEAD }
   let slice = bytes.slice(source, base.byte, stop)
-  var toks = match tokenize(bytes.to_string_lossy(slice), false) { ok(t) => without_leading_empty(t), err(_) => ([]: List[tree.Token]) }
+  var toks = match lex_in_place(tokenize, source, base.byte, stop) { some(t) => t, none => ([]: List[tree.Token]) }
   guard list.len(toks) >= 2 or (list.len(toks) == 1 and at_eof) else NO_LEX
   let eof = list.pop(toks) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 1, col: 1 }
   var head_ok = true
@@ -497,7 +497,7 @@ fn own_edit(mut u: Item, base: Pos, edit: Edit, source: Bytes, tokenize: (String
   // lie inside the run (or the run must end the file), so that what it
   // swallows is seen here
   guard start.byte + size == bytes.len(source) or bytes.index_of(bytes.slice(slice, edit.new_end - start.byte, size), bytes.from_list([10])) != none else ME
-  let fresh = match tokenize(bytes.to_string_lossy(slice), false) { ok(t) => same_tokens(piece.toks, t, retyped, delta), err(_) => none }
+  let fresh = match lex_in_place(tokenize, source, start.byte, start.byte + size) { some(t) => same_tokens(piece.toks, t, retyped, delta), none => none }
   match fresh {
     none => ME,
     some(toks) => {
@@ -545,7 +545,7 @@ fn same_tokens(old: List[tree.Token], fresh: List[tree.Token], retyped: Int, del
   // the file's last run carries the EOF token: compared without it, kept with the fresh one
   let old_eof = match list.last(old) { some(t) => t.kind == tree.T_EOF, none => false }
   let count = list.len(old) - (if old_eof then 1 else 0)
-  var toks = without_leading_empty(fresh)
+  var toks = fresh
   let eof = list.pop(toks) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 1, col: 1 }
   while list.len(toks) > count and (match list.last(toks) { some(t) => t.start == t.end, none => false }) { let _ = list.pop(toks) }
   if list.len(toks) != count then none
@@ -554,6 +554,23 @@ fn same_tokens(old: List[tree.Token], fresh: List[tree.Token], retyped: Int, del
     some(toks)
   }
   else none
+}
+// `source[from, to)` lexed as the line it stands on: the blank space before
+// it on its line goes in front, so that a scanner reading layout (Python's
+// indentation) sees the slice at its depth, and the tokens come back with
+// offsets from `from`. A slice that starts after code on its line is lexed
+// as it is. None when the scanner refuses.
+fn lex_in_place(tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes, from: Int, to: Int) -> Option[List[tree.Token]] = {
+  var line_start = from
+  while line_start > 0 and bytes.get_or(source, line_start - 1, 10) != 10 { line_start = line_start - 1 }
+  var blank = true
+  var i = line_start
+  while blank and i < from { let b = bytes.get_or(source, i, 0); blank = b == 32 or b == 9; i = i + 1 }
+  let lead = if blank then from - line_start else 0
+  match tokenize(bytes.to_string_lossy(bytes.slice(source, from - lead, to)), false) {
+    err(_) => none,
+    ok(t) => some(without_leading_empty(if lead == 0 then t else list.map(list.filter(t, (x) => x.start >= lead), (x) => tree.Token { ...x, start: x.start - lead, end: x.end - lead, col: if x.line == 1 then x.col - lead else x.col }))),
+  }
 }
 // A slice lexed on its own may open with empty tokens that in the file
 // belong to what came before it (a layout scanner's `indent` for a line
