@@ -355,7 +355,7 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   let at_eof = head_kind == tree.T_EOF
   let stop = if at_eof then bytes.len(source) else new_end + head_len
   guard u.child_site >= 0 else NO_SITE
-  guard stop <= bytes.len(source) and new_end >= base.byte else NO_HEAD
+  guard stop <= bytes.len(source) and new_end >= base.byte else { list.push(u.trace, "window out of range: " + int.to_string(base.byte) + ".." + int.to_string(new_end) + "+" + int.to_string(head_len) + " of " + int.to_string(bytes.len(source))); NO_HEAD }
   let slice = bytes.slice(source, base.byte, stop)
   var toks = match tokenize(bytes.to_string_lossy(slice), false) { ok(t) => t, err(_) => ([]: List[tree.Token]) }
   guard list.len(toks) >= 2 or (list.len(toks) == 1 and at_eof) else NO_LEX
@@ -366,7 +366,10 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
     head = list.pop(toks) ?? eof
     head_ok = head.kind == head_kind and head.start == new_end - base.byte and head.end - head.start == head_len
   }
-  guard head_ok else NO_HEAD
+  guard head_ok else {
+    list.push(u.trace, "head expected kind " + int.to_string(head_kind) + " len " + int.to_string(head_len) + " at " + int.to_string(new_end - base.byte) + ", got kind " + int.to_string(head.kind) + " " + int.to_string(head.start) + "-" + int.to_string(head.end) + " in: …" + string.take_end(bytes.to_string_lossy(slice), 120))
+    NO_HEAD
+  }
   list.push(toks, eof)
   let num = parser.number(c, slice, toks)
   let eof_index = list.len(toks) - 1
