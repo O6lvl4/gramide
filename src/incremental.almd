@@ -351,9 +351,9 @@ fn renumber(n: tree.Node, from: Int, to: Int, count: Int, slot_from: Int, slot_d
 // its first item at one recover site and `sep item` at another: the first
 // item is stamped with `first_stamp`, the rest with `rest_stamp`, as the
 // whole parse would. The flag is false when an item could not be read.
-fn read_items(c: parser.Compiled, site: Int, first_stamp: Int, rest_stamp: Int, num: List[Int], toks: List[tree.Token], slice: Bytes, eof_index: Int) -> (List[tree.Node], Int, Bool) = {
+fn read_items(c: parser.Compiled, site: Int, first_stamp: Int, rest_stamp: Int, num: List[Int], toks: List[tree.Token], slice: Bytes, from: Int, eof_index: Int) -> (List[tree.Node], Int, Bool) = {
   var nodes: List[tree.Node] = []
-  var pos = 0
+  var pos = from
   var fine = true
   while fine and pos < eof_index {
     pos = own_after(toks, slice, pos, eof_index)
@@ -373,7 +373,7 @@ fn read_items(c: parser.Compiled, site: Int, first_stamp: Int, rest_stamp: Int, 
 // Re-read children `i..j` of `u` from `source`, whose bytes for them now
 // run from `base.byte` to `new_end`; `next` is the byte where the token
 // after them starts, with its kind and length.
-fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, from_start: Bool) -> Int = {
+fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, from_start: Bool, skip: Int) -> Int = {
   // the token after the window: the first of this unit's own that follow
   // (`}`, `else`, the EOF), or the next child's head when none do
   var head_kind = -1
@@ -417,7 +417,11 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   let old_site = match list.get(u.kids, i) { some(k) => parser.site_of(k.node), none => u.child_site }
   let bare = parser.first_site_of(c, old_site)
   let rest = parser.rest_site_of(c, bare)
-  let (nodes, pos, fine) = read_items(c, bare, old_site, rest, num, toks, slice, eof_index)
+  // a window from the unit's start re-lexes the unit's own tokens before
+  // its first child (a file's `package` and imports): the edit did not touch
+  // them, so they must come out as they were, and the items start after them
+  guard prelude_same(toks, u, skip) else { list.push(u.trace, "the tokens before the first item changed"); NO_PARSE }
+  let (nodes, pos, fine) = read_items(c, bare, old_site, rest, num, toks, slice, skip, eof_index)
   // no tokens at all is a window whose items were deleted; tokens that no
   // item took are a failure
   guard fine and pos == eof_index and (eof_index == 0 or not list.is_empty(nodes)) else {
@@ -504,7 +508,7 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
   if i < 0 or j < 0 or j < i then ME
   else {
     let head_edit = edit.start == (list.get(bases, i) ?? base).byte
-    if from_start then window_from(u, base, 0, j, bases, delta, source, tokenize, c)
+    if from_start then window_from(u, base, 0, j, bases, delta, source, tokenize, c, prelude_untouched(u, base, edit))
     else if i == j and not head_edit then {
       // inside child i: let it try first
       var aside: List[Item] = []
@@ -534,21 +538,44 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
       // when nothing of this unit's own stands between them
       let adjacent = i > 0 and (match list.get(u.pieces, i) { some(piece) => list.is_empty(piece.toks), none => false })
       let from = if head_edit and adjacent then i - 1 else i
-      if from_start then window_from(u, base, from, j, bases, delta, source, tokenize, c) else window(u, from, j, bases, delta, source, tokenize, c)
+      if from_start then window_from(u, base, from, j, bases, delta, source, tokenize, c, prelude_untouched(u, base, edit)) else window(u, from, j, bases, delta, source, tokenize, c)
     }
   }
 }
 fn window(mut u: Item, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
   let base = list.get(bases, i) ?? Pos { byte: 0, line: 1, col: 1 }
   let end = (list.get(bases, j) ?? base).byte + (list.get(u.kid_sizes, j) ?? 0) + delta
-  let status = rewindow(u, i, j, base, end, source, tokenize, c, false)
+  let status = rewindow(u, i, j, base, end, source, tokenize, c, false, 0)
   if status == DONE then { let _ = retotal(u, delta); DONE } else status
+}
+// How many of the unit's own tokens before its first child an edit left
+// alone: all of them when it touches none (it fell in a comment or in
+// blank space between them), else none — a changed token is a changed
+// parse, and the window then has to read them, which only a unit without
+// any can.
+fn prelude_untouched(u: Item, base: Pos, edit: Edit) -> Int = {
+  let piece = list.first(u.pieces) ?? Piece { toks: [], size: 0, lines: 0, tail: 0 }
+  if list.all(piece.toks, (t) => edit.old_end < base.byte + t.start or edit.start > base.byte + t.end) then list.len(piece.toks) else 0
+}
+// the first `skip` tokens of a re-lexed window, kind for kind and length for length, are the unit's own as they were
+fn prelude_same(toks: List[tree.Token], u: Item, skip: Int) -> Bool = {
+  let piece = list.first(u.pieces) ?? Piece { toks: [], size: 0, lines: 0, tail: 0 }
+  var k = 0
+  var same_so_far = skip <= list.len(toks)
+  while same_so_far and k < skip {
+    match (list.get(toks, k), list.get(piece.toks, k)) {
+      (some(a), some(b)) => { same_so_far = a.kind == b.kind and a.end - a.start == b.end - b.start },
+      _ => { same_so_far = false },
+    }
+    k = k + 1
+  }
+  same_so_far
 }
 // the same, with the window starting where the unit itself starts, so that
 // the unit's first piece is read again with the first child
-fn window_from(mut u: Item, base: Pos, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
+fn window_from(mut u: Item, base: Pos, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, skip: Int) -> Int = {
   let end = (list.get(bases, j) ?? base).byte + (list.get(u.kid_sizes, j) ?? 0) + delta
-  let status = rewindow(u, i, j, base, end, source, tokenize, c, true)
+  let status = rewindow(u, i, j, base, end, source, tokenize, c, true, skip)
   if status == DONE then { let _ = retotal(u, delta); DONE } else status
 }
 
@@ -705,12 +732,12 @@ test "an edit that breaks an item falls back, and the document is untouched" {
 
 // ── the same over a language whose file rule reads `sep item` after its first
 // item, from a scanner that closes its input with an empty separator ──
-fn line_spec() -> lex.Spec = lex.Spec { ...spec(), keywords: ["fn", "if", "else"], newlines: lex.NL_SEMI }
+fn line_spec() -> lex.Spec = lex.Spec { ...spec(), keywords: ["fn", "if", "else", "package"], newlines: lex.NL_SEMI }
 fn line_scan(source: String, recovering: Bool) -> Result[List[tree.Token], lex.LexError] = lex.tokenize_with(source, line_spec(), recovering)
 fn line_grammar() -> parser.Grammar = {
   let sep = parser.rep1(parser.tok("newline"))
   parser.grammar("source_file", [
-    ("source_file", parser.wrap("source_file", parser.seq([parser.opt(sep),
+    ("source_file", parser.wrap("source_file", parser.seq([parser.opt(sep), parser.opt(parser.wrap("package", parser.seq([parser.lit("package"), parser.tok("identifier"), sep]))),
       parser.opt(parser.seq([parser.recover_all(parser.r("item")), parser.rep(parser.recover_all(parser.seq([sep, parser.r("item")])))])), parser.opt(sep)]))),
     ("item", parser.wrap("item", parser.seq([
       parser.lit("fn"), parser.field("name", parser.tok("identifier")), parser.lit("("), parser.lit(")"), parser.r("block")
@@ -725,7 +752,7 @@ fn line_grammar() -> parser.Grammar = {
     ])),
   ])
 }
-let LINES = "fn a() {\n  x = 1\n  y()\n}\nfn b() {\n  p = q\n  {\n    r()\n    s = 2\n  }\n  if p {\n    u()\n  } else {\n    v = 3\n    w()\n  }\n}\n\nfn c() { }\n"
+let LINES = "# a comment before the package clause\npackage m\n\nfn a() {\n  x = 1\n  y()\n}\nfn b() {\n  p = q\n  {\n    r()\n    s = 2\n  }\n  if p {\n    u()\n  } else {\n    v = 3\n    w()\n  }\n}\n\nfn c() { }\n"
 fn line_whole(c: parser.Compiled, text: String) -> parser.Parsed = match line_scan(text, false) {
   ok(toks) => match parser.parse_with(c, bytes.from_string(text), toks) { ok(p) => p, err(_) => parser.Parsed { root: tree.node(0, [], 0, 0), toks: [], names: c.names } },
   err(_) => parser.Parsed { root: tree.node(0, [], 0, 0), toks: [], names: c.names },
@@ -754,9 +781,11 @@ test "items after the first, read at a second site behind a separator, keep that
                (bytes.len(bytes.from_string(LINES)), bytes.len(bytes.from_string(LINES)), "fn d() { }\n"), (line_at("2\n"), line_at("2\n") + 1, "22"),
                (line_at("fn b"), line_at("fn c"), ""), (line_at("s = 2"), line_at("s = 2"), "t()\n    "),
                // the first item removed, one put before it, the first statement of a block removed, one put before it
-               (0, line_at("fn b"), ""), (0, 0, "fn z() { }\n"), (line_at("x = 1"), line_at("y()"), ""), (line_at("x = 1"), line_at("x = 1"), "w()\n  "),
+               (line_at("fn a"), line_at("fn b"), ""), (line_at("fn a"), line_at("fn a"), "fn z() { }\n"), (line_at("x = 1"), line_at("y()"), ""), (line_at("x = 1"), line_at("x = 1"), "w()\n  "),
                // an `if` item holds two lists: inside the first statement of the second, that statement removed, one put before it, its last removed
-               (line_at("v = 3") + 4, line_at("v = 3") + 5, "33"), (line_at("v = 3"), line_at("w()"), ""), (line_at("v = 3"), line_at("v = 3"), "vv()\n    "), (line_at("w()"), line_at("w()") + 4, "")] {
+               (line_at("v = 3") + 4, line_at("v = 3") + 5, "33"), (line_at("v = 3"), line_at("w()"), ""), (line_at("v = 3"), line_at("v = 3"), "vv()\n    "), (line_at("w()"), line_at("w()") + 4, ""),
+               // in the comment before the package clause, and in the blank line after it: the file's own tokens stay, the first item is re-read
+               (line_at("comment") + 3, line_at("comment") + 3, "x"), (line_at("\n\nfn a") + 1, line_at("\n\nfn a") + 1, "\n")] {
     let (inc, equal, why) = line_edited(c, case.0, case.1, case.2)
     assert(inc, "not incremental at " + int.to_string(case.0))
     assert(equal, why + " at " + int.to_string(case.0))
