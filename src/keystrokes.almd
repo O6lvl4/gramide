@@ -81,6 +81,8 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
     if not fine then {
       report.fallbacks = report.fallbacks + 1
       list.push(report.reasons, status)
+      if list.len(report.reasons) <= 5 then { for t in doc.trace { eprintln("edit " + int.to_string(i) + ": " + t) } } else ()
+      list.clear(doc.trace)
       let again = parser.parse_with(c, source, scan(bytes.to_string_lossy(source), false) |> result.map_err((e) => "lex error after edit")!) |> result.map_err((f) => "parse error after edit " + int.to_string(i) + ": " + parser.format_failure(f))!
       doc = incremental.from_parsed(again, source, c)
     } else ()

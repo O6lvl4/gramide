@@ -41,15 +41,15 @@ type Piece = { toks: List[tree.Token], size: Int, lines: Int, tail: Int }
 // children's totals stand beside them so the parent finds its way through
 // integers and never reads a child.
 type Item = {
-  site: Int, child_site: Int, node: tree.Node,
+  site: Int, child_site: Int, node: tree.Node, trace: List[String],
   pieces: List[Piece], kids: List[Item],
   kid_sizes: List[Int], kid_lines: List[Int], kid_tails: List[Int], kid_toks: List[Int], kid_heads: List[Int], kid_head_lens: List[Int],
   size: Int, lines: Int, tail: Int, toks: Int,
 }
 
-type Document = { root: Item, names: nametable.Names }
+type Document = { root: Item, names: nametable.Names, trace: List[String] }
 
-fn empty_unit() -> Item = Item { site: -1, child_site: -1, node: tree.node(0, [], 0, 0), pieces: [], kids: [], kid_sizes: [], kid_lines: [], kid_tails: [], kid_toks: [], kid_heads: [], kid_head_lens: [], size: 0, lines: 0, tail: 0, toks: 0 }
+fn empty_unit() -> Item = Item { site: -1, child_site: -1, node: tree.node(0, [], 0, 0), trace: [], pieces: [], kids: [], kid_sizes: [], kid_lines: [], kid_tails: [], kid_toks: [], kid_heads: [], kid_head_lens: [], size: 0, lines: 0, tail: 0, toks: 0 }
 
 fn rebase_token(t: tree.Token, byte: Int, line: Int, col: Int) -> tree.Token =
   tree.Token { kind: t.kind, start: t.start - byte, end: t.end - byte, line: t.line - line + 1, col: if t.line == line then t.col - col + 1 else t.col }
@@ -172,7 +172,7 @@ fn cut(n: tree.Node, t_begin: Int, c_start: List[Int], c_end: List[Int], depth: 
 // tokens are what lies before the first item and the EOF after the last.
 fn from_parsed(p: parser.Parsed, source: Bytes, c: parser.Compiled) -> Document = {
   let root = build(p.root, p.toks, source, 0, list.len(p.toks), Pos { byte: 0, line: 1, col: 1 }, -1)
-  Document { root: root, names: p.names }
+  Document { root: root, names: p.names, trace: [] }
 }
 
 // ── the whole file again ─────────────────────────────────────────────────
@@ -380,7 +380,7 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   }
   // no tokens at all is a window whose items were deleted; tokens that no
   // item took are a failure
-  guard fine and pos == eof_index and (eof_index == 0 or not list.is_empty(nodes)) else NO_PARSE
+  guard fine and pos == eof_index and (eof_index == 0 or not list.is_empty(nodes)) else { list.push(u.trace, "no parse at token " + int.to_string(pos) + " of " + int.to_string(eof_index) + " in: " + string.take(bytes.to_string_lossy(slice), 160)); NO_PARSE }
   // the token at `eof_index` is where the window ends: the head that follows
   // it, or the file's EOF; either is excluded from the items and gives their end
   if at_eof then () else { let _ = list.pop(toks); list.push(toks, head) }
@@ -436,6 +436,7 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
       let kid_lines = kid.lines
       let kid_tail = kid.tail
       let kid_toks = kid.toks
+      while list.len(kid.trace) > 0 { match list.pop(kid.trace) { some(t) => list.push(u.trace, t), none => () } }
       list.push(u.kids, kid)
       while list.len(aside) > 0 { match list.pop(aside) { some(x) => list.push(u.kids, x), none => () } }
       if status == DONE then {
@@ -471,6 +472,7 @@ fn reparse(mut doc: Document, source: Bytes, edit: Edit, tokenize: (String, Bool
 // DONE, or why not: ME at the root means the edit fell in the file's own tokens
 fn reparse_status(mut doc: Document, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
   let status = reparse_in(doc.root, Pos { byte: 0, line: 1, col: 1 }, source, edit, tokenize, c)
+  while list.len(doc.root.trace) > 0 { match list.pop(doc.root.trace) { some(t) => list.push(doc.trace, t), none => () } }
   if status == ME then ROOT_OWN else status
 }
 
@@ -499,6 +501,8 @@ fn node_difference(a: tree.Node, b: tree.Node, path: String, names: nametable.Na
   if a.kind != b.kind or a.field != b.field or a.start != b.start or a.end != b.end or list.len(a.kids) != list.len(b.kids) then
     path + " " + nametable.name_at(names, a.kind) + "/" + nametable.name_at(names, b.kind) + " field " + int.to_string(a.field) + "/" + int.to_string(b.field)
     + " " + int.to_string(a.start) + "-" + int.to_string(a.end) + " vs " + int.to_string(b.start) + "-" + int.to_string(b.end) + " kids " + int.to_string(list.len(a.kids)) + "/" + int.to_string(list.len(b.kids))
+    + " a:[" + list.join(list.map(a.kids, (k) => nametable.name_at(names, k.kind) + " " + int.to_string(k.start) + "-" + int.to_string(k.end)), ", ") + "]"
+    + " b:[" + list.join(list.map(b.kids, (k) => nametable.name_at(names, k.kind) + " " + int.to_string(k.start) + "-" + int.to_string(k.end)), ", ") + "]"
   else {
     var out = ""
     var k = 0
