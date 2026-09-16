@@ -19,7 +19,7 @@
 //   <name> map <dir> [--budget N] [--task TEXT]
 //                             a ranked map of a repository within N tokens (default 1024),
 //                             personalised toward what TEXT mentions
-//   <name> reparse <file> --edit START:OLD_END:NEW_END < new_text
+//   <name> reparse <file> --edit START:OLD_END:NEW_END --new <edited file>
 //                             the file's symbols after an edit, re-read incrementally from
 //                             the whole parse of the file (stderr says which it was)
 //   <name> reparse-bench <file> [--edits N] [--seed S] [--verify K] [--breaking]
@@ -54,7 +54,7 @@ type Program = { name: String, version: String, packages: List[package_api.Defin
 fn usage(p: Program) -> String = "usage: " + p.name + " languages\n       " + p.name + " version\n       "
   + p.name + " (parse | tokens | outline | symbols | symbols-recovered | tags) <file>\n       "
   + p.name + " (check | balance) <file>...\n       " + p.name + " map <dir> [--budget N] [--task TEXT]\n       "
-  + p.name + " reparse <file> --edit START:OLD_END:NEW_END < new_text\n       "
+  + p.name + " reparse <file> --edit START:OLD_END:NEW_END --new <edited file>\n       "
   + p.name + " reparse-bench <file> [--edits N] [--seed S] [--verify K] [--breaking]"
 
 // One line per component, so a bug report can say exactly what was linked.
@@ -261,7 +261,7 @@ effect fn run_reparse(packages: List[package_api.Definition], argv: List[String]
   guard edit.start >= 0 and edit.old_end >= edit.start and edit.new_end >= edit.start else err("--edit START:OLD_END:NEW_END")
   let l = lang.language_of(packages, path)!
   let before = read(path)!
-  let after = list.join(process.stdin_lines()!, "\n")
+  let after = read(option_after(argv, "--new") ?? "")!
   let scan = l.tokenize
   let c = l.grammar
   let old_source = bytes.from_string(before)

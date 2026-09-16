@@ -345,7 +345,7 @@ fn renumber(n: tree.Node, from: Int, to: Int, count: Int, slot_from: Int, slot_d
 // Re-read children `i..j` of `u` from `source`, whose bytes for them now
 // run from `base.byte` to `new_end`; `next` is the byte where the token
 // after them starts, with its kind and length.
-fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
+fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, from_start: Bool) -> Int = {
   // the token after the window: the first of this unit's own that follow
   // (`}`, `else`, the EOF), or the next child's head when none do
   var head_kind = -1
@@ -397,9 +397,20 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   var fresh = build(holder, toks, bytes.slice(slice, 0, new_end - base.byte), 0, eof_index, Pos { byte: 0, line: 1, col: 1 }, -1)
   let count = list.len(fresh.kids)
   let old_slot = slot_of(u, i)
-  u.node = renumber(u.node, i, j, count, old_slot, count - (j - i + 1))
+  // a window from the unit's start read the first piece again (i is 0)
+  let leading = if from_start then list.len((list.first(fresh.pieces) ?? Piece { toks: [], size: 0, lines: 0, tail: 0 }).toks) - list.len((list.first(u.pieces) ?? Piece { toks: [], size: 0, lines: 0, tail: 0 }).toks) else 0
+  u.node = renumber(u.node, i, j, count, old_slot, count - (j - i + 1) + leading)
+  if from_start then { let _ = replace_first_piece(u, fresh) } else ()
   let _ = splice(u, i, j, fresh)
   DONE
+}
+fn replace_first_piece(mut u: Item, fresh: Item) -> Unit = {
+  var aside: List[Piece] = []
+  while list.len(u.pieces) > 1 { match list.pop(u.pieces) { some(x) => list.push(aside, x), none => () } }
+  let _ = list.pop(u.pieces)
+  list.push(u.pieces, list.first(fresh.pieces) ?? Piece { toks: [], size: 0, lines: 0, tail: 0 })
+  while list.len(aside) > 0 { match list.pop(aside) { some(x) => list.push(u.pieces, x), none => () } }
+  ()
 }
 fn slot_of(u: Item, k: Int) -> Int = {
   var slot = 0
@@ -431,6 +442,17 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
     if j < 0 and edit.old_end > edit.start and edit.old_end == last_end then j = count - 1 else ()
   } else ()
   if edit.old_end == edit.start then j = i else ()
+  // at the file's level, what lies before the first item or after the last
+  // (a comment, blank lines) is read with that item: the window then starts
+  // at the file's start, or runs to its end
+  var from_start = false
+  if u.site < 0 and count > 0 then {
+    let first_base = (list.get(bases, 0) ?? base).byte
+    let last_end = (list.get(bases, count - 1) ?? base).byte + (list.get(u.kid_sizes, count - 1) ?? 0)
+    if i < 0 and edit.start < first_base then { i = 0; from_start = true; if j < 0 then j = 0 else () } else ()
+    if i < 0 and edit.start >= last_end then { i = count - 1; j = count - 1 } else ()
+    if j < 0 and edit.old_end > last_end then j = count - 1 else ()
+  } else ()
   if i < 0 or j < 0 or j < i then ME
   else {
     let head_edit = edit.start == (list.get(bases, i) ?? base).byte
@@ -463,14 +485,21 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
       // when nothing of this unit's own stands between them
       let adjacent = i > 0 and (match list.get(u.pieces, i) { some(piece) => list.is_empty(piece.toks), none => false })
       let from = if head_edit and adjacent then i - 1 else i
-      window(u, from, j, bases, delta, source, tokenize, c)
+      if from_start then window_from(u, base, from, j, bases, delta, source, tokenize, c) else window(u, from, j, bases, delta, source, tokenize, c)
     }
   }
 }
 fn window(mut u: Item, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
   let base = list.get(bases, i) ?? Pos { byte: 0, line: 1, col: 1 }
   let end = (list.get(bases, j) ?? base).byte + (list.get(u.kid_sizes, j) ?? 0) + delta
-  let status = rewindow(u, i, j, base, end, source, tokenize, c)
+  let status = rewindow(u, i, j, base, end, source, tokenize, c, false)
+  if status == DONE then { let _ = retotal(u, delta); DONE } else status
+}
+// the same, with the window starting where the unit itself starts, so that
+// the unit's first piece is read again with the first child
+fn window_from(mut u: Item, base: Pos, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
+  let end = (list.get(bases, j) ?? base).byte + (list.get(u.kid_sizes, j) ?? 0) + delta
+  let status = rewindow(u, i, j, base, end, source, tokenize, c, true)
   if status == DONE then { let _ = retotal(u, delta); DONE } else status
 }
 
