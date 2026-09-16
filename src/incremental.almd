@@ -436,7 +436,24 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   u.node = renumber(u.node, i, j, count, old_slot, count - (j - i + 1) + leading)
   if from_start then { let _ = replace_first_piece(u, fresh) } else ()
   let _ = splice(u, i, j, fresh)
+  // a child that stayed may now be first, or no longer be: its stamp follows
+  if rest != u.child_site then { let _ = restamp_kids(u, u.child_site, rest); u.rest_site = rest } else ()
   DONE
+}
+// the first child stamped with `first`, every other with `rest`
+fn restamp_kids(mut u: Item, first: Int, rest: Int) -> Unit = {
+  var aside: List[Item] = []
+  while list.len(u.kids) > 0 { match list.pop(u.kids) { some(x) => list.push(aside, x), none => () } }
+  while list.len(aside) > 0 {
+    match list.pop(aside) {
+      some(x) => {
+        let site = if list.is_empty(u.kids) then first else rest
+        list.push(u.kids, if parser.site_of(x.node) == site or parser.site_of(x.node) < 0 then x else Item { ...x, node: tree.Node { ...x.node, field: 0 - 2 - site } })
+      },
+      none => (),
+    }
+  }
+  ()
 }
 fn replace_first_piece(mut u: Item, fresh: Item) -> Unit = {
   var aside: List[Piece] = []
@@ -738,7 +755,9 @@ test "items after the first, read at a second site behind a separator, keep that
   // inside a statement, at the head of the second and third items, appending an item, inside a nested block
   for case in [(line_at("y()"), line_at("y()") + 1, "yes"), (line_at("b()"), line_at("b()") + 1, "bb"), (line_at("c()"), line_at("c()") + 1, "cc"),
                (bytes.len(bytes.from_string(LINES)), bytes.len(bytes.from_string(LINES)), "fn d() { }\n"), (line_at("2\n"), line_at("2\n") + 1, "22"),
-               (line_at("fn b"), line_at("fn c"), ""), (line_at("s = 2"), line_at("s = 2"), "t()\n    ")] {
+               (line_at("fn b"), line_at("fn c"), ""), (line_at("s = 2"), line_at("s = 2"), "t()\n    "),
+               // the first item removed, one put before it, the first statement of a block removed, one put before it
+               (0, line_at("fn b"), ""), (0, 0, "fn z() { }\n"), (line_at("x = 1"), line_at("y()"), ""), (line_at("x = 1"), line_at("x = 1"), "w()\n  ")] {
     let (inc, equal, why) = line_edited(c, case.0, case.1, case.2)
     assert(inc, "not incremental at " + int.to_string(case.0))
     assert(equal, why + " at " + int.to_string(case.0))
