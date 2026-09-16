@@ -1212,7 +1212,8 @@ fn literal_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: 
 fn recover_lines_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
     let mark = list.len(out)
     let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
-    if o.ok then o
+    // a line item is stamped like any recover item: the incremental reader re-reads it alone
+    if o.ok then { stamp(out, mark, id); o }
     else {
       rollback(out, mark)
       if not wants(mode, M_RECOVER) then Out { ok: false, pos: pos }
@@ -1246,9 +1247,11 @@ fn recover_lines_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut
         if not real_between(num, pos, stop) then Out { ok: false, pos: pos }
         else {
           list.push(out, tree.node(c.extra + X_ERROR, [], pos, stop))
+          stamp(out, list.len(out) - 1, id)
           if resume >= 0 then {
+            let resumed = list.len(out)
             let a = parse_rule(c, num, out, exp, far, mode, op.a, resume)
-            if a.ok then a else { rollback(out, mark); Out { ok: false, pos: pos } }
+            if a.ok then { stamp(out, resumed, id); a } else { rollback(out, mark); Out { ok: false, pos: pos } }
           } else good(stop)
         }
       }
