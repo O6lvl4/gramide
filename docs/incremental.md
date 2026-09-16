@@ -51,6 +51,20 @@ the answer is `false` and the caller parses the whole file. Two more cases
 read the whole file: an edit beside an `ERROR` item in the same list,
 because recovery is not local, and a file with no items.
 
+Two shapes of grammar need care here, and the Go and Almide packages have
+both. A scanner may close its input with an empty separator (Go's automatic
+`;`, Almide's line end): it lands after the head token in the re-lexed
+slice and is dropped before the head is compared. And a file or block rule
+may read its first item at one recover site and `sep item` at another, so
+that the two sites are partners and the separators between items belong to
+no item rule: the window is read with the bare item's body, skipping the
+separators (which `build` gives to the item before), and its first item is
+stamped with the site of the child it replaces, the rest with that site's
+partner. An item holding several statement lists (an `if` with two blocks)
+has children from each, so the first-of-list role is per child; when a
+window empties and it had replaced a list's first item, the child now in
+its place takes that role.
+
 When the window parses, its nodes are cut into units the same way, the
 parent's placeholders are renumbered and the pieces between them
 re-counted, and the totals along the path are summed again.
