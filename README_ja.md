@@ -71,10 +71,18 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
 照合される。エンジンのテストと、各言語パッケージのコーパス上のランダム編集検証で。
 
 TypeScript 5.9 の `compiler/checker.ts`(3.1 MB、うち 2.9 MB が 1 つの関数)で、識別子の
-中への 1 キー入力は中央値 121 µs。tree-sitter の増分パースは 560 µs、全文パースは 54 ms
+中への 1 キー入力は中央値 152 µs。tree-sitter の増分パースは 562 µs、全文パースは 55 ms
 ([gramide-typescript](https://github.com/O6lvl4/gramide-typescript) の
 `docs/evidence/incremental-typescript-src.json`)。木全体が要る読み手は materialize する。
 1 パスで、パースはしない。
+
+何も読まない編集が 2 種類ある。コメントや空白の中の編集と、名前 1 つの打ち直しで、項目自身の
+トークンの区間を字句解析し直して同じトークンが出ることを確かめ、位置だけ動かす。各項目は ID を
+持ち、その項目に触れない編集では変わらない。自分の場所に読み直された項目も ID を保つ。各パッケージが
+計測するファイルの 1,000 編集で ID が変わった項目はゼロだった(`reparse-bench` が数える)。同じ
+読み手が Python にも効く。Python の文は `recover_lines` の項目で、単独で字句解析したスライスでは
+インデントを置けないので、改行を打ちも消しもしていない編集では区間のレイアウトのトークンを
+そのまま保つ。
 
 ## 言語パッケージを書く
 

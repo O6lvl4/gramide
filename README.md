@@ -86,11 +86,22 @@ and node for node, in the engine's tests and in each language package's
 random-edit check over its corpora.
 
 On `compiler/checker.ts` of TypeScript 5.9 (3.1 MB, one function of
-2.9 MB) a keystroke inside an identifier costs 121 µs at the median
-against 560 µs for tree-sitter's incremental parse and 54 ms for a whole
+2.9 MB) a keystroke inside an identifier costs 152 µs at the median
+against 562 µs for tree-sitter's incremental parse and 55 ms for a whole
 parse ([gramide-typescript](https://github.com/O6lvl4/gramide-typescript),
 `docs/evidence/incremental-typescript-src.json`). A reader that wants the
 whole tree again materializes it, which is one pass and no parsing.
+
+Two kinds of edit read nothing at all: one in a comment or in blank space,
+and one that retypes a single name — the run of the item's own tokens is
+lexed again, must give the same tokens, and only positions move. Every
+item carries an id that the edits leaving it alone do not change; an item
+read again in place of itself keeps it; over 1,000 edits on each file the
+packages measure, no item was renamed (`reparse-bench` counts them). The
+same reader serves Python, whose statements are `recover_lines` items and
+whose indentation a slice lexed on its own cannot place — so a run's
+layout tokens are kept where they were when no line break was typed or
+deleted.
 
 ## Writing a language package
 
