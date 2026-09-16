@@ -346,12 +346,13 @@ fn renumber(n: tree.Node, from: Int, to: Int, count: Int, slot_from: Int, slot_d
 // run from `base.byte` to `new_end`; `next` is the byte where the token
 // after them starts, with its kind and length.
 fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
-  let last = j == list.len(u.kids) - 1
-  var head_kind = tree.T_EOF
+  // the token after the window: the first of this unit's own that follow
+  // (`}`, `else`, the EOF), or the next child's head when none do
+  var head_kind = -1
   var head_len = 0
-  if last then {
-    match list.get(u.pieces, j + 1) { some(piece) => match list.first(piece.toks) { some(t) => { head_kind = t.kind; head_len = t.end - t.start }, none => () }, none => () }
-  } else { head_kind = list.get(u.kid_heads, j + 1) ?? -1; head_len = list.get(u.kid_head_lens, j + 1) ?? 0 }
+  match list.get(u.pieces, j + 1) { some(piece) => match list.first(piece.toks) { some(t) => { head_kind = t.kind; head_len = t.end - t.start }, none => () }, none => () }
+  if head_kind < 0 and j + 1 < list.len(u.kids) then { head_kind = list.get(u.kid_heads, j + 1) ?? -1; head_len = list.get(u.kid_head_lens, j + 1) ?? 0 } else ()
+  guard head_kind >= 0 else NO_HEAD
   let at_eof = head_kind == tree.T_EOF
   let stop = if at_eof then bytes.len(source) else new_end + head_len
   guard u.child_site >= 0 else NO_SITE
