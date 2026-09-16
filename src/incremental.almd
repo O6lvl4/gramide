@@ -349,6 +349,31 @@ fn renumber(n: tree.Node, from: Int, to: Int, count: Int, slot_from: Int, slot_d
   tree.Node { kind: n.kind, field: n.field, start: if n.start > slot_from then n.start + slot_delta else n.start, end: if n.end > slot_from then n.end + slot_delta else n.end, kids: kids }
 }
 
+// The items of a window, read with `site`'s body one after another until
+// the token at `eof_index`; the separators an item rule leaves behind go
+// with the item before, as `build` cuts them. Items after a unit's first may
+// come from a second site whose body is `sep item`: the first item is
+// stamped with `first_site`, the rest with `rest_site`, as the whole parse
+// would. The flag is false when an item could not be read at the position.
+fn read_items(c: parser.Compiled, site: Int, first_site: Int, rest_site: Int, num: List[Int], toks: List[tree.Token], slice: Bytes, eof_index: Int) -> (List[tree.Node], Int, Bool) = {
+  var nodes: List[tree.Node] = []
+  var pos = 0
+  var fine = true
+  while fine and pos < eof_index {
+    pos = own_after(toks, slice, pos, eof_index)
+    if pos < eof_index then {
+      match parser.parse_item(c, site, num, pos) {
+        some((n, at)) => if at > pos then {
+          let stamp = if list.is_empty(nodes) then first_site else rest_site
+          list.push(nodes, if stamp == site or n.field != 0 - 2 - site then n else tree.Node { ...n, field: 0 - 2 - stamp })
+          pos = at
+        } else { fine = false },
+        none => { fine = false },
+      }
+    } else ()
+  }
+  (nodes, pos, fine)
+}
 // Re-read children `i..j` of `u` from `source`, whose bytes for them now
 // run from `base.byte` to `new_end`; `next` is the byte where the token
 // after them starts, with its kind and length.
@@ -389,28 +414,9 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   list.push(toks, eof)
   let num = parser.number(c, slice, toks)
   let eof_index = list.len(toks) - 1
-  var nodes: List[tree.Node] = []
-  var pos = 0
-  var fine = true
-  // items after the unit's first may come from a second site whose body is
-  // `sep item`: they are read with the first site's body (the separators
-  // between items go with the item before, as `build` cuts them) and stamped
-  // with the site the whole parse would give them
   let rest = if u.rest_site >= 0 then u.rest_site else parser.sibling_site(c, u.child_site)
   guard rest == u.child_site or parser.reads_after_separator(c, rest, u.child_site) else NO_SITE
-  while fine and pos < eof_index {
-    pos = own_after(toks, slice, pos, eof_index)
-    if pos < eof_index then {
-      match parser.parse_item(c, u.child_site, num, pos) {
-        some((n, at)) => if at > pos then {
-          let site = if i == 0 and list.is_empty(nodes) then u.child_site else rest
-          list.push(nodes, if site == u.child_site or n.field != 0 - 2 - u.child_site then n else tree.Node { ...n, field: 0 - 2 - site })
-          pos = at
-        } else { fine = false },
-        none => { fine = false },
-      }
-    } else ()
-  }
+  let (nodes, pos, fine) = read_items(c, u.child_site, if i == 0 then u.child_site else rest, rest, num, toks, slice, eof_index)
   // no tokens at all is a window whose items were deleted; tokens that no
   // item took are a failure
   guard fine and pos == eof_index and (eof_index == 0 or not list.is_empty(nodes)) else {
