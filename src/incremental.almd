@@ -595,27 +595,28 @@ fn own_edit(mut u: Item, base: Pos, edit: Edit, source: Bytes, tokenize: (String
   guard retyped < 0 or (list.get(piece.atoms, retyped) ?? -1) < 0 else ME
   let delta = edit.new_end - edit.old_end
   let size = piece.size + delta
-  guard start.byte + size <= bytes.len(source) else ME
-  let slice = bytes.slice(source, start.byte, start.byte + size)
+  let stop = start.byte + size
+  guard stop <= bytes.len(source) else ME
   // a line comment the edit opens runs to the end of its line, which must
   // lie inside the run (or the run must end the file), so that what it
   // swallows is seen here
-  guard start.byte + size == bytes.len(source) or bytes.index_of(bytes.slice(slice, edit.new_end - start.byte, size), bytes.from_list([10])) != none else ME
+  guard stop == bytes.len(source) or breaks_between(source, edit.new_end, stop) > 0 else ME
   // the lines stay as they were: nothing typed or deleted is a line break,
   // and the edit lies after its line's indentation. Then the layout the
   // scanner read (Python's indent and dedent, a line end that separates)
-  // is what it was, and the run's empty tokens are kept where they were,
+  // is what it was, and the run's layout tokens are kept where they were,
   // moved by the edit; a slice lexed on its own cannot place them
-  let (lines, tail) = breaks_in(slice)
-  guard lines == piece.lines and bytes.index_of(bytes.slice(source, edit.start, edit.new_end), bytes.from_list([10])) == none and after_indentation(source, edit.start) else ME
-  let edit_line = 1 + list.count(bytes.to_list(bytes.slice(source, start.byte, edit.start)), (b) => b == 10)
-  let fresh = match lex_in_place(tokenize, source, start.byte, start.byte + size) { some(t) => same_tokens(piece.toks, t, retyped, delta, edit.start - start.byte, edit_line), none => none }
+  let before_edit = breaks_between(source, start.byte, edit.start)
+  let lines = before_edit + breaks_between(source, edit.start, stop)
+  guard lines == piece.lines and breaks_between(source, edit.start, edit.new_end) == 0 and after_indentation(source, edit.start) else ME
+  let tail = tail_after(source, start.byte, stop)
+  let fresh = match lex_in_place(tokenize, source, start.byte, stop) { some(t) => same_tokens(piece.toks, t, retyped, delta, edit.start - start.byte, 1 + before_edit), none => none }
   match fresh {
     none => ME,
     some(toks) => {
       var atoms: List[Int] = list.with_capacity(list.len(toks))
       var n = 0
-      while n < list.len(toks) { match list.get(toks, n) { some(t) => list.push(atoms, parser.atom_at(c, slice, t.start, t.end)), none => () }; n = n + 1 }
+      while n < list.len(toks) { match list.get(toks, n) { some(t) => list.push(atoms, parser.atom_at(c, source, start.byte + t.start, start.byte + t.end)), none => () }; n = n + 1 }
       guard retyped < 0 or (list.get(atoms, retyped) ?? -1) < 0 else ME
       if k == 0 then u.head_len = (match list.first(toks) { some(t) => t.end - t.start, none => 0 }) else ()
       u.piece_sizes = list.set(u.piece_sizes, k, size); u.piece_lines = list.set(u.piece_lines, k, lines); u.piece_tails = list.set(u.piece_tails, k, tail)
@@ -626,15 +627,19 @@ fn own_edit(mut u: Item, base: Pos, edit: Edit, source: Bytes, tokenize: (String
   }
 }
 // the line breaks in a run, and the bytes after the last of them (the run's size when there is none)
-fn breaks_in(slice: Bytes) -> (Int, Int) = {
+// The line breaks in `source` from `from` to `to`
+fn breaks_between(source: Bytes, from: Int, to: Int) -> Int = {
   var lines = 0
-  var tail = 0
-  var i = 0
-  while i < bytes.len(slice) {
-    if bytes.get_or(slice, i, 0) == 10 then { lines = lines + 1; tail = 0 } else tail = tail + 1
-    i = i + 1
-  }
-  (lines, tail)
+  var i = from
+  while i < to { if bytes.get_or(source, i, 0) == 10 then lines = lines + 1 else (); i = i + 1 }
+  lines
+}
+// The bytes of `source` after the last line break in `from`..`to` (all of
+// them when there is none)
+fn tail_after(source: Bytes, from: Int, to: Int) -> Int = {
+  var i = to
+  while i > from and bytes.get_or(source, i - 1, 0) != 10 { i = i - 1 }
+  to - i
 }
 // The run of the unit's own bytes holding the whole edit, and where it
 // starts; -1 when the edit is not inside one run
@@ -659,21 +664,24 @@ fn after_indentation(source: Bytes, at: Int) -> Bool = {
   while blank_only and i >= 0 and bytes.get_or(source, i, 10) != 10 { let b = bytes.get_or(source, i, 0); blank_only = b == 32 or b == 9; i = i - 1 }
   not blank_only
 }
+// A token that is layout rather than text: a line end (a scanner may give
+// it the line break's own length, and may leave it out at its input's end,
+// where nothing follows to separate), an indent, a dedent, the EOF.
+fn is_layout(t: tree.Token) -> Bool = t.kind == tree.T_NEWLINE or t.kind == tree.T_INDENT or t.kind == tree.T_DEDENT or t.kind == tree.T_EOF or t.end == t.start
 // The run's tokens again when the fresh ones are the old ones kind for
 // kind and length for length (token `retyped`, when there is one, longer
-// by `delta`), compared over the tokens that have text: the empty ones
-// (a scanner's layout and line ends, the EOF) are the run's own as they
-// were, moved by `delta` when they stood at or after `edit_at` (their
-// column too, on the edit's line).
+// by `delta`), compared over the tokens that have text: the layout ones
+// are the run's own as they were, moved by `delta` when they stood at or
+// after `edit_at` (their column too, on the edit's line).
 fn same_tokens(old: List[tree.Token], fresh: List[tree.Token], retyped: Int, delta: Int, edit_at: Int, edit_line: Int) -> Option[List[tree.Token]] = {
-  let reals = list.filter(fresh, (t) => t.end > t.start)
+  let reals = list.filter(fresh, (t) => not is_layout(t))
   var m = 0
   var fine = true
   var out: List[tree.Token] = list.with_capacity(list.len(old))
   var k = 0
   while fine and k < list.len(old) {
     let o = list.get(old, k) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 1, col: 1 }
-    if o.end > o.start then {
+    if not is_layout(o) then {
       match list.get(reals, m) {
         some(f) => if f.kind == o.kind and o.end - o.start + (if k == retyped then delta else 0) == f.end - f.start then { list.push(out, f); m = m + 1 } else { fine = false },
         none => { fine = false },

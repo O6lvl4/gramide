@@ -76,7 +76,14 @@ other tokens, or none, or a scanner error (an unterminated block comment
 is an error in strict mode in every package's scanner), and the ordinary
 path follows. A line comment the edit opens runs to the end of its line,
 so the run must hold that line's end (or end the file) for the check to
-see what it swallows; otherwise the ordinary path.
+see what it swallows; otherwise the ordinary path. The comparison is over
+the tokens that carry text: a scanner's layout tokens — a line end, which
+JavaScript's scanner gives the break's own length and leaves out when
+nothing follows it to separate, an indent, a dedent, the EOF — are the
+run's own as they were, moved by the edit. What such an edit costs is the
+lex of the run that holds it, so it grows with the comment: the block of
+`@typedef` comments at the top of Node's `quic.js` is one run of 20 KB,
+and an edit inside it is 50 µs where the file's median edit is 9.
 
 The same path takes an edit that touches exactly one token — a letter
 typed into a name, or put right after it, or deleted from it — when the run
@@ -129,13 +136,13 @@ Medians over 1,000 edits, and the whole parse of the same file:
 
 | file | gramide | tree-sitter | whole parse |
 |---|---:|---:|---:|
-| Node `internal/quic/quic.js` (190 KB) | 7 µs | 93 µs | 3.1 ms |
-| TypeScript `compiler/parser.ts` (540 KB) | 21 µs | 117 µs | 8.7 ms |
-| TypeScript `compiler/checker.ts` (3.1 MB) | 83 µs | 570 µs | 56 ms |
-| Excalidraw `components/App.tsx` (465 KB) | 18 µs | 221 µs | 9.2 ms |
-| Go `net/http/server.go` (140 KB) | 12 µs | 152 µs | 1.5 ms |
-| Rust `lower/expressions.rs` (92 KB) | 5.7 µs | 53 µs | 1.7 ms |
-| Python `argparse.py` (107 KB) | 6.4 µs | 46 µs | 2.5 ms |
+| Node `internal/quic/quic.js` (190 KB) | 8.7 µs | 106 µs | 3.5 ms |
+| TypeScript `compiler/parser.ts` (540 KB) | 25 µs | 130 µs | 9.6 ms |
+| TypeScript `compiler/checker.ts` (3.1 MB) | 82 µs | 568 µs | 57 ms |
+| Excalidraw `components/App.tsx` (465 KB) | 18 µs | 221 µs | 9.4 ms |
+| Go `net/http/server.go` (140 KB) | 12 µs | 151 µs | 1.5 ms |
+| Rust `lower/expressions.rs` (92 KB) | 5.5 µs | 53 µs | 1.7 ms |
+| Python `argparse.py` (107 KB) | 5.5 µs | 44 µs | 2.6 ms |
 
 Most of a median edit is now the lexing of one run and the walk down to
 it; what it was before — 30 to 50 µs on every file — was the Almide

@@ -71,7 +71,7 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
 照合される。エンジンのテストと、各言語パッケージのコーパス上のランダム編集検証で。
 
 TypeScript 5.9 の `compiler/checker.ts`(3.1 MB、うち 2.9 MB が 1 つの関数)で、識別子の
-中への 1 キー入力は中央値 83 µs。tree-sitter の増分パースは 570 µs、全文パースは 56 ms
+中への 1 キー入力は中央値 82 µs。tree-sitter の増分パースは 568 µs、全文パースは 57 ms
 ([gramide-typescript](https://github.com/O6lvl4/gramide-typescript) の
 `docs/evidence/incremental-typescript-src.json`)。木全体が要る読み手は materialize する。
 1 パスで、パースはしない。
