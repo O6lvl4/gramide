@@ -53,12 +53,32 @@ fn render(r: Report) -> String = {
     + ",\"whole_parse_samples\":" + int.to_string(list.len(whole)) + ",\"whole_parse_median_us\":" + us(median(whole)) + "}"
 }
 
-effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_every: Int, dump: String) -> Result[String, String] = {
+// The whole parse a document is checked against: strict, or recovering
+// where the text no longer parses (a breaking edit was made), which is the
+// document a reader would be given.
+fn whole_of(c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes) -> Result[parser.Parsed, String] = {
+  let text = bytes.to_string_lossy(source)
+  match scan(text, false) {
+    ok(toks) => match parser.parse_with(c, source, toks) {
+      ok(p) => ok(p),
+      err(_) => parser.parse_recovering(c, source, toks) |> result.map_err((f) => "no recovery: " + parser.format_failure(f)),
+    },
+    err(e) => {
+      let toks = scan(text, true) |> result.map_err((f) => "lex error " + int.to_string(f.line) + ":" + int.to_string(f.col) + " " + f.message)!
+      parser.parse_recovering(c, source, toks) |> result.map_err((f) => "no recovery: " + parser.format_failure(f))
+    },
+  }
+}
+
+// `breaking`: every tenth edit inserts an unmatched `{` at the position
+// instead of a letter, so the file stops parsing, and the edits after it
+// land in a file with an ERROR item; the check against the recovering
+// whole parse still has to hold, and a window inside the damage falls back.
+effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_every: Int, dump: String, breaking: Bool) -> Result[String, String] = {
   let scan = l.tokenize
   let c = l.grammar
   var source = source0
-  let first = parser.parse_with(c, source, scan(bytes.to_string_lossy(source), false) |> result.map_err((e) => "lex error at " + int.to_string(e.line) + ":" + int.to_string(e.col))!)
-    |> result.map_err((f) => parser.format_failure(f))!
+  let first = whole_of(c, scan, source)!
   var doc = incremental.from_parsed(first, source, c)
   var state = seed
   var report = Report { edits: edits, fallbacks: 0, mismatches: 0, incremental_ns: [], whole_ns: [], reasons: [], initial_mismatch: false }
@@ -71,9 +91,10 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
     state = lcg(state)
     let pos = edit_position(source, state % (bytes.len(source) + 1))
     guard pos >= 0 else err("no word of 13 letters to edit")
-    let typed = bytes.from_list([97 + (state / 65536) % 26])
-    let edit = if i % 2 == 0 then incremental.Edit { start: pos, old_end: pos, new_end: pos + 1 } else incremental.Edit { start: pos, old_end: pos + 1, new_end: pos }
-    let insert = if i % 2 == 0 then typed else bytes.new(0)
+    let breaks = breaking and i % 10 == 9
+    let typed = bytes.from_list([if breaks then 123 else 97 + (state / 65536) % 26])
+    let edit = if i % 2 == 0 or breaks then incremental.Edit { start: pos, old_end: pos, new_end: pos + 1 } else incremental.Edit { start: pos, old_end: pos + 1, new_end: pos }
+    let insert = if i % 2 == 0 or breaks then typed else bytes.new(0)
     source = incremental.apply(source, edit, insert)
     let t0 = datetime.monotonic_ns()
     let status = incremental.reparse_status(doc, source, edit, scan, c)
@@ -83,14 +104,14 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
       list.push(report.reasons, status)
       if list.len(report.reasons) <= 5 then { for t in doc.trace { eprintln("edit " + int.to_string(i) + ": " + t) } } else ()
       list.clear(doc.trace)
-      let again = parser.parse_with(c, source, scan(bytes.to_string_lossy(source), false) |> result.map_err((e) => "lex error after edit")!) |> result.map_err((f) => "parse error after edit " + int.to_string(i) + ": " + parser.format_failure(f))!
+      let again = whole_of(c, scan, source)!
       doc = incremental.from_parsed(again, source, c)
     } else ()
     let t1 = datetime.monotonic_ns()
     list.push(report.incremental_ns, t1 - t0)
     if verify_every > 0 and i % verify_every == 0 then {
       let w0 = datetime.monotonic_ns()
-      let whole = parser.parse_with(c, source, scan(bytes.to_string_lossy(source), false) |> result.map_err((e) => "lex error")!) |> result.map_err((f) => "parse error after edit " + int.to_string(i) + ": " + parser.format_failure(f))!
+      let whole = whole_of(c, scan, source)!
       let w1 = datetime.monotonic_ns()
       list.push(report.whole_ns, w1 - w0)
       if not incremental.same(incremental.materialize(doc), whole) then {

@@ -8,6 +8,7 @@ import self.package_api
 import self.tree
 import self.tags
 import self.lang
+import self.parser
 
 fn rows_text(rows: List[tags.SymbolRow]) -> String = list.join(list.map(rows, (r) => r.json), ",")
 
@@ -18,6 +19,11 @@ fn document(packages: List[package_api.Definition], path: String, source: String
   complete_document(lang.read_source(packages, path, source)!, source)
 fn document_with(e: lang.Engines, path: String, source: String) -> Result[String, String] =
   complete_document(lang.read_with(e, path, source)!, source)
+
+// The document of a parse the caller holds — the incremental reader's,
+// materialized — for the language it was read with.
+fn document_parsed(l: lang.Language, parsed: parser.Parsed, source: String) -> Result[String, String] =
+  complete_document(lang.Reading { parsed: parsed, error: none, errors: 0, sep: l.sep, language: l.definition.id, symbols: l.definition.symbols }, source)
 
 fn complete_document(d: lang.Reading, source: String) -> Result[String, String] =
   match d.error { some(e) => err(e), none => {

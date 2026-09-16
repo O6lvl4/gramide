@@ -19,7 +19,10 @@
 //   <name> map <dir> [--budget N] [--task TEXT]
 //                             a ranked map of a repository within N tokens (default 1024),
 //                             personalised toward what TEXT mentions
-//   <name> reparse-bench <file> [--edits N] [--seed S] [--verify K]
+//   <name> reparse <file> --edit START:OLD_END:NEW_END < new_text
+//                             the file's symbols after an edit, re-read incrementally from
+//                             the whole parse of the file (stderr says which it was)
+//   <name> reparse-bench <file> [--edits N] [--seed S] [--verify K] [--breaking]
 //                             N keystroke edits re-read incrementally, timed; every K
 //                             edits the result is checked against a whole parse
 //
@@ -37,6 +40,8 @@ import self.balance
 import self.map
 import self.symbols
 import self.keystrokes
+import self.incremental
+import self.parser
 import self.package_api
 import fs
 import process
@@ -49,7 +54,8 @@ type Program = { name: String, version: String, packages: List[package_api.Defin
 fn usage(p: Program) -> String = "usage: " + p.name + " languages\n       " + p.name + " version\n       "
   + p.name + " (parse | tokens | outline | symbols | symbols-recovered | tags) <file>\n       "
   + p.name + " (check | balance) <file>...\n       " + p.name + " map <dir> [--budget N] [--task TEXT]\n       "
-  + p.name + " reparse-bench <file> [--edits N] [--seed S] [--verify K]"
+  + p.name + " reparse <file> --edit START:OLD_END:NEW_END < new_text\n       "
+  + p.name + " reparse-bench <file> [--edits N] [--seed S] [--verify K] [--breaking]"
 
 // One line per component, so a bug report can say exactly what was linked.
 fn version_lines(p: Program) -> List[String] =
@@ -240,7 +246,34 @@ effect fn run_reparse_bench(packages: List[package_api.Definition], argv: List[S
   let verify = int.parse(option_after(argv, "--verify") ?? "50") ?? 50
   let l = lang.language_of(packages, path)!
   let src = read(path)!
-  println(keystrokes.run(l, bytes.from_string(src), edits, seed, verify, option_after(argv, "--dump") ?? "")!)
+  println(keystrokes.run(l, bytes.from_string(src), edits, seed, verify, option_after(argv, "--dump") ?? "", list.contains(argv, "--breaking"))!)
+  ok(())
+}
+
+// One edit, end to end: parse the file, take the edit and the new text,
+// re-read what the edit touched, and answer the symbols of the result.
+effect fn run_reparse(packages: List[package_api.Definition], argv: List[String]) -> Result[Unit, String] = {
+  let path = list.get(argv, 1) ?? ""
+  let spec = option_after(argv, "--edit") ?? ""
+  let parts = string.split(spec, ":")
+  guard list.len(parts) == 3 else err("--edit START:OLD_END:NEW_END")
+  let edit = incremental.Edit { start: int.parse(list.get(parts, 0) ?? "") ?? -1, old_end: int.parse(list.get(parts, 1) ?? "") ?? -1, new_end: int.parse(list.get(parts, 2) ?? "") ?? -1 }
+  guard edit.start >= 0 and edit.old_end >= edit.start and edit.new_end >= edit.start else err("--edit START:OLD_END:NEW_END")
+  let l = lang.language_of(packages, path)!
+  let before = read(path)!
+  let after = list.join(process.stdin_lines()!, "\n")
+  let scan = l.tokenize
+  let c = l.grammar
+  let old_source = bytes.from_string(before)
+  let new_source = bytes.from_string(after)
+  guard bytes.len(new_source) == bytes.len(old_source) + edit.new_end - edit.old_end else err("the new text is not the file with that edit applied: " + int.to_string(bytes.len(new_source)) + " bytes, expected " + int.to_string(bytes.len(old_source) + edit.new_end - edit.old_end))
+  let first = parser.parse_with(c, old_source, scan(before, false) |> result.map_err((e) => path + ": " + int.to_string(e.line) + ":" + int.to_string(e.col) + ": " + e.message)!) |> result.map_err((f) => path + ":" + parser.format_failure(f))!
+  var doc = incremental.from_parsed(first, old_source, c)
+  let status = incremental.reparse_status(doc, new_source, edit, scan, c)
+  let parsed = if status == incremental.DONE then incremental.materialize(doc)
+    else parser.parse_with(c, new_source, scan(after, false) |> result.map_err((e) => path + ": " + int.to_string(e.line) + ":" + int.to_string(e.col) + ": " + e.message)!) |> result.map_err((f) => path + ":" + parser.format_failure(f))!
+  eprintln(if status == incremental.DONE then "reparse: incremental" else "reparse: whole file (" + int.to_string(status) + ")")
+  println(symbols.document_parsed(l, parsed, after)!)
   ok(())
 }
 
@@ -276,6 +309,7 @@ effect fn run(p: Program, argv: List[String]) -> Unit = {
   // a `?` on an effect call in argument position, and not on one being matched
   else if cmd == "map" then match run_map(p.packages, argv) { ok(_) => (), err(e) => fail(e) }
   else if cmd == "reparse-bench" then match run_reparse_bench(p.packages, argv) { ok(_) => (), err(e) => fail(e) }
+  else if cmd == "reparse" then match run_reparse(p.packages, argv) { ok(_) => (), err(e) => fail(e) }
   else match batch_of(argv) {
     some((batch, paths)) => {
       let parts = sequential(p.packages, batch, paths)!
