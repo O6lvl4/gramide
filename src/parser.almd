@@ -1472,6 +1472,26 @@ fn stamp(mut out: List[tree.Node], mark: Int, site: Int) -> Unit =
   } else ()
 fn site_of(n: tree.Node) -> Int = if n.field <= -2 then 0 - 2 - n.field else -1
 fn body_of(c: Compiled, site: Int) -> Int = match list.get(c.ops, site) { some(o) => o.a, none => -1 }
+// True when `site` reads what `first` reads after leading separators: its
+// body is a sequence ending in `first`'s body (`sep item` after `item`).
+fn reads_after_separator(c: Compiled, site: Int, first: Int) -> Bool = {
+  let body = match list.get(c.ops, body_of(c, site)) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+  let target = body_of(c, first)
+  body.kind == K_SEQ and body.b >= 1 and (list.last(child_ops(c, body)) ?? -1) == target
+}
+// The recover site, of the same kind as `first`, that reads `first`'s items
+// after a separator; `first` itself when there is none.
+fn sibling_site(c: Compiled, first: Int) -> Int = {
+  let kind = match list.get(c.ops, first) { some(o) => o.kind, none => K_EPS }
+  var found = -1
+  var id = 0
+  while found < 0 and id < list.len(c.ops) {
+    let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+    if id != first and op.kind == kind and reads_after_separator(c, id, first) then found = id else ()
+    id = id + 1
+  }
+  if found < 0 then first else found
+}
 
 fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, pos: Int) -> Out = {
   let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
