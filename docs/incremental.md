@@ -129,10 +129,20 @@ Medians over 1,000 edits, and the whole parse of the same file:
 
 | file | gramide | tree-sitter | whole parse |
 |---|---:|---:|---:|
-| Node `internal/quic/quic.js` (190 KB) | 41 µs | 105 µs | 3.4 ms |
-| TypeScript `compiler/parser.ts` (540 KB) | 75 µs | 128 µs | 9.5 ms |
-| TypeScript `compiler/checker.ts` (3.1 MB) | 126 µs | 565 µs | 57 ms |
-| Excalidraw `components/App.tsx` (465 KB) | 72 µs | 220 µs | 9.4 ms |
+| Node `internal/quic/quic.js` (190 KB) | 7 µs | 93 µs | 3.1 ms |
+| TypeScript `compiler/parser.ts` (540 KB) | 21 µs | 117 µs | 8.7 ms |
+| TypeScript `compiler/checker.ts` (3.1 MB) | 83 µs | 570 µs | 56 ms |
+| Excalidraw `components/App.tsx` (465 KB) | 18 µs | 221 µs | 9.2 ms |
+| Go `net/http/server.go` (140 KB) | 12 µs | 152 µs | 1.5 ms |
+| Rust `lower/expressions.rs` (92 KB) | 5.7 µs | 53 µs | 1.7 ms |
+| Python `argparse.py` (107 KB) | 6.4 µs | 46 µs | 2.5 ms |
+
+Most of a median edit is now the lexing of one run and the walk down to
+it; what it was before — 30 to 50 µs on every file — was the Almide
+backend cloning the compiled grammar into each call along the way, which
+a `mut` parameter (passed by reference) removed, and the run's tokens
+being cloned to read their measures, which integer lists beside the runs
+removed.
 
 The evidence is in each package's `docs/evidence/incremental-*.json`.
 

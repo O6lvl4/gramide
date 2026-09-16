@@ -1,3 +1,3 @@
 // The one place the core's version is written. `mod.almd` and `cli.almd` both
 // read it here: a submodule cannot import its own package's `mod.almd`.
-let VERSION = "0.2.4"
+let VERSION = "0.2.5"
