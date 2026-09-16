@@ -86,8 +86,8 @@ and node for node, in the engine's tests and in each language package's
 random-edit check over its corpora.
 
 On `compiler/checker.ts` of TypeScript 5.9 (3.1 MB, one function of
-2.9 MB) a keystroke inside an identifier costs 130 µs at the median
-against 574 µs for tree-sitter's incremental parse and 56 ms for a whole
+2.9 MB) a keystroke inside an identifier costs 121 µs at the median
+against 560 µs for tree-sitter's incremental parse and 54 ms for a whole
 parse ([gramide-typescript](https://github.com/O6lvl4/gramide-typescript),
 `docs/evidence/incremental-typescript-src.json`). A reader that wants the
 whole tree again materializes it, which is one pass and no parsing.

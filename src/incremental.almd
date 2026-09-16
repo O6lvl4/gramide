@@ -542,11 +542,17 @@ fn run_holding(u: Item, base: Pos, edit: Edit) -> (Int, Pos) = {
 // dropped, and empty separators a scanner adds at its input's end beyond
 // what the run had are ignored
 fn same_tokens(old: List[tree.Token], fresh: List[tree.Token], retyped: Int, delta: Int) -> Option[List[tree.Token]] = {
+  // the file's last run carries the EOF token: compared without it, kept with the fresh one
+  let old_eof = match list.last(old) { some(t) => t.kind == tree.T_EOF, none => false }
+  let count = list.len(old) - (if old_eof then 1 else 0)
   var toks = fresh
-  let _ = list.pop(toks)
-  while list.len(toks) > list.len(old) and (match list.last(toks) { some(t) => t.start == t.end, none => false }) { let _ = list.pop(toks) }
-  if list.len(toks) != list.len(old) then none
-  else if list.all(list.range(0, list.len(old)), (m) => same_length(list.get(old, m), list.get(toks, m), if m == retyped then delta else 0)) then some(toks)
+  let eof = list.pop(toks) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 1, col: 1 }
+  while list.len(toks) > count and (match list.last(toks) { some(t) => t.start == t.end, none => false }) { let _ = list.pop(toks) }
+  if list.len(toks) != count then none
+  else if list.all(list.range(0, count), (m) => same_length(list.get(old, m), list.get(toks, m), if m == retyped then delta else 0)) then {
+    if old_eof then list.push(toks, eof) else ()
+    some(toks)
+  }
   else none
 }
 fn same_length(a: Option[tree.Token], b: Option[tree.Token], grown: Int) -> Bool = match (a, b) {
@@ -990,4 +996,19 @@ test "a retyped head is what the next window is measured against" {
   assert(status == DONE, "status " + int.to_string(status) + " " + list.join(doc.trace, " | "))
   let full = whole(c, bytes.to_string_lossy(twice))
   assert(same(materialize(doc), full), first_difference(materialize(doc), full))
+}
+
+test "an edit in a comment after the last item, or in a file with no item, reads nothing" {
+  let c = parser.compile(item_grammar())
+  for text in ["# only a comment\n# and another\n", "fn a() { }\n# after the last item\n"] {
+    let source = bytes.from_string(text)
+    var doc = from_parsed(whole(c, text), source, c)
+    let at = (string.index_of(text, "comment") ?? 0) + 3
+    let edit = Edit { start: at, old_end: at, new_end: at + 2 }
+    let after = apply(source, edit, bytes.from_string("xy"))
+    let status = reparse_status(doc, after, edit, (s, r) => scan(s, r), c)
+    assert(status == DONE, "status " + int.to_string(status) + " in " + text)
+    let full = whole(c, bytes.to_string_lossy(after))
+    assert(same(materialize(doc), full), first_difference(materialize(doc), full))
+  }
 }
