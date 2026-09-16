@@ -935,7 +935,7 @@ test "an edit that opens or closes a comment is not a comment edit" {
 }
 
 // ── edits that retype one token ─────────────────────────────────────────
-let RETYPED = "fn alpha() { counter = 1; give counter\n  reader() }\nfn beta() { p = q }\n"
+let RETYPED = "fn alpha() { counter = 1; give counter\n  reader()\n}\nfn beta() { p = q }\n"
 fn retyped_at(needle: String) -> Int = string.index_of(RETYPED, needle) ?? -1
 fn retyped_edit(c: parser.Compiled, start: Int, old_end: Int, insert: String) -> (Int, Bool, String) = {
   let source = bytes.from_string(RETYPED)
@@ -975,12 +975,14 @@ test "a retyped head is what the next window is measured against" {
   let c = parser.compile(item_grammar())
   let source = bytes.from_string(RETYPED)
   var doc = from_parsed(whole(c, RETYPED), source, c)
-  // `reader` -> `readers`: the head of the third statement, retyped in place
-  let at = retyped_at("reader") + 6
-  let first = Edit { start: at, old_end: at, new_end: at + 1 }
-  let once = apply(source, first, bytes.from_string("s"))
+  // `reader` -> `reder`: the head of the third statement, retyped in place
+  // and shorter, so that a window measured with its old length would take
+  // its `(` for part of it
+  let at = retyped_at("reader") + 2
+  let first = Edit { start: at, old_end: at + 1, new_end: at }
+  let once = apply(source, first, bytes.new(0))
   assert_eq(reparse_status(doc, once, first, (s, r) => scan(s, r), c), DONE)
-  // then a `;` put after `give counter`: that statement is read again, up to the head `readers`
+  // then a `;` put after `give counter`: that statement is read again, up to the head `reder`
   let at2 = string.index_of(bytes.to_string_lossy(once), "give counter") ?? -1
   let second = Edit { start: at2 + 12, old_end: at2 + 12, new_end: at2 + 13 }
   let twice = apply(once, second, bytes.from_string(";"))
