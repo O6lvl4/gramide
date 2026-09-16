@@ -559,9 +559,10 @@ fn same_length(a: Option[tree.Token], b: Option[tree.Token], grown: Int) -> Bool
   (some(x), some(y)) => x.kind == y.kind and x.end - x.start + grown == y.end - y.start,
   _ => false,
 }
-// The children whose bytes hold an edit's start and end, and whether the
-// window must start where the unit does: (i, j, from_start).
-fn locate(u: Item, base: Pos, bases: List[Pos], edit: Edit) -> (Int, Int, Bool) = {
+// The children whose bytes hold an edit's start and end, whether the
+// window must start where the unit does, and whether the edit lies in the
+// unit's own bytes outside every child: (i, j, from_start, outside).
+fn locate(u: Item, base: Pos, bases: List[Pos], edit: Edit) -> (Int, Int, Bool, Bool) = {
   let count = list.len(u.kids)
   // the child whose bytes hold the edit's start, and the one holding its end
   var i = -1
@@ -582,6 +583,7 @@ fn locate(u: Item, base: Pos, bases: List[Pos], edit: Edit) -> (Int, Int, Bool) 
     if j < 0 and edit.old_end > edit.start and edit.old_end == last_end then j = count - 1 else ()
   } else ()
   if edit.old_end == edit.start then j = i else ()
+  let outside = i < 0 and j < 0
   // at the file's level, what lies before the first item or after the last
   // (a comment, blank lines) is read with that item: the window then starts
   // at the file's start, or runs to its end
@@ -593,16 +595,16 @@ fn locate(u: Item, base: Pos, bases: List[Pos], edit: Edit) -> (Int, Int, Bool) 
     if i < 0 and edit.start >= last_end then { i = count - 1; j = count - 1 } else ()
     if j < 0 and edit.old_end > last_end then j = count - 1 else ()
   } else ()
-  (i, j, from_start)
+  (i, j, from_start, outside)
 }
 fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
   let delta = edit.new_end - edit.old_end
   let bases = kid_bases(u, base)
-  let (i, j, from_start) = locate(u, base, bases, edit)
+  let (i, j, from_start, outside) = locate(u, base, bases, edit)
   // an edit in this unit's own bytes that touches no token (in a comment, in
   // blank space), or retypes one, changes positions and nothing else: no
   // item is read
-  let own = if i < 0 and j < 0 then own_edit(u, base, edit, source, tokenize, c) else ME
+  let own = if outside then own_edit(u, base, edit, source, tokenize, c) else ME
   if own == DONE then DONE
   else if i < 0 or j < 0 or j < i then ME
   else {
@@ -632,7 +634,7 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
         let _ = retotal(u, delta)
         DONE
       }
-      else if status == ME then window(u, i, i, bases, delta, source, tokenize, c)
+      else if status == ME then read_window(u, i, i, bases, delta, source, tokenize, c)
       else status
     }
     else {
@@ -640,11 +642,11 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
       // when nothing of this unit's own stands between them
       let adjacent = i > 0 and (match list.get(u.pieces, i) { some(piece) => list.is_empty(piece.toks), none => false })
       let from = if head_edit and adjacent then i - 1 else i
-      if from_start then window_from(u, base, from, j, bases, delta, source, tokenize, c, prelude_untouched(u, base, edit)) else window(u, from, j, bases, delta, source, tokenize, c)
+      if from_start then window_from(u, base, from, j, bases, delta, source, tokenize, c, prelude_untouched(u, base, edit)) else read_window(u, from, j, bases, delta, source, tokenize, c)
     }
   }
 }
-fn window(mut u: Item, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
+fn read_window(mut u: Item, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
   let base = list.get(bases, i) ?? Pos { byte: 0, line: 1, col: 1 }
   let end = (list.get(bases, j) ?? base).byte + (list.get(u.kid_sizes, j) ?? 0) + delta
   let status = rewindow(u, i, j, base, end, source, tokenize, c, false, 0)
@@ -870,7 +872,7 @@ fn line_edited(c: parser.Compiled, start: Int, old_end: Int, insert: String) -> 
   let ok_inc = reparse(doc, after, edit, (s, r) => line_scan(s, r), c)
   let full = line_whole(c, bytes.to_string_lossy(after))
   let got = materialize(doc)
-  (ok_inc, same(got, full), first_difference(got, full))
+  (ok_inc, same(got, full), if ok_inc then first_difference(got, full) else list.join(doc.trace, " | "))
 }
 
 test "items after the first, read at a second site behind a separator, keep that site's stamp" {
@@ -889,9 +891,11 @@ test "items after the first, read at a second site behind a separator, keep that
                // an `if` item holds two lists: inside the first statement of the second, that statement removed, one put before it, its last removed
                (line_at("v = 3") + 4, line_at("v = 3") + 5, "33"), (line_at("v = 3"), line_at("w()"), ""), (line_at("v = 3"), line_at("v = 3"), "vv()\n    "), (line_at("w()"), line_at("w()") + 4, ""),
                // in the comment before the package clause, and in the blank line after it: the file's own tokens stay, the first item is re-read
-               (line_at("comment") + 3, line_at("comment") + 3, "x"), (line_at("\n\nfn a") + 1, line_at("\n\nfn a") + 1, "\n")] {
+               (line_at("comment") + 3, line_at("comment") + 3, "x"), (line_at("\n\nfn a") + 1, line_at("\n\nfn a") + 1, "\n"),
+               // the package's name retyped: a token of the file's own, before any item
+               (line_at("package m") + 8, line_at("package m") + 8, "ai")] {
     let (inc, equal, why) = line_edited(c, case.0, case.1, case.2)
-    assert(inc, "not incremental at " + int.to_string(case.0))
+    assert(inc, "not incremental at " + int.to_string(case.0) + ": " + why)
     assert(equal, why + " at " + int.to_string(case.0))
   }
 }
