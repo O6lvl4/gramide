@@ -1476,28 +1476,40 @@ fn body_of(c: Compiled, site: Int) -> Int = match list.get(c.ops, site) { some(o
 // body is a sequence ending in `first`'s body (`sep item` after `item`).
 fn reads_after_separator(c: Compiled, site: Int, first: Int) -> Bool = {
   let body = match list.get(c.ops, body_of(c, site)) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
-  let target = body_of(c, first)
   // a sequence's `b` counts its members, from the kid table at `a`
-  body.kind == K_SEQ and body.b >= 2 and same_body(c, kid_at(c, body.a + body.b - 1), target)
+  body.kind == K_SEQ and body.b >= 2 and same_body(c, kid_at(c, body.a + body.b - 1), body_of(c, first))
+}
+// A file or block rule may read its first item at one recover site and
+// `sep item` at another; the two are partners. `rest_site_of` is the partner
+// that reads after a separator (`site` itself when it is that one, or has
+// none); `first_site_of` the partner that reads the bare item.
+fn rest_site_of(c: Compiled, site: Int) -> Int = {
+  let kind = match list.get(c.ops, site) { some(o) => o.kind, none => K_EPS }
+  var found = -1
+  var id = 0
+  while found < 0 and id < list.len(c.ops) {
+    let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+    if id != site and op.kind == kind and reads_after_separator(c, id, site) then found = id else ()
+    id = id + 1
+  }
+  if found < 0 then site else found
+}
+fn first_site_of(c: Compiled, site: Int) -> Int = {
+  let kind = match list.get(c.ops, site) { some(o) => o.kind, none => K_EPS }
+  var found = -1
+  var id = 0
+  while found < 0 and id < list.len(c.ops) {
+    let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+    if id != site and op.kind == kind and reads_after_separator(c, site, id) then found = id else ()
+    id = id + 1
+  }
+  if found < 0 then site else found
 }
 // the same op, or two references to the same rule
 fn same_body(c: Compiled, x: Int, y: Int) -> Bool = x == y or (match (list.get(c.ops, x), list.get(c.ops, y)) {
   (some(p), some(q)) => p.kind == K_REF and q.kind == K_REF and p.a == q.a,
   _ => false,
 })
-// The recover site, of the same kind as `first`, that reads `first`'s items
-// after a separator; `first` itself when there is none.
-fn sibling_site(c: Compiled, first: Int) -> Int = {
-  let kind = match list.get(c.ops, first) { some(o) => o.kind, none => K_EPS }
-  var found = -1
-  var id = 0
-  while found < 0 and id < list.len(c.ops) {
-    let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
-    if id != first and op.kind == kind and reads_after_separator(c, id, first) then found = id else ()
-    id = id + 1
-  }
-  if found < 0 then first else found
-}
 
 fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, pos: Int) -> Out = {
   let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }

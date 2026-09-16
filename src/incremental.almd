@@ -40,11 +40,8 @@ type Piece = { toks: List[tree.Token], size: Int, lines: Int, tail: Int }
 // order: piece 0, child 0, piece 1, child 1, …, the last piece. The
 // children's totals stand beside them so the parent finds its way through
 // integers and never reads a child.
-// `child_site` is the recover site that produced the first child; `rest_site`
-// the one that produced the second (a file rule may read its first item at
-// one site and `sep item` at another), -1 when there is no second child
 type Item = {
-  site: Int, child_site: Int, rest_site: Int, node: tree.Node, trace: List[String],
+  site: Int, child_site: Int, node: tree.Node, trace: List[String],
   pieces: List[Piece], kids: List[Item],
   kid_sizes: List[Int], kid_lines: List[Int], kid_tails: List[Int], kid_toks: List[Int], kid_heads: List[Int], kid_head_lens: List[Int], kid_kinds: List[Int],
   size: Int, lines: Int, tail: Int, toks: Int,
@@ -52,7 +49,7 @@ type Item = {
 
 type Document = { root: Item, names: nametable.Names, trace: List[String] }
 
-fn empty_unit() -> Item = Item { site: -1, child_site: -1, rest_site: -1, node: tree.node(0, [], 0, 0), trace: [], pieces: [], kids: [], kid_sizes: [], kid_lines: [], kid_tails: [], kid_toks: [], kid_heads: [], kid_head_lens: [], kid_kinds: [], size: 0, lines: 0, tail: 0, toks: 0 }
+fn empty_unit() -> Item = Item { site: -1, child_site: -1, node: tree.node(0, [], 0, 0), trace: [], pieces: [], kids: [], kid_sizes: [], kid_lines: [], kid_tails: [], kid_toks: [], kid_heads: [], kid_head_lens: [], kid_kinds: [], size: 0, lines: 0, tail: 0, toks: 0 }
 
 fn rebase_token(t: tree.Token, byte: Int, line: Int, col: Int) -> tree.Token =
   tree.Token { kind: t.kind, start: t.start - byte, end: t.end - byte, line: t.line - line + 1, col: if t.line == line then t.col - col + 1 else t.col }
@@ -100,7 +97,6 @@ fn build(n: tree.Node, toks: List[tree.Token], source: Bytes, t_begin: Int, t_en
   var u = empty_unit()
   u.site = site
   u.child_site = match list.first(children) { some(ck) => parser.site_of(ck), none => -1 }
-  u.rest_site = match list.get(children, 1) { some(ck) => parser.site_of(ck), none => -1 }
   // pieces: [t_begin, c_start0), [c_end0, c_start1), …, [c_end_last, t_end)
   var ta = t_begin
   var piece_start = start
@@ -351,11 +347,11 @@ fn renumber(n: tree.Node, from: Int, to: Int, count: Int, slot_from: Int, slot_d
 
 // The items of a window, read with `site`'s body one after another until
 // the token at `eof_index`; the separators an item rule leaves behind go
-// with the item before, as `build` cuts them. Items after a unit's first may
-// come from a second site whose body is `sep item`: the first item is
-// stamped with `first_site`, the rest with `rest_site`, as the whole parse
-// would. The flag is false when an item could not be read at the position.
-fn read_items(c: parser.Compiled, site: Int, first_site: Int, rest_site: Int, num: List[Int], toks: List[tree.Token], slice: Bytes, eof_index: Int) -> (List[tree.Node], Int, Bool) = {
+// with the item before, as `build` cuts them. A file or block rule may read
+// its first item at one recover site and `sep item` at another: the first
+// item is stamped with `first_stamp`, the rest with `rest_stamp`, as the
+// whole parse would. The flag is false when an item could not be read.
+fn read_items(c: parser.Compiled, site: Int, first_stamp: Int, rest_stamp: Int, num: List[Int], toks: List[tree.Token], slice: Bytes, eof_index: Int) -> (List[tree.Node], Int, Bool) = {
   var nodes: List[tree.Node] = []
   var pos = 0
   var fine = true
@@ -364,7 +360,7 @@ fn read_items(c: parser.Compiled, site: Int, first_site: Int, rest_site: Int, nu
     if pos < eof_index then {
       match parser.parse_item(c, site, num, pos) {
         some((n, at)) => if at > pos then {
-          let stamp = if list.is_empty(nodes) then first_site else rest_site
+          let stamp = if list.is_empty(nodes) then first_stamp else rest_stamp
           list.push(nodes, if stamp == site or n.field != 0 - 2 - site then n else tree.Node { ...n, field: 0 - 2 - stamp })
           pos = at
         } else { fine = false },
@@ -414,13 +410,16 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   list.push(toks, eof)
   let num = parser.number(c, slice, toks)
   let eof_index = list.len(toks) - 1
-  let rest = if u.rest_site >= 0 then u.rest_site else parser.sibling_site(c, u.child_site)
-  guard rest == u.child_site or parser.reads_after_separator(c, rest, u.child_site) else NO_SITE
-  let (nodes, pos, fine) = read_items(c, u.child_site, if i == 0 then u.child_site else rest, rest, num, toks, slice, eof_index)
+  // the window's first item stands where child i stood, and takes its site:
+  // the one that reads a list's first item, or the one that reads the rest
+  let old_site = match list.get(u.kids, i) { some(k) => parser.site_of(k.node), none => u.child_site }
+  let bare = parser.first_site_of(c, old_site)
+  let rest = parser.rest_site_of(c, bare)
+  let (nodes, pos, fine) = read_items(c, bare, old_site, rest, num, toks, slice, eof_index)
   // no tokens at all is a window whose items were deleted; tokens that no
   // item took are a failure
   guard fine and pos == eof_index and (eof_index == 0 or not list.is_empty(nodes)) else {
-    list.push(u.trace, "no parse at token " + int.to_string(pos) + " of " + int.to_string(eof_index) + ": " + parser.explain_item(c, u.child_site, slice, toks, num, pos) + " in: " + string.take(bytes.to_string_lossy(slice), 600))
+    list.push(u.trace, "no parse at token " + int.to_string(pos) + " of " + int.to_string(eof_index) + ": " + parser.explain_item(c, bare, slice, toks, num, pos) + " in: " + string.take(bytes.to_string_lossy(slice), 600))
     NO_PARSE
   }
   // the token at `eof_index` is where the window ends: the head that follows
@@ -436,23 +435,20 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   u.node = renumber(u.node, i, j, count, old_slot, count - (j - i + 1) + leading)
   if from_start then { let _ = replace_first_piece(u, fresh) } else ()
   let _ = splice(u, i, j, fresh)
-  // a child that stayed may now be first, or no longer be: its stamp follows
-  if rest != u.child_site then { let _ = restamp_kids(u, u.child_site, rest); u.rest_site = rest } else ()
+  // when the window emptied and child i read a list's first item, the child
+  // now at i is that list's first, if it read the rest of one
+  if count == 0 and old_site == bare and rest != bare then { let _ = restamp_kid(u, i, bare, rest) } else ()
   DONE
 }
-// the first child stamped with `first`, every other with `rest`
-fn restamp_kids(mut u: Item, first: Int, rest: Int) -> Unit = {
+// child `at` stamped with `first` when its stamp is `rest`
+fn restamp_kid(mut u: Item, at: Int, first: Int, rest: Int) -> Unit = {
   var aside: List[Item] = []
-  while list.len(u.kids) > 0 { match list.pop(u.kids) { some(x) => list.push(aside, x), none => () } }
-  while list.len(aside) > 0 {
-    match list.pop(aside) {
-      some(x) => {
-        let site = if list.is_empty(u.kids) then first else rest
-        list.push(u.kids, if parser.site_of(x.node) == site or parser.site_of(x.node) < 0 then x else Item { ...x, node: tree.Node { ...x.node, field: 0 - 2 - site } })
-      },
-      none => (),
-    }
+  while list.len(u.kids) > at + 1 { match list.pop(u.kids) { some(x) => list.push(aside, x), none => () } }
+  match list.pop(u.kids) {
+    some(x) => list.push(u.kids, if parser.site_of(x.node) == rest then Item { ...x, node: tree.Node { ...x.node, field: 0 - 2 - first } } else x),
+    none => (),
   }
+  while list.len(aside) > 0 { match list.pop(aside) { some(x) => list.push(u.kids, x), none => () } }
   ()
 }
 fn replace_first_piece(mut u: Item, fresh: Item) -> Unit = {
@@ -708,7 +704,7 @@ test "an edit that breaks an item falls back, and the document is untouched" {
 
 // ── the same over a language whose file rule reads `sep item` after its first
 // item, from a scanner that closes its input with an empty separator ──
-fn line_spec() -> lex.Spec = lex.Spec { ...spec(), newlines: lex.NL_SEMI }
+fn line_spec() -> lex.Spec = lex.Spec { ...spec(), keywords: ["fn", "if", "else"], newlines: lex.NL_SEMI }
 fn line_scan(source: String, recovering: Bool) -> Result[List[tree.Token], lex.LexError] = lex.tokenize_with(source, line_spec(), recovering)
 fn line_grammar() -> parser.Grammar = {
   let sep = parser.rep1(parser.tok("newline"))
@@ -723,11 +719,12 @@ fn line_grammar() -> parser.Grammar = {
     ("stmt", parser.alt([
       parser.wrap("assign", parser.seq([parser.tok("identifier"), parser.lit("="), parser.alt([parser.tok("identifier"), parser.tok("integer")])])),
       parser.wrap("call", parser.seq([parser.tok("identifier"), parser.lit("("), parser.lit(")")])),
+      parser.wrap("if", parser.seq([parser.lit("if"), parser.tok("identifier"), parser.r("block"), parser.lit("else"), parser.r("block")])),
       parser.r("block"),
     ])),
   ])
 }
-let LINES = "fn a() {\n  x = 1\n  y()\n}\nfn b() {\n  p = q\n  {\n    r()\n    s = 2\n  }\n}\n\nfn c() { }\n"
+let LINES = "fn a() {\n  x = 1\n  y()\n}\nfn b() {\n  p = q\n  {\n    r()\n    s = 2\n  }\n  if p {\n    u()\n  } else {\n    v = 3\n    w()\n  }\n}\n\nfn c() { }\n"
 fn line_whole(c: parser.Compiled, text: String) -> parser.Parsed = match line_scan(text, false) {
   ok(toks) => match parser.parse_with(c, bytes.from_string(text), toks) { ok(p) => p, err(_) => parser.Parsed { root: tree.node(0, [], 0, 0), toks: [], names: c.names } },
   err(_) => parser.Parsed { root: tree.node(0, [], 0, 0), toks: [], names: c.names },
@@ -750,14 +747,15 @@ test "items after the first, read at a second site behind a separator, keep that
   assert(list.len(p.toks) > 0, "the test text must parse")
   let doc = from_parsed(p, bytes.from_string(LINES), c)
   assert_eq(list.len(doc.root.kids), 3)
-  assert(doc.root.rest_site >= 0 and doc.root.rest_site != doc.root.child_site, "two sites at the top")
   assert(same(materialize(doc), p), first_difference(materialize(doc), p))
   // inside a statement, at the head of the second and third items, appending an item, inside a nested block
   for case in [(line_at("y()"), line_at("y()") + 1, "yes"), (line_at("b()"), line_at("b()") + 1, "bb"), (line_at("c()"), line_at("c()") + 1, "cc"),
                (bytes.len(bytes.from_string(LINES)), bytes.len(bytes.from_string(LINES)), "fn d() { }\n"), (line_at("2\n"), line_at("2\n") + 1, "22"),
                (line_at("fn b"), line_at("fn c"), ""), (line_at("s = 2"), line_at("s = 2"), "t()\n    "),
                // the first item removed, one put before it, the first statement of a block removed, one put before it
-               (0, line_at("fn b"), ""), (0, 0, "fn z() { }\n"), (line_at("x = 1"), line_at("y()"), ""), (line_at("x = 1"), line_at("x = 1"), "w()\n  ")] {
+               (0, line_at("fn b"), ""), (0, 0, "fn z() { }\n"), (line_at("x = 1"), line_at("y()"), ""), (line_at("x = 1"), line_at("x = 1"), "w()\n  "),
+               // an `if` item holds two lists: inside the first statement of the second, that statement removed, one put before it, its last removed
+               (line_at("v = 3") + 4, line_at("v = 3") + 5, "33"), (line_at("v = 3"), line_at("w()"), ""), (line_at("v = 3"), line_at("v = 3"), "vv()\n    "), (line_at("w()"), line_at("w()") + 4, "")] {
     let (inc, equal, why) = line_edited(c, case.0, case.1, case.2)
     assert(inc, "not incremental at " + int.to_string(case.0))
     assert(equal, why + " at " + int.to_string(case.0))
