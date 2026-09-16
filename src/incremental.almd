@@ -307,7 +307,8 @@ fn retotal(mut u: Item, delta: Int) -> Unit = {
 }
 
 // Move kids `to+1..` aside, drop `from..to`, push `fresh` in order, put the rest back.
-fn splice(mut u: Item, from: Int, to: Int, mut fresh: Item) -> Unit = {
+// the children `from..to` replaced by `fresh`'s; the replaced ones come back, in order
+fn splice(mut u: Item, from: Int, to: Int, mut fresh: Item) -> List[Item] = {
   let count = list.len(fresh.kids)
   var aside: List[Item] = []
   var aside_i: List[Int] = []
@@ -316,8 +317,10 @@ fn splice(mut u: Item, from: Int, to: Int, mut fresh: Item) -> Unit = {
     list.push(aside_i, list.pop(u.kid_sizes) ?? 0); list.push(aside_i, list.pop(u.kid_lines) ?? 0); list.push(aside_i, list.pop(u.kid_tails) ?? 0)
     list.push(aside_i, list.pop(u.kid_toks) ?? 0); list.push(aside_i, list.pop(u.kid_heads) ?? 0); list.push(aside_i, list.pop(u.kid_head_lens) ?? 0); list.push(aside_i, list.pop(u.kid_kinds) ?? 0)
   }
+  var replaced: List[Item] = []
   while list.len(u.kids) > from {
-    let _ = list.pop(u.kids); let _ = list.pop(u.kid_sizes); let _ = list.pop(u.kid_lines); let _ = list.pop(u.kid_tails)
+    match list.pop(u.kids) { some(x) => list.push(replaced, x), none => () }
+    let _ = list.pop(u.kid_sizes); let _ = list.pop(u.kid_lines); let _ = list.pop(u.kid_tails)
     let _ = list.pop(u.kid_toks); let _ = list.pop(u.kid_heads); let _ = list.pop(u.kid_head_lens); let _ = list.pop(u.kid_kinds)
   }
   var rev: List[Item] = []
@@ -348,7 +351,7 @@ fn splice(mut u: Item, from: Int, to: Int, mut fresh: Item) -> Unit = {
   while m < count { list.push(u.pieces, Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }); m = m + 1 }
   list.push(u.pieces, closing)
   while list.len(aside_p) > 0 { match list.pop(aside_p) { some(x) => list.push(u.pieces, x), none => () } }
-  ()
+  list.reverse(replaced)
 }
 
 // The parent's subtree after children `from..to` became `count` children:
@@ -460,16 +463,15 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   let holder = tree.Node { kind: 0, field: -1, start: 0, end: eof_index, kids: nodes }
   var fresh = build(c, holder, toks, bytes.slice(slice, 0, new_end - base.byte), 0, eof_index, Pos { byte: 0, line: 1, col: 1 }, -1, ids)
   let count = list.len(fresh.kids)
-  // the children being replaced: an item read again that comes out the
-  // same (kind, tokens, size) is the same item and keeps its id, and so
-  // do the items inside it
-  let before = list.slice(u.kids, i, j + 1)
   let old_slot = slot_of(u, i)
   // a window from the unit's start read the first piece again (i is 0)
   let leading = if from_start then list.len((list.first(fresh.pieces) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }).toks) - list.len((list.first(u.pieces) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }).toks) else 0
   u.node = renumber(u.node, i, j, count, old_slot, count - (j - i + 1) + leading)
   if from_start then { let _ = replace_first_piece(u, fresh) } else ()
-  let _ = splice(u, i, j, fresh)
+  // the children replaced: an item read again that comes out the same
+  // (kind, tokens, size) is the same item and keeps its id, and so do the
+  // items inside it
+  let before = splice(u, i, j, fresh)
   // when the window emptied and child i read a list's first item, the child
   // now at i is that list's first, if it read the rest of one
   if count == 0 and old_site == bare and rest != bare then { let _ = restamp_kid(u, i, bare, rest) } else ()
