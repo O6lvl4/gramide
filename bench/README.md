@@ -2380,6 +2380,33 @@ output identical to the reference:
 was 1.55x tree-sitter's when this stretch began. What loses now is the
 process floor, and what is still not here is incremental parsing.
 
+## A keystroke re-reads one item
+
+The parser stamps every node a recover site read; the incremental reader
+cuts the tree there and keeps each item's tokens and subtree relative to
+the item ([docs/incremental.md](../docs/incremental.md)). An edit walks
+down to the smallest item that holds it, re-lexes that window through the
+token after it, and parses the window with the site's body; anything that
+disagrees with what was there reads the whole file. Checked against the
+whole parse on every edit of random sequences over four corpora (17,000
+edits; and again with an unmatched brace every tenth edit).
+
+Medians over 1,000 edits, in-process, the same edits for tree-sitter's
+`ts_tree_edit` + reparse:
+
+| file | gramide | tree-sitter | whole parse |
+|---|---:|---:|---:|
+| Node `internal/quic/quic.js` (190 KB) | 41 µs | 105 µs | 3.4 ms |
+| TypeScript `compiler/parser.ts` (540 KB) | 75 µs | 128 µs | 9.5 ms |
+| TypeScript `compiler/checker.ts` (3.1 MB) | 126 µs | 565 µs | 57 ms |
+| Excalidraw `components/App.tsx` (465 KB) | 72 µs | 220 µs | 9.4 ms |
+
+Evidence: `docs/evidence/incremental-*.json` in gramide-javascript and
+gramide-typescript. Whole parsing did not move: TypeScript's `src/` still
+checks at 0.068 s on eight cores (0.066 before), Node's `lib/` at 0.030 s
+(0.029). The stamp is a pop and a push per recover item, and the verify
+path builds no nodes.
+
 ## The lexer compared strings
 
 The probe above put lexing 31 KB of Go at 0.66–0.78 ms — more than verifying

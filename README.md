@@ -62,6 +62,35 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
   `check` over many files, for a reason recorded there.
 - **`src/tables.almd`** — writes a compiled grammar down as Almide source,
   which is how every package's `src/table.almd` is made.
+- **`src/incremental.almd`**, **`src/keystrokes.almd`** — a parsed file kept
+  as recover items nested in recover items, so that an edit re-reads the
+  smallest item it touched ([docs/incremental.md](docs/incremental.md)); and
+  the keystroke benchmark `reparse-bench` runs, the same edit sequence the
+  tree-sitter harness in each language package replays.
+
+## Reading a file after an edit
+
+The parser stamps every node a `recover` or `recover_all` site read with
+that site. `incremental.from_parsed` cuts the tree there: each item keeps
+only its own tokens, in runs between its child items, every offset
+relative to the run, and the children's sizes beside them. An edit walks
+down to the deepest item that holds it whole, re-lexes that sibling window
+through the first token after it, parses the window with the site's body
+until it reaches that token, and puts the new items in; the bases above
+are sums of integers. If the lexer or the parser disagree with what was
+there — the token after the window came out different, or the window did
+not end where it starts — the answer is "read the whole file", and so is
+an edit beside an `ERROR` item, because recovery is not local. What comes
+out is checked against a whole parse of the same text, token for token
+and node for node, in the engine's tests and in each language package's
+random-edit check over its corpora.
+
+On `compiler/checker.ts` of TypeScript 5.9 (3.1 MB, one function of
+2.9 MB) a keystroke inside an identifier costs 126 µs at the median
+against 566 µs for tree-sitter's incremental parse and 57 ms for a whole
+parse ([gramide-typescript](https://github.com/O6lvl4/gramide-typescript),
+`docs/evidence/incremental-typescript-src.json`). A reader that wants the
+whole tree again materializes it, which is one pass and no parsing.
 
 ## Writing a language package
 
@@ -110,7 +139,8 @@ and the measurement that forced it — one took a 116k-line generated Go file
 from 188 s to 7.6 s — and what the native backend taught it about copying.
 [bench/README.md](bench/README.md) is the board: every performance change
 since, with its evidence in `docs/evidence/`. The per-language corpora,
-oracles and comparisons against tree-sitter live with each language.
+oracles, the comparisons against tree-sitter and the keystroke benchmarks
+live with each language.
 
 ## Build
 

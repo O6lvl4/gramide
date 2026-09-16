@@ -53,6 +53,28 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
   あります。
 - **`src/tables.almd`** — コンパイル済み文法を Almide ソースとして書き下す。各パッケージの
   `src/table.almd` はこれで作られます。
+- **`src/incremental.almd`**、**`src/keystrokes.almd`** — パースしたファイルを、回復項目の中に
+  回復項目が入れ子になった形で保持し、編集はそれが触れた最小の項目だけを読み直す
+  ([docs/incremental.md](docs/incremental.md))。そして `reparse-bench` が回すキー入力ベンチ。
+  各言語パッケージの tree-sitter ハーネスと同じ編集列を再生する。
+
+## 編集の後にファイルを読む
+
+パーサは `recover` / `recover_all` サイトが読んだノードにそのサイトの印を付ける。
+`incremental.from_parsed` はそこで木を切り、各項目は自分のトークンだけを、子項目の間の
+区間ごとに、区間の先頭からの相対位置で持つ。子の大きさは親の隣に並べておく。編集は、
+それを丸ごと含む最も深い項目まで降り、その兄弟の窓を次のトークンまで字句解析し直し、
+サイトの本体でそのトークンに届くまでパースし、新しい項目を差し込む。上の基準位置は
+整数の和だけで決まる。字句解析かパーサが以前と食い違えば(窓の次のトークンが変わった、
+窓がそこで終わらなかった)、答えは「全文を読め」になる。`ERROR` 項目の隣の編集も同じで、
+回復は局所的でないからだ。結果は同じテキストの全文パースとトークン単位・ノード単位で
+照合される。エンジンのテストと、各言語パッケージのコーパス上のランダム編集検証で。
+
+TypeScript 5.9 の `compiler/checker.ts`(3.1 MB、うち 2.9 MB が 1 つの関数)で、識別子の
+中への 1 キー入力は中央値 126 µs。tree-sitter の増分パースは 566 µs、全文パースは 57 ms
+([gramide-typescript](https://github.com/O6lvl4/gramide-typescript) の
+`docs/evidence/incremental-typescript-src.json`)。木全体が要る読み手は materialize する。
+1 パスで、パースはしない。
 
 ## 言語パッケージを書く
 
@@ -98,7 +120,7 @@ effect fn main() -> Unit = {
 [docs/design.md](docs/design.md) はエンジンの形を決めた各規則と、それを強いた計測を記録して
 います（そのひとつで 11.6 万行の生成 Go ファイルが 188 秒から 7.6 秒に）。
 [bench/README.md](bench/README.md) はその後のすべての性能変更の記録で、証拠は `docs/evidence/`
-にあります。言語ごとのコーパス、オラクル、tree-sitter との比較は各言語のリポジトリにあります。
+にあります。言語ごとのコーパス、オラクル、tree-sitter との比較、キー入力ベンチは各言語のリポジトリにあります。
 
 ## ビルド
 

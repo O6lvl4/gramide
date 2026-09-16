@@ -1,7 +1,9 @@
 {
   "src/about.almd": 0,
   "src/balance.almd": 27,
-  "src/cli.almd": 11,
+  "src/cli.almd": 13,
+  "src/incremental.almd": 27,
+  "src/keystrokes.almd": 13,
   "src/lang.almd": 3,
   "src/lex.almd": 47,
   "src/map.almd": 28,
