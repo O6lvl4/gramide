@@ -1766,6 +1766,15 @@ fn parse_item(c: Compiled, site: Int, num: List[Int], pos: Int) -> Option[(tree.
   if o.ok and list.len(out) == 1 then { stamp(out, 0, site); match list.pop(out) { some(n) => some((n, o.pos)), none => none } } else none
 }
 
+// Why an item did not parse at `pos`: the collecting pass, for a trace.
+fn explain_item(c: Compiled, site: Int, source: Bytes, toks: List[tree.Token], num: List[Int], pos: Int) -> String = {
+  var out: List[tree.Node] = []
+  var exp: List[Int] = []
+  var far: List[Int] = far_cell()
+  let _ = parse_rule(c, num, out, exp, far, fresh(true), body_of(c, site), pos)
+  format_failure(failure_at(c, source, toks, far_of(far), exp))
+}
+
 // How much of the tree the parser had to give up on.
 // The number a recovered range answers to, for a reader that wants to count or
 // exclude them without knowing how the engine spells it.

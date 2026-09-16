@@ -380,7 +380,10 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   }
   // no tokens at all is a window whose items were deleted; tokens that no
   // item took are a failure
-  guard fine and pos == eof_index and (eof_index == 0 or not list.is_empty(nodes)) else { list.push(u.trace, "no parse at token " + int.to_string(pos) + " of " + int.to_string(eof_index) + " in: " + string.take(bytes.to_string_lossy(slice), 160)); NO_PARSE }
+  guard fine and pos == eof_index and (eof_index == 0 or not list.is_empty(nodes)) else {
+    list.push(u.trace, "no parse at token " + int.to_string(pos) + " of " + int.to_string(eof_index) + ": " + parser.explain_item(c, u.child_site, slice, toks, num, pos) + " in: " + string.take(bytes.to_string_lossy(slice), 600))
+    NO_PARSE
+  }
   // the token at `eof_index` is where the window ends: the head that follows
   // it, or the file's EOF; either is excluded from the items and gives their end
   if at_eof then () else { let _ = list.pop(toks); list.push(toks, head) }
@@ -503,15 +506,27 @@ fn node_difference(a: tree.Node, b: tree.Node, path: String, names: nametable.Na
     + " " + int.to_string(a.start) + "-" + int.to_string(a.end) + " vs " + int.to_string(b.start) + "-" + int.to_string(b.end) + " kids " + int.to_string(list.len(a.kids)) + "/" + int.to_string(list.len(b.kids))
     + " a:[" + list.join(list.map(a.kids, (k) => nametable.name_at(names, k.kind) + " " + int.to_string(k.start) + "-" + int.to_string(k.end)), ", ") + "]"
     + " b:[" + list.join(list.map(b.kids, (k) => nametable.name_at(names, k.kind) + " " + int.to_string(k.start) + "-" + int.to_string(k.end)), ", ") + "]"
-  else {
-    var out = ""
-    var k = 0
-    while out == "" and k < list.len(a.kids) {
-      out = node_difference(list.get(a.kids, k) ?? tree.node(0, [], 0, 0), list.get(b.kids, k) ?? tree.node(0, [], 0, 0), path + "/" + int.to_string(k), names)
-      k = k + 1
+  else deeper(a, b, path, names)
+// the first kid pair that differs, and its own chain below it
+fn deeper(a: tree.Node, b: tree.Node, path: String, names: nametable.Names) -> String = {
+  var out = ""
+  var k = 0
+  while out == "" and k < int.min(list.len(a.kids), list.len(b.kids)) {
+    let x = list.get(a.kids, k) ?? tree.node(0, [], 0, 0)
+    let y = list.get(b.kids, k) ?? tree.node(0, [], 0, 0)
+    if same_node(x, y) then () else {
+      let here = if x.kind != y.kind or x.field != y.field or x.start != y.start or x.end != y.end or list.len(x.kids) != list.len(y.kids) then
+        path + "/" + int.to_string(k) + " " + nametable.name_at(names, x.kind) + " " + int.to_string(x.start) + "-" + int.to_string(x.end) + " vs " + int.to_string(y.start) + "-" + int.to_string(y.end)
+        + " a:[" + list.join(list.map(x.kids, (m) => nametable.name_at(names, m.kind) + " " + int.to_string(m.start) + "-" + int.to_string(m.end)), ", ") + "]"
+        + " b:[" + list.join(list.map(y.kids, (m) => nametable.name_at(names, m.kind) + " " + int.to_string(m.start) + "-" + int.to_string(m.end)), ", ") + "]"
+        else ""
+      let below = deeper(x, y, path + "/" + int.to_string(k), names)
+      out = if here == "" then below else here + (if below == "" then "" else "\n    then " + below)
     }
-    out
+    k = k + 1
   }
+  out
+}
 
 // The text after an edit.
 fn apply(source: Bytes, edit: Edit, text: Bytes) -> Bytes =
