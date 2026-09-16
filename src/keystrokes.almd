@@ -76,8 +76,11 @@ fn whole_of(c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token],
 // instead of a letter, so the file stops parsing, and the edits after it
 // land in a file with an ERROR item; the check against the recovering
 // whole parse still has to hold, and a window inside the damage falls back.
-effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_every: Int, dump: String, breaking: Bool) -> Result[String, String] = {
+// `slow` > 0 prints that many of the slowest edits to stderr, each with
+// its position, line and the text around it: where the items are big.
+effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_every: Int, dump: String, breaking: Bool, slow: Int) -> Result[String, String] = {
   let scan = l.tokenize
+  var timed: List[(Int, Int, Int)] = []
   let c = l.grammar
   var source = source0
   let first = whole_of(c, scan, source)!
@@ -111,6 +114,7 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
     } else ()
     let t1 = datetime.monotonic_ns()
     list.push(report.incremental_ns, t1 - t0)
+    if slow > 0 then list.push(timed, (t1 - t0, pos, i)) else ()
     if verify_every > 0 and i % verify_every == 0 then {
       let w0 = datetime.monotonic_ns()
       let whole = whole_of(c, scan, source)!
@@ -124,5 +128,12 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
     i = i + 1
   }
   if dump != "" then { let _ = fs.write(dump, bytes.to_string_lossy(source)) } else ()
+  if slow > 0 then {
+    let by_time = list.reverse(list.sort_by(timed, (t) => t.0))
+    for t in list.take(by_time, slow) {
+      let line = 1 + list.count(bytes.to_list(bytes.slice(source, 0, t.1)), (b) => b == 10)
+      eprintln("slow: " + us(t.0) + " us, edit " + int.to_string(t.2) + " at " + int.to_string(t.1) + " line " + int.to_string(line) + ": " + string.replace(bytes.to_string_lossy(bytes.slice(source, int.max(0, t.1 - 40), int.min(bytes.len(source), t.1 + 40))), "\n", " "))
+    }
+  } else ()
   ok(render(report))
 }

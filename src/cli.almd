@@ -22,7 +22,7 @@
 //   <name> reparse <file> --edit START:OLD_END:NEW_END --new <edited file>
 //                             the file's symbols after an edit, re-read incrementally from
 //                             the whole parse of the file (stderr says which it was)
-//   <name> reparse-bench <file> [--edits N] [--seed S] [--verify K] [--breaking]
+//   <name> reparse-bench <file> [--edits N] [--seed S] [--verify K] [--breaking] [--slow N]
 //                             N keystroke edits re-read incrementally, timed; every K
 //                             edits the result is checked against a whole parse
 //
@@ -55,7 +55,7 @@ fn usage(p: Program) -> String = "usage: " + p.name + " languages\n       " + p.
   + p.name + " (parse | tokens | outline | symbols | symbols-recovered | tags) <file>\n       "
   + p.name + " (check | balance) <file>...\n       " + p.name + " map <dir> [--budget N] [--task TEXT]\n       "
   + p.name + " reparse <file> --edit START:OLD_END:NEW_END --new <edited file>\n       "
-  + p.name + " reparse-bench <file> [--edits N] [--seed S] [--verify K] [--breaking]"
+  + p.name + " reparse-bench <file> [--edits N] [--seed S] [--verify K] [--breaking] [--slow N]"
 
 // One line per component, so a bug report can say exactly what was linked.
 fn version_lines(p: Program) -> List[String] =
@@ -246,7 +246,7 @@ effect fn run_reparse_bench(packages: List[package_api.Definition], argv: List[S
   let verify = int.parse(option_after(argv, "--verify") ?? "50") ?? 50
   let l = lang.language_of(packages, path)!
   let src = read(path)!
-  println(keystrokes.run(l, bytes.from_string(src), edits, seed, verify, option_after(argv, "--dump") ?? "", list.contains(argv, "--breaking"))!)
+  println(keystrokes.run(l, bytes.from_string(src), edits, seed, verify, option_after(argv, "--dump") ?? "", list.contains(argv, "--breaking"), int.parse(option_after(argv, "--slow") ?? "0") ?? 0)!)
   ok(())
 }
 
