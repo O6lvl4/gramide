@@ -87,9 +87,11 @@ fn build(n: tree.Node, toks: List[tree.Token], source: Bytes, t_begin: Int, t_en
   while k < count {
     let ck = list.get(children, k) ?? tree.node(0, [], 0, 0)
     list.push(c_start, ck.start)
-    // to the separators after it; the next child may sit in another block,
-    // with this unit's own tokens between
-    list.push(c_end, own_after(toks, source, ck.end, t_end))
+    // to the separators after it, but never into the next child: a recovered
+    // parse can resume on a `;` right after an ERROR item. The next child
+    // may sit in another block, with this unit's own tokens between.
+    let next_start = match list.get(children, k + 1) { some(nx) => nx.start, none => t_end }
+    list.push(c_end, int.min(own_after(toks, source, ck.end, t_end), next_start))
     k = k + 1
   }
   var u = empty_unit()
