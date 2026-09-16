@@ -44,16 +44,20 @@ type Piece = { toks: List[tree.Token], atoms: List[Int], size: Int, lines: Int, 
 // integers and never reads a child.
 // `id` names the item across edits: an item that is not read again keeps
 // it, and one read again alone in place of one keeps it too.
+// The runs' and the children's measures stand in integer lists beside
+// them (`piece_sizes` …, `kid_sizes` …): an edit walks through integers
+// and never reads a run's tokens or a child's tree to find its way.
 type Item = {
-  id: Int, site: Int, child_site: Int, node: tree.Node, trace: List[String],
+  id: Int, site: Int, child_site: Int, head_len: Int, node: tree.Node, trace: List[String],
   pieces: List[Piece], kids: List[Item],
-  kid_sizes: List[Int], kid_lines: List[Int], kid_tails: List[Int], kid_toks: List[Int], kid_heads: List[Int], kid_head_lens: List[Int], kid_kinds: List[Int],
+  piece_sizes: List[Int], piece_lines: List[Int], piece_tails: List[Int], piece_toks: List[Int],
+  kid_sizes: List[Int], kid_lines: List[Int], kid_tails: List[Int], kid_toks: List[Int], kid_heads: List[Int], kid_head_lens: List[Int], kid_kinds: List[Int], kid_sites: List[Int],
   size: Int, lines: Int, tail: Int, toks: Int,
 }
 
 type Document = { root: Item, names: nametable.Names, trace: List[String], next_id: Int }
 
-fn empty_unit() -> Item = Item { id: 0, site: -1, child_site: -1, node: tree.node(0, [], 0, 0), trace: [], pieces: [], kids: [], kid_sizes: [], kid_lines: [], kid_tails: [], kid_toks: [], kid_heads: [], kid_head_lens: [], kid_kinds: [], size: 0, lines: 0, tail: 0, toks: 0 }
+fn empty_unit() -> Item = Item { id: 0, site: -1, child_site: -1, head_len: 0, node: tree.node(0, [], 0, 0), trace: [], pieces: [], kids: [], piece_sizes: [], piece_lines: [], piece_tails: [], piece_toks: [], kid_sizes: [], kid_lines: [], kid_tails: [], kid_toks: [], kid_heads: [], kid_head_lens: [], kid_kinds: [], kid_sites: [], size: 0, lines: 0, tail: 0, toks: 0 }
 
 fn rebase_token(t: tree.Token, byte: Int, line: Int, col: Int) -> tree.Token =
   tree.Token { kind: t.kind, start: t.start - byte, end: t.end - byte, line: t.line - line + 1, col: if t.line == line then t.col - col + 1 else t.col }
@@ -119,6 +123,8 @@ fn build(c: parser.Compiled, n: tree.Node, toks: List[tree.Token], source: Bytes
     let size = end.byte - piece_start.byte
     let lines = end.line - piece_start.line
     own_count = own_count + (tb - ta)
+    if k == 0 then u.head_len = (match list.first(piece_toks) { some(t) => t.end - t.start, none => 0 }) else ()
+    list.push(u.piece_sizes, size); list.push(u.piece_lines, lines); list.push(u.piece_tails, tail_of(size, lines, end)); list.push(u.piece_toks, list.len(piece_toks))
     list.push(u.pieces, Piece { toks: piece_toks, atoms: piece_atoms, size: size, lines: lines, tail: tail_of(size, lines, end) })
     if k < count then {
       let cs = list.get(c_start, k) ?? 0
@@ -127,7 +133,7 @@ fn build(c: parser.Compiled, n: tree.Node, toks: List[tree.Token], source: Bytes
       let head = list.get(toks, cs) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 1, col: 1 }
       let kid = build(c, ck, toks, source, cs, ce, Pos { byte: head.start, line: head.line, col: head.col }, parser.site_of(ck), ids)
       list.push(u.kid_sizes, kid.size); list.push(u.kid_lines, kid.lines); list.push(u.kid_tails, kid.tail); list.push(u.kid_toks, kid.toks)
-      list.push(u.kid_heads, head.kind); list.push(u.kid_head_lens, head.end - head.start); list.push(u.kid_kinds, ck.kind)
+      list.push(u.kid_heads, head.kind); list.push(u.kid_head_lens, head.end - head.start); list.push(u.kid_kinds, ck.kind); list.push(u.kid_sites, parser.site_of(ck))
       list.push(u.kids, kid)
       ta = ce
     } else ()
@@ -272,8 +278,7 @@ fn kid_bases(u: Item, base: Pos) -> List[Pos] = {
   var p = base
   var k = 0
   while k < list.len(u.kids) {
-    let piece = list.get(u.pieces, k) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }
-    p = after(p, piece.size, piece.lines, piece.tail)
+    p = after(p, list.get(u.piece_sizes, k) ?? 0, list.get(u.piece_lines, k) ?? 0, list.get(u.piece_tails, k) ?? 0)
     list.push(out, p)
     p = after(p, list.get(u.kid_sizes, k) ?? 0, list.get(u.kid_lines, k) ?? 0, list.get(u.kid_tails, k) ?? 0)
     k = k + 1
@@ -287,11 +292,11 @@ fn retotal(mut u: Item, delta: Int) -> Unit = {
   var tail = 0
   var toks = 0
   var k = 0
-  while k < list.len(u.pieces) {
-    let piece = list.get(u.pieces, k) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }
-    lines = lines + piece.lines
-    tail = if piece.lines > 0 then piece.tail else tail + piece.size
-    toks = toks + list.len(piece.toks)
+  while k < list.len(u.piece_sizes) {
+    let pl = list.get(u.piece_lines, k) ?? 0
+    lines = lines + pl
+    tail = if pl > 0 then list.get(u.piece_tails, k) ?? 0 else tail + (list.get(u.piece_sizes, k) ?? 0)
+    toks = toks + (list.get(u.piece_toks, k) ?? 0)
     if k < list.len(u.kids) then {
       let kl = list.get(u.kid_lines, k) ?? 0
       lines = lines + kl
@@ -315,29 +320,29 @@ fn splice(mut u: Item, from: Int, to: Int, mut fresh: Item) -> List[Item] = {
   while list.len(u.kids) > to + 1 {
     match list.pop(u.kids) { some(x) => list.push(aside, x), none => () }
     list.push(aside_i, list.pop(u.kid_sizes) ?? 0); list.push(aside_i, list.pop(u.kid_lines) ?? 0); list.push(aside_i, list.pop(u.kid_tails) ?? 0)
-    list.push(aside_i, list.pop(u.kid_toks) ?? 0); list.push(aside_i, list.pop(u.kid_heads) ?? 0); list.push(aside_i, list.pop(u.kid_head_lens) ?? 0); list.push(aside_i, list.pop(u.kid_kinds) ?? 0)
+    list.push(aside_i, list.pop(u.kid_toks) ?? 0); list.push(aside_i, list.pop(u.kid_heads) ?? 0); list.push(aside_i, list.pop(u.kid_head_lens) ?? 0); list.push(aside_i, list.pop(u.kid_kinds) ?? 0); list.push(aside_i, list.pop(u.kid_sites) ?? 0)
   }
   var replaced: List[Item] = []
   while list.len(u.kids) > from {
     match list.pop(u.kids) { some(x) => list.push(replaced, x), none => () }
     let _ = list.pop(u.kid_sizes); let _ = list.pop(u.kid_lines); let _ = list.pop(u.kid_tails)
-    let _ = list.pop(u.kid_toks); let _ = list.pop(u.kid_heads); let _ = list.pop(u.kid_head_lens); let _ = list.pop(u.kid_kinds)
+    let _ = list.pop(u.kid_toks); let _ = list.pop(u.kid_heads); let _ = list.pop(u.kid_head_lens); let _ = list.pop(u.kid_kinds); let _ = list.pop(u.kid_sites)
   }
   var rev: List[Item] = []
   var rev_i: List[Int] = []
   while list.len(fresh.kids) > 0 {
     match list.pop(fresh.kids) { some(x) => list.push(rev, x), none => () }
-    list.push(rev_i, list.pop(fresh.kid_kinds) ?? 0); list.push(rev_i, list.pop(fresh.kid_head_lens) ?? 0); list.push(rev_i, list.pop(fresh.kid_heads) ?? 0); list.push(rev_i, list.pop(fresh.kid_toks) ?? 0)
+    list.push(rev_i, list.pop(fresh.kid_sites) ?? 0); list.push(rev_i, list.pop(fresh.kid_kinds) ?? 0); list.push(rev_i, list.pop(fresh.kid_head_lens) ?? 0); list.push(rev_i, list.pop(fresh.kid_heads) ?? 0); list.push(rev_i, list.pop(fresh.kid_toks) ?? 0)
     list.push(rev_i, list.pop(fresh.kid_tails) ?? 0); list.push(rev_i, list.pop(fresh.kid_lines) ?? 0); list.push(rev_i, list.pop(fresh.kid_sizes) ?? 0)
   }
   while list.len(rev) > 0 {
     match list.pop(rev) { some(x) => list.push(u.kids, x), none => () }
     list.push(u.kid_sizes, list.pop(rev_i) ?? 0); list.push(u.kid_lines, list.pop(rev_i) ?? 0); list.push(u.kid_tails, list.pop(rev_i) ?? 0)
-    list.push(u.kid_toks, list.pop(rev_i) ?? 0); list.push(u.kid_heads, list.pop(rev_i) ?? 0); list.push(u.kid_head_lens, list.pop(rev_i) ?? 0); list.push(u.kid_kinds, list.pop(rev_i) ?? 0)
+    list.push(u.kid_toks, list.pop(rev_i) ?? 0); list.push(u.kid_heads, list.pop(rev_i) ?? 0); list.push(u.kid_head_lens, list.pop(rev_i) ?? 0); list.push(u.kid_kinds, list.pop(rev_i) ?? 0); list.push(u.kid_sites, list.pop(rev_i) ?? 0)
   }
   while list.len(aside) > 0 {
     match list.pop(aside) { some(x) => list.push(u.kids, x), none => () }
-    list.push(u.kid_kinds, list.pop(aside_i) ?? 0); list.push(u.kid_head_lens, list.pop(aside_i) ?? 0); list.push(u.kid_heads, list.pop(aside_i) ?? 0); list.push(u.kid_toks, list.pop(aside_i) ?? 0)
+    list.push(u.kid_sites, list.pop(aside_i) ?? 0); list.push(u.kid_kinds, list.pop(aside_i) ?? 0); list.push(u.kid_head_lens, list.pop(aside_i) ?? 0); list.push(u.kid_heads, list.pop(aside_i) ?? 0); list.push(u.kid_toks, list.pop(aside_i) ?? 0)
     list.push(u.kid_tails, list.pop(aside_i) ?? 0); list.push(u.kid_lines, list.pop(aside_i) ?? 0); list.push(u.kid_sizes, list.pop(aside_i) ?? 0)
   }
   // one piece before every child and one after the last: the pieces between
@@ -351,7 +356,19 @@ fn splice(mut u: Item, from: Int, to: Int, mut fresh: Item) -> List[Item] = {
   while m < count { list.push(u.pieces, Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }); m = m + 1 }
   list.push(u.pieces, closing)
   while list.len(aside_p) > 0 { match list.pop(aside_p) { some(x) => list.push(u.pieces, x), none => () } }
+  let _ = resync_pieces(u)
   list.reverse(replaced)
+}
+// the runs' measures read again from the runs, after they changed
+fn resync_pieces(mut u: Item) -> Unit = {
+  var sizes: List[Int] = list.with_capacity(list.len(u.pieces))
+  var lines: List[Int] = list.with_capacity(list.len(u.pieces))
+  var tails: List[Int] = list.with_capacity(list.len(u.pieces))
+  var toks: List[Int] = list.with_capacity(list.len(u.pieces))
+  for piece in u.pieces { list.push(sizes, piece.size); list.push(lines, piece.lines); list.push(tails, piece.tail); list.push(toks, list.len(piece.toks)) }
+  u.piece_sizes = sizes; u.piece_lines = lines; u.piece_tails = tails; u.piece_toks = toks
+  u.head_len = match list.first(u.pieces) { some(piece) => (match list.first(piece.toks) { some(t) => t.end - t.start, none => 0 }), none => 0 }
+  ()
 }
 
 // The parent's subtree after children `from..to` became `count` children:
@@ -443,7 +460,7 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   let eof_index = if at_eof then list.len(toks) - 1 else list.len(toks) - 2
   // the window's first item stands where child i stood, and takes its site:
   // the one that reads a list's first item, or the one that reads the rest
-  let old_site = match list.get(u.kids, i) { some(k) => parser.site_of(k.node), none => u.child_site }
+  let old_site = list.get(u.kid_sites, i) ?? u.child_site
   let bare = parser.first_site_of(c, old_site)
   let rest = parser.rest_site_of(c, bare)
   // a window from the unit's start re-lexes the unit's own tokens before
@@ -537,6 +554,7 @@ fn restamp_kid(mut u: Item, at: Int, first: Int, rest: Int) -> Unit = {
     none => (),
   }
   while list.len(aside) > 0 { match list.pop(aside) { some(x) => list.push(u.kids, x), none => () } }
+  if (list.get(u.kid_sites, at) ?? -1) == rest then u.kid_sites = list.set(u.kid_sites, at, first) else ()
   ()
 }
 fn replace_first_piece(mut u: Item, fresh: Item) -> Unit = {
@@ -545,12 +563,13 @@ fn replace_first_piece(mut u: Item, fresh: Item) -> Unit = {
   let _ = list.pop(u.pieces)
   list.push(u.pieces, list.first(fresh.pieces) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 })
   while list.len(aside) > 0 { match list.pop(aside) { some(x) => list.push(u.pieces, x), none => () } }
+  let _ = resync_pieces(u)
   ()
 }
 fn slot_of(u: Item, k: Int) -> Int = {
   var slot = 0
   var m = 0
-  while m <= k { slot = slot + list.len((list.get(u.pieces, m) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }).toks) + (if m < k then 1 else 0); m = m + 1 }
+  while m <= k { slot = slot + (list.get(u.piece_toks, m) ?? 0) + (if m < k then 1 else 0); m = m + 1 }
   slot
 }
 
@@ -565,9 +584,14 @@ fn own_edit(mut u: Item, base: Pos, edit: Edit, source: Bytes, tokenize: (String
   let piece = list.get(u.pieces, k) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }
   // the tokens the edit touches (closed intervals: a letter put right after
   // a name extends it): none, or one that is retyped and spells no literal
-  let touched = list.filter(list.range(0, list.len(piece.toks)), (m) => match list.get(piece.toks, m) { some(t) => not (edit.old_end < start.byte + t.start or edit.start > start.byte + t.end), none => false })
-  guard list.len(touched) <= 1 else ME
-  let retyped = list.first(touched) ?? -1
+  var touched = 0
+  var retyped = -1
+  var m = 0
+  while touched <= 1 and m < list.len(piece.toks) {
+    match list.get(piece.toks, m) { some(t) => if not (edit.old_end < start.byte + t.start or edit.start > start.byte + t.end) then { touched = touched + 1; retyped = m } else (), none => () }
+    m = m + 1
+  }
+  guard touched <= 1 else ME
   guard retyped < 0 or (list.get(piece.atoms, retyped) ?? -1) < 0 else ME
   let delta = edit.new_end - edit.old_end
   let size = piece.size + delta
@@ -589,8 +613,12 @@ fn own_edit(mut u: Item, base: Pos, edit: Edit, source: Bytes, tokenize: (String
   match fresh {
     none => ME,
     some(toks) => {
-      let atoms = list.map(toks, (t) => parser.atom_at(c, slice, t.start, t.end))
+      var atoms: List[Int] = list.with_capacity(list.len(toks))
+      var n = 0
+      while n < list.len(toks) { match list.get(toks, n) { some(t) => list.push(atoms, parser.atom_at(c, slice, t.start, t.end)), none => () }; n = n + 1 }
       guard retyped < 0 or (list.get(atoms, retyped) ?? -1) < 0 else ME
+      if k == 0 then u.head_len = (match list.first(toks) { some(t) => t.end - t.start, none => 0 }) else ()
+      u.piece_sizes = list.set(u.piece_sizes, k, size); u.piece_lines = list.set(u.piece_lines, k, lines); u.piece_tails = list.set(u.piece_tails, k, tail)
       u.pieces = list.set(u.pieces, k, Piece { toks: toks, atoms: atoms, size: size, lines: lines, tail: tail })
       let _ = retotal(u, delta)
       DONE
@@ -615,10 +643,10 @@ fn run_holding(u: Item, base: Pos, edit: Edit) -> (Int, Pos) = {
   var k = 0
   var found = -1
   var start = base
-  while found < 0 and k < list.len(u.pieces) {
-    let piece = list.get(u.pieces, k) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }
-    if edit.start >= p.byte and edit.old_end <= p.byte + piece.size then { found = k; start = p } else ()
-    p = after(p, piece.size, piece.lines, piece.tail)
+  while found < 0 and k < list.len(u.piece_sizes) {
+    let size = list.get(u.piece_sizes, k) ?? 0
+    if edit.start >= p.byte and edit.old_end <= p.byte + size then { found = k; start = p } else ()
+    p = after(p, size, list.get(u.piece_lines, k) ?? 0, list.get(u.piece_tails, k) ?? 0)
     if k < list.len(u.kids) then p = after(p, list.get(u.kid_sizes, k) ?? 0, list.get(u.kid_lines, k) ?? 0, list.get(u.kid_tails, k) ?? 0) else ()
     k = k + 1
   }
@@ -749,7 +777,7 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
       let kid_tail = kid.tail
       let kid_toks = kid.toks
       // the child's head may have been retyped: its length is this unit's to know
-      let kid_head_len = match list.first((list.first(kid.pieces) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }).toks) { some(t) => t.end - t.start, none => list.get(u.kid_head_lens, i) ?? 0 }
+      let kid_head_len = kid.head_len
       while list.len(kid.trace) > 0 { match list.pop(kid.trace) { some(t) => list.push(u.trace, t), none => () } }
       list.push(u.kids, kid)
       while list.len(aside) > 0 { match list.pop(aside) { some(x) => list.push(u.kids, x), none => () } }
@@ -768,7 +796,7 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
     else {
       // an edit at a child's first byte can join it to the child before,
       // when nothing of this unit's own stands between them
-      let adjacent = i > 0 and (match list.get(u.pieces, i) { some(piece) => list.is_empty(piece.toks), none => false })
+      let adjacent = i > 0 and (list.get(u.piece_toks, i) ?? 1) == 0
       let from = if head_edit and adjacent then i - 1 else i
       if from_start then window_from(u, base, from, j, bases, delta, source, tokenize, c, prelude_untouched(u, base, edit), ids) else read_window(u, from, j, bases, delta, source, tokenize, c, ids)
     }
