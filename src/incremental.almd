@@ -83,7 +83,7 @@ fn find_units(n: tree.Node, mut out: List[tree.Node]) -> Unit = {
 // The unit for stamped node `n` over `toks` (coordinates of one slice):
 // its tokens are [t_begin, t_end) — the node's, then the separators to the
 // next item's head — and it starts at `start` in the slice.
-fn build(c: parser.Compiled, n: tree.Node, toks: List[tree.Token], source: Bytes, t_begin: Int, t_end: Int, start: Pos, site: Int, mut ids: List[Int]) -> Item = {
+fn build(mut c: parser.Compiled, n: tree.Node, toks: List[tree.Token], source: Bytes, t_begin: Int, t_end: Int, start: Pos, site: Int, mut ids: List[Int]) -> Item = {
   let source_size = bytes.len(source)
   var children: List[tree.Node] = []
   let _ = find_units(n, children)
@@ -186,7 +186,7 @@ fn cut(n: tree.Node, t_begin: Int, c_start: List[Int], c_end: List[Int], depth: 
 
 // The document of a whole-file parse. The root unit is the file: its own
 // tokens are what lies before the first item and the EOF after the last.
-fn from_parsed(p: parser.Parsed, source: Bytes, c: parser.Compiled) -> Document = {
+fn from_parsed(p: parser.Parsed, source: Bytes, mut c: parser.Compiled) -> Document = {
   var ids = [1]
   let root = build(c, p.root, p.toks, source, 0, list.len(p.toks), Pos { byte: 0, line: 1, col: 1 }, -1, ids)
   Document { root: root, names: p.names, trace: [], next_id: list.first(ids) ?? 1 }
@@ -397,7 +397,7 @@ fn renumber(n: tree.Node, from: Int, to: Int, count: Int, slot_from: Int, slot_d
 // its first item at one recover site and `sep item` at another: the first
 // item is stamped with `first_stamp`, the rest with `rest_stamp`, as the
 // whole parse would. The flag is false when an item could not be read.
-fn read_items(c: parser.Compiled, site: Int, first_stamp: Int, rest_stamp: Int, num: List[Int], toks: List[tree.Token], slice: Bytes, from: Int, eof_index: Int) -> (List[tree.Node], Int, Bool) = {
+fn read_items(mut c: parser.Compiled, site: Int, first_stamp: Int, rest_stamp: Int, num: List[Int], toks: List[tree.Token], slice: Bytes, from: Int, eof_index: Int) -> (List[tree.Node], Int, Bool) = {
   var nodes: List[tree.Node] = []
   var pos = from
   var fine = true
@@ -419,7 +419,7 @@ fn read_items(c: parser.Compiled, site: Int, first_stamp: Int, rest_stamp: Int, 
 // Re-read children `i..j` of `u` from `source`, whose bytes for them now
 // run from `base.byte` to `new_end`; `next` is the byte where the token
 // after them starts, with its kind and length.
-fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, from_start: Bool, skip: Int, mut ids: List[Int]) -> Int = {
+fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], mut c: parser.Compiled, from_start: Bool, skip: Int, mut ids: List[Int]) -> Int = {
   // the token after the window: the first of this unit's own that follow
   // (`}`, `else`, the EOF), or the next child's head when none do
   var head_kind = -1
@@ -578,7 +578,7 @@ fn slot_of(u: Item, k: Int) -> Int = {
 // length for length (a comment closed or opened by the edit gives others,
 // or none, and the ordinary path follows); then only the run's sizes and
 // its tokens' positions change. DONE, or ME when this does not apply.
-fn own_edit(mut u: Item, base: Pos, edit: Edit, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
+fn own_edit(mut u: Item, base: Pos, edit: Edit, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], mut c: parser.Compiled) -> Int = {
   let (k, start) = run_holding(u, base, edit)
   guard k >= 0 else ME
   let piece = list.get(u.pieces, k) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }
@@ -753,7 +753,7 @@ fn locate(u: Item, base: Pos, bases: List[Pos], edit: Edit) -> (Int, Int, Bool, 
   } else ()
   (i, j, from_start, outside)
 }
-fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, mut ids: List[Int]) -> Int = {
+fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], mut c: parser.Compiled, mut ids: List[Int]) -> Int = {
   let delta = edit.new_end - edit.old_end
   let bases = kid_bases(u, base)
   let (i, j, from_start, outside) = locate(u, base, bases, edit)
@@ -802,7 +802,7 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
     }
   }
 }
-fn read_window(mut u: Item, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, mut ids: List[Int]) -> Int = {
+fn read_window(mut u: Item, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], mut c: parser.Compiled, mut ids: List[Int]) -> Int = {
   let base = list.get(bases, i) ?? Pos { byte: 0, line: 1, col: 1 }
   let end = (list.get(bases, j) ?? base).byte + (list.get(u.kid_sizes, j) ?? 0) + delta
   let status = rewindow(u, i, j, base, end, source, tokenize, c, false, 0, ids)
@@ -833,7 +833,7 @@ fn prelude_same(toks: List[tree.Token], u: Item, skip: Int) -> Bool = {
 }
 // the same, with the window starting where the unit itself starts, so that
 // the unit's first piece is read again with the first child
-fn window_from(mut u: Item, base: Pos, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, skip: Int, mut ids: List[Int]) -> Int = {
+fn window_from(mut u: Item, base: Pos, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], mut c: parser.Compiled, skip: Int, mut ids: List[Int]) -> Int = {
   let end = (list.get(bases, j) ?? base).byte + (list.get(u.kid_sizes, j) ?? 0) + delta
   let status = rewindow(u, i, j, base, end, source, tokenize, c, true, skip, ids)
   if status == DONE then { let _ = retotal(u, delta); DONE } else status
@@ -842,10 +842,10 @@ fn window_from(mut u: Item, base: Pos, i: Int, j: Int, bases: List[Pos], delta: 
 // Re-read what an edit touched. `source` is the text after the edit. True
 // when the document now describes `source`; false when the caller must
 // parse the whole file (the document is then unchanged).
-fn reparse(mut doc: Document, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Bool =
+fn reparse(mut doc: Document, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], mut c: parser.Compiled) -> Bool =
   reparse_status(doc, source, edit, tokenize, c) == DONE
 // DONE, or why not: ME at the root means the edit fell in the file's own tokens
-fn reparse_status(mut doc: Document, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
+fn reparse_status(mut doc: Document, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], mut c: parser.Compiled) -> Int = {
   var ids = [doc.next_id]
   let status = reparse_in(doc.root, Pos { byte: 0, line: 1, col: 1 }, source, edit, tokenize, c, ids)
   doc.next_id = list.first(ids) ?? doc.next_id
@@ -935,12 +935,12 @@ fn item_grammar() -> parser.Grammar = parser.grammar("source_file", [
     parser.r("block"),
   ])),
 ])
-fn whole(c: parser.Compiled, text: String) -> parser.Parsed = match scan(text, false) {
+fn whole(mut c: parser.Compiled, text: String) -> parser.Parsed = match scan(text, false) {
   ok(toks) => match parser.parse_with(c, bytes.from_string(text), toks) { ok(p) => p, err(_) => parser.Parsed { root: tree.node(0, [], 0, 0), toks: [], names: c.names } },
   err(_) => parser.Parsed { root: tree.node(0, [], 0, 0), toks: [], names: c.names },
 }
 fn at(needle: String) -> Int = string.index_of(TEXT, needle) ?? -1
-fn edited(c: parser.Compiled, text: String, start: Int, old_end: Int, insert: String) -> (Bool, Bool, String) = {
+fn edited(mut c: parser.Compiled, text: String, start: Int, old_end: Int, insert: String) -> (Bool, Bool, String) = {
   let source = bytes.from_string(text)
   var doc = from_parsed(whole(c, text), source, c)
   let edit = Edit { start: start, old_end: old_end, new_end: start + bytes.len(bytes.from_string(insert)) }
@@ -953,7 +953,7 @@ fn edited(c: parser.Compiled, text: String, start: Int, old_end: Int, insert: St
 let TEXT = "fn a() { x = 1; y() }\nfn b() { p = q\n  { r(); s = 2 }\n}\n\nfn c() { }"
 
 test "the document of a whole parse materializes to the parse itself" {
-  let c = parser.compile(item_grammar())
+  var c = parser.compile(item_grammar())
   let p = whole(c, TEXT)
   assert(list.len(p.toks) > 0, "the test text must parse")
   let doc = from_parsed(p, bytes.from_string(TEXT), c)
@@ -964,7 +964,7 @@ test "the document of a whole parse materializes to the parse itself" {
 }
 
 test "an edit inside a statement re-reads that statement and matches the whole parse" {
-  let c = parser.compile(item_grammar())
+  var c = parser.compile(item_grammar())
   // `y()` -> `yes()` in a; `q` -> `qq` in b's first statement; `s = 2` -> `s = 22` in the nested block
   for case in [(at("y()"), at("y()") + 1, "yes"), (at("q\n"), at("q\n") + 1, "qq"), (at("2 }"), at("2 }") + 1, "22"), (at("}\n\nfn c"), at("}\n\nfn c"), "\n\n")] {
     let (inc, equal, why) = edited(c, TEXT, case.0, case.1, case.2)
@@ -974,7 +974,7 @@ test "an edit inside a statement re-reads that statement and matches the whole p
 }
 
 test "an edit that adds, removes or joins items or statements still matches" {
-  let c = parser.compile(item_grammar())
+  var c = parser.compile(item_grammar())
   for case in [(bytes.len(bytes.from_string(TEXT)), bytes.len(bytes.from_string(TEXT)), "\nfn d() { }"), (at("fn b"), at("fn c"), ""), (at("fn c"), at("fn c"), "fn e() { }\n"),
                (at("y() }") + 3, at("y() }") + 3, " z = 3;"), (at("x = 1;"), at("y()"), ""), (at("s = 2"), at("s = 2"), "t(); ")] {
     let (inc, equal, why) = edited(c, TEXT, case.0, case.1, case.2)
@@ -984,7 +984,7 @@ test "an edit that adds, removes or joins items or statements still matches" {
 }
 
 test "an edit that breaks an item falls back, and the document is untouched" {
-  let c = parser.compile(item_grammar())
+  var c = parser.compile(item_grammar())
   let source = bytes.from_string(TEXT)
   var doc = from_parsed(whole(c, TEXT), source, c)
   let edit = Edit { start: at("x = 1"), old_end: at("x = 1"), new_end: at("x = 1") + 1 }
@@ -1017,12 +1017,12 @@ fn line_grammar() -> parser.Grammar = {
   ])
 }
 let LINES = "# a comment before the package clause\npackage m\n\nfn a() {\n  x = 1\n  y()\n}\nfn b() {\n  p = q\n  {\n    r()\n    s = 2\n  }\n  if p {\n    u()\n  } else {\n    v = 3\n    w()\n  }\n}\n\nfn c() { }\n"
-fn line_whole(c: parser.Compiled, text: String) -> parser.Parsed = match line_scan(text, false) {
+fn line_whole(mut c: parser.Compiled, text: String) -> parser.Parsed = match line_scan(text, false) {
   ok(toks) => match parser.parse_with(c, bytes.from_string(text), toks) { ok(p) => p, err(_) => parser.Parsed { root: tree.node(0, [], 0, 0), toks: [], names: c.names } },
   err(_) => parser.Parsed { root: tree.node(0, [], 0, 0), toks: [], names: c.names },
 }
 fn line_at(needle: String) -> Int = string.index_of(LINES, needle) ?? -1
-fn line_edited(c: parser.Compiled, start: Int, old_end: Int, insert: String) -> (Bool, Bool, String) = {
+fn line_edited(mut c: parser.Compiled, start: Int, old_end: Int, insert: String) -> (Bool, Bool, String) = {
   let source = bytes.from_string(LINES)
   var doc = from_parsed(line_whole(c, LINES), source, c)
   let edit = Edit { start: start, old_end: old_end, new_end: start + bytes.len(bytes.from_string(insert)) }
@@ -1034,7 +1034,7 @@ fn line_edited(c: parser.Compiled, start: Int, old_end: Int, insert: String) -> 
 }
 
 test "items after the first, read at a second site behind a separator, keep that site's stamp" {
-  let c = parser.compile(line_grammar())
+  var c = parser.compile(line_grammar())
   let p = line_whole(c, LINES)
   assert(list.len(p.toks) > 0, "the test text must parse")
   let doc = from_parsed(p, bytes.from_string(LINES), c)
@@ -1063,7 +1063,7 @@ let COMMENTED = "# about a\nfn a() { x = 1; # after x\n y() }\n\n<# about b,\n  
 fn commented_at(needle: String) -> Int = string.index_of(COMMENTED, needle) ?? -1
 
 test "an edit inside a comment or in blank space moves positions and reads no item" {
-  let c = parser.compile(item_grammar())
+  var c = parser.compile(item_grammar())
   // in the comment before the first item, in a comment after a statement, in the
   // block comment between items, in a comment inside a block, a blank line added
   // between statements, a blank line added at the end, a letter deleted in a comment
@@ -1083,7 +1083,7 @@ test "an edit inside a comment or in blank space moves positions and reads no it
 }
 
 test "an edit that opens or closes a comment is not a comment edit" {
-  let c = parser.compile(item_grammar())
+  var c = parser.compile(item_grammar())
   // the block comment's close removed: the file no longer lexes, and the document is untouched
   let source = bytes.from_string(COMMENTED)
   var doc = from_parsed(whole(c, COMMENTED), source, c)
@@ -1105,7 +1105,7 @@ test "an edit that opens or closes a comment is not a comment edit" {
 // ── edits that retype one token ─────────────────────────────────────────
 let RETYPED = "fn alpha() { counter = 1; give counter\n  reader()\n}\nfn beta() { p = q }\n"
 fn retyped_at(needle: String) -> Int = string.index_of(RETYPED, needle) ?? -1
-fn retyped_edit(c: parser.Compiled, start: Int, old_end: Int, insert: String) -> (Int, Bool, String) = {
+fn retyped_edit(mut c: parser.Compiled, start: Int, old_end: Int, insert: String) -> (Int, Bool, String) = {
   let source = bytes.from_string(RETYPED)
   var doc = from_parsed(whole(c, RETYPED), source, c)
   let edit = Edit { start: start, old_end: old_end, new_end: start + bytes.len(bytes.from_string(insert)) }
@@ -1116,7 +1116,7 @@ fn retyped_edit(c: parser.Compiled, start: Int, old_end: Int, insert: String) ->
 }
 
 test "a letter typed or deleted inside a name moves positions and reads no item" {
-  let c = parser.compile(item_grammar())
+  var c = parser.compile(item_grammar())
   // a function's name, extended, cut, and a letter put after it; a statement's name; a number
   for case in [(retyped_at("alpha") + 2, retyped_at("alpha") + 2, "x"), (retyped_at("alpha") + 1, retyped_at("alpha") + 3, ""), (retyped_at("alpha") + 5, retyped_at("alpha") + 5, "s"),
                (retyped_at("counter =") + 3, retyped_at("counter =") + 3, "tt"), (retyped_at("reader") + 6, retyped_at("reader") + 6, "s"), (retyped_at("= 1;") + 2, retyped_at("= 1;") + 2, "2")] {
@@ -1127,7 +1127,7 @@ test "a letter typed or deleted inside a name moves positions and reads no item"
 }
 
 test "a name that spells or comes to spell a literal of the grammar is read the ordinary way" {
-  let c = parser.compile(item_grammar())
+  var c = parser.compile(item_grammar())
   // `give` -> `gives` (no longer the literal: the statement stops parsing), `giv` -> `give` would be the reverse; `counter` -> `give`
   // stays a name here since a bare name is no statement; the second `counter` -> `counte` keeps `give counte`
   for case in [(retyped_at("give") + 4, retyped_at("give") + 4, "s"), (retyped_at("give counter") + 5, retyped_at("give counter") + 12, "give"), (retyped_at("give counter") + 11, retyped_at("give counter") + 12, "")] {
@@ -1140,7 +1140,7 @@ test "a name that spells or comes to spell a literal of the grammar is read the 
 }
 
 test "a retyped head is what the next window is measured against" {
-  let c = parser.compile(item_grammar())
+  var c = parser.compile(item_grammar())
   let source = bytes.from_string(RETYPED)
   var doc = from_parsed(whole(c, RETYPED), source, c)
   // `reader` -> `reder`: the head of the third statement, retyped in place
@@ -1161,7 +1161,7 @@ test "a retyped head is what the next window is measured against" {
 }
 
 test "an edit in a comment after the last item, or in a file with no item, reads nothing" {
-  let c = parser.compile(item_grammar())
+  var c = parser.compile(item_grammar())
   for text in ["# only a comment\n# and another\n", "fn a() { }\n# after the last item\n"] {
     let source = bytes.from_string(text)
     var doc = from_parsed(whole(c, text), source, c)
@@ -1180,7 +1180,7 @@ fn ids_of(doc: Document) -> List[Int] = list.map(items(doc), (r) => r.id)
 fn kept(before: List[Int], after: List[Int]) -> Int = list.count(before, (id) => list.contains(after, id))
 
 test "items keep their ids across edits; an item read again in place of itself keeps its id; new items get new ids" {
-  let c = parser.compile(item_grammar())
+  var c = parser.compile(item_grammar())
   let source = bytes.from_string(RETYPED)
   var doc = from_parsed(whole(c, RETYPED), source, c)
   let start = ids_of(doc)

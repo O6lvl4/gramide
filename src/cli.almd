@@ -263,7 +263,7 @@ effect fn run_reparse(packages: List[package_api.Definition], argv: List[String]
   let before = read(path)!
   let after = read(option_after(argv, "--new") ?? "")!
   let scan = l.tokenize
-  let c = l.grammar
+  var c = l.grammar
   let old_source = bytes.from_string(before)
   let new_source = bytes.from_string(after)
   guard bytes.len(new_source) == bytes.len(old_source) + edit.new_end - edit.old_end else err("the new text is not the file with that edit applied: " + int.to_string(bytes.len(new_source)) + " bytes, expected " + int.to_string(bytes.len(old_source) + edit.new_end - edit.old_end))

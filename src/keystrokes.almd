@@ -84,7 +84,7 @@ fn whole_of(c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token],
 effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_every: Int, dump: String, breaking: Bool, slow: Int) -> Result[String, String] = {
   let scan = l.tokenize
   var timed: List[(Int, Int, Int)] = []
-  let c = l.grammar
+  var c = l.grammar
   var source = source0
   let first = whole_of(c, scan, source)!
   var doc = incremental.from_parsed(first, source, c)
@@ -108,7 +108,7 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
     let t0 = datetime.monotonic_ns()
     let status = incremental.reparse_status(doc, source, edit, scan, c)
     let fine = status == incremental.DONE
-    if not fine then { doc = fallen_back(report, doc, status, c, scan, source, i)! } else ()
+    if not fine then { let again = fallen_back(report, doc, status, c, scan, source, i)!; doc = incremental.from_parsed(again, source, c) } else ()
     let t1 = datetime.monotonic_ns()
     list.push(report.incremental_ns, t1 - t0)
     let after = list.sort(list.map(incremental.items(doc), (r) => r.id))
@@ -131,14 +131,13 @@ fn missing(before: List[Int], after: List[Int]) -> Int = {
   }
   gone
 }
-// the document read again from a whole parse, the reason tallied and the
-// first few traces printed
-effect fn fallen_back(mut report: Report, doc: incremental.Document, status: Int, c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes, i: Int) -> Result[incremental.Document, String] = {
+// the whole parse to read the document again from, the reason tallied and
+// the first few traces printed
+effect fn fallen_back(mut report: Report, doc: incremental.Document, status: Int, c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes, i: Int) -> Result[parser.Parsed, String] = {
   report.fallbacks = report.fallbacks + 1
   list.push(report.reasons, status)
   if list.len(report.reasons) <= 5 then { for t in doc.trace { eprintln("edit " + int.to_string(i) + ": " + t) } } else ()
-  let again = whole_of(c, scan, source)!
-  ok(incremental.from_parsed(again, source, c))
+  whole_of(c, scan, source)
 }
 // the whole parse of the text now, timed, against the document
 effect fn verified(mut report: Report, doc: incremental.Document, c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes, i: Int, pos: Int) -> Result[Unit, String] = {
