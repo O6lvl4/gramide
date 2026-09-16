@@ -87,8 +87,9 @@ fn build(n: tree.Node, toks: List[tree.Token], source: Bytes, t_begin: Int, t_en
   while k < count {
     let ck = list.get(children, k) ?? tree.node(0, [], 0, 0)
     list.push(c_start, ck.start)
-    let next_start = match list.get(children, k + 1) { some(nx) => nx.start, none => -1 }
-    list.push(c_end, if next_start >= 0 then next_start else own_after(toks, source, ck.end, t_end))
+    // to the separators after it; the next child may sit in another block,
+    // with this unit's own tokens between
+    list.push(c_end, own_after(toks, source, ck.end, t_end))
     k = k + 1
   }
   var u = empty_unit()
@@ -454,8 +455,10 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
       else status
     }
     else {
-      // an edit at a child's first byte can join it to the child before
-      let from = if head_edit and i > 0 then i - 1 else i
+      // an edit at a child's first byte can join it to the child before,
+      // when nothing of this unit's own stands between them
+      let adjacent = i > 0 and (match list.get(u.pieces, i) { some(piece) => list.is_empty(piece.toks), none => false })
+      let from = if head_edit and adjacent then i - 1 else i
       window(u, from, j, bases, delta, source, tokenize, c)
     }
   }
