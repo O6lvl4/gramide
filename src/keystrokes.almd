@@ -104,32 +104,37 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
     let t0 = datetime.monotonic_ns()
     let status = incremental.reparse_status(doc, source, edit, scan, c)
     let fine = status == incremental.DONE
-    if not fine then {
-      report.fallbacks = report.fallbacks + 1
-      list.push(report.reasons, status)
-      if list.len(report.reasons) <= 5 then { for t in doc.trace { eprintln("edit " + int.to_string(i) + ": " + t) } } else ()
-      list.clear(doc.trace)
-      let again = whole_of(c, scan, source)!
-      doc = incremental.from_parsed(again, source, c)
-    } else ()
+    if not fine then { doc = fallen_back(report, doc, status, c, scan, source, i)! } else ()
     let t1 = datetime.monotonic_ns()
     list.push(report.incremental_ns, t1 - t0)
     if slow > 0 then list.push(timed, (t1 - t0, pos, i)) else ()
-    if verify_every > 0 and i % verify_every == 0 then {
-      let w0 = datetime.monotonic_ns()
-      let whole = whole_of(c, scan, source)!
-      let w1 = datetime.monotonic_ns()
-      list.push(report.whole_ns, w1 - w0)
-      if not incremental.same(incremental.materialize(doc), whole) then {
-        report.mismatches = report.mismatches + 1
-        eprintln("edit " + int.to_string(i) + " at " + int.to_string(pos) + ": " + incremental.first_difference(incremental.materialize(doc), whole))
-      } else ()
-    } else ()
+    if verify_every > 0 and i % verify_every == 0 then { let _ = verified(report, doc, c, scan, source, i, pos)! } else ()
     i = i + 1
   }
   if dump != "" then { let _ = fs.write(dump, bytes.to_string_lossy(source)) } else ()
   if slow > 0 then { let _ = print_slowest(timed, slow, source) } else ()
   ok(render(report))
+}
+// the document read again from a whole parse, the reason tallied and the
+// first few traces printed
+effect fn fallen_back(mut report: Report, doc: incremental.Document, status: Int, c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes, i: Int) -> Result[incremental.Document, String] = {
+  report.fallbacks = report.fallbacks + 1
+  list.push(report.reasons, status)
+  if list.len(report.reasons) <= 5 then { for t in doc.trace { eprintln("edit " + int.to_string(i) + ": " + t) } } else ()
+  let again = whole_of(c, scan, source)!
+  ok(incremental.from_parsed(again, source, c))
+}
+// the whole parse of the text now, timed, against the document
+effect fn verified(mut report: Report, doc: incremental.Document, c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes, i: Int, pos: Int) -> Result[Unit, String] = {
+  let w0 = datetime.monotonic_ns()
+  let whole = whole_of(c, scan, source)!
+  let w1 = datetime.monotonic_ns()
+  list.push(report.whole_ns, w1 - w0)
+  if not incremental.same(incremental.materialize(doc), whole) then {
+    report.mismatches = report.mismatches + 1
+    eprintln("edit " + int.to_string(i) + " at " + int.to_string(pos) + ": " + incremental.first_difference(incremental.materialize(doc), whole))
+  } else ()
+  ok(())
 }
 effect fn print_slowest(timed: List[(Int, Int, Int)], slow: Int, source: Bytes) -> Unit = {
   let by_time = list.reverse(list.sort_by(timed, (t) => t.0))
