@@ -577,7 +577,7 @@ fn deeper(a: tree.Node, b: tree.Node, path: String, names: nametable.Names) -> S
     let y = list.get(b.kids, k) ?? tree.node(0, [], 0, 0)
     if same_node(x, y) then () else {
       let here = if x.kind != y.kind or x.field != y.field or x.start != y.start or x.end != y.end or list.len(x.kids) != list.len(y.kids) then
-        path + "/" + int.to_string(k) + " " + nametable.name_at(names, x.kind) + " " + int.to_string(x.start) + "-" + int.to_string(x.end) + " vs " + int.to_string(y.start) + "-" + int.to_string(y.end)
+        path + "/" + int.to_string(k) + " " + nametable.name_at(names, x.kind) + "/" + nametable.name_at(names, y.kind) + " field " + int.to_string(x.field) + "/" + int.to_string(y.field) + " " + int.to_string(x.start) + "-" + int.to_string(x.end) + " vs " + int.to_string(y.start) + "-" + int.to_string(y.end)
         + " a:[" + list.join(list.map(x.kids, (m) => nametable.name_at(names, m.kind) + " " + int.to_string(m.start) + "-" + int.to_string(m.end)), ", ") + "]"
         + " b:[" + list.join(list.map(y.kids, (m) => nametable.name_at(names, m.kind) + " " + int.to_string(m.start) + "-" + int.to_string(m.end)), ", ") + "]"
         else ""
