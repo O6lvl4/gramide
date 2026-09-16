@@ -65,6 +65,19 @@ has children from each, so the first-of-list role is per child; when a
 window empties and it had replaced a list's first item, the child now in
 its place takes that role.
 
+An edit that touches no token at all — in a comment, in blank space —
+reads no item. A comment is no token, so such an edit lies in one of a
+unit's own runs, between two of its tokens or after the last (the doc
+comment before an item lies in the bytes of the item before it, whose
+range runs to the next head). That run alone is lexed again and must give
+the same tokens, kind for kind and length for length; then only its sizes
+and its tokens' positions change. A comment the edit opens or closes gives
+other tokens, or none, or a scanner error (an unterminated block comment
+is an error in strict mode in every package's scanner), and the ordinary
+path follows. A line comment the edit opens runs to the end of its line,
+so the run must hold that line's end (or end the file) for the check to
+see what it swallows; otherwise the ordinary path.
+
 When the window parses, its nodes are cut into units the same way, the
 parent's placeholders are renumbered and the pieces between them
 re-counted, and the totals along the path are summed again.
