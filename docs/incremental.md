@@ -88,6 +88,21 @@ a literal before nor after; then the tree is the same tree and only
 positions move. A token that changes kind, splits, or joins its neighbour
 gives other tokens and the ordinary path follows.
 
+A slice is lexed as the line it stands on: the blank space before it on
+its line goes in front, so that a scanner reading layout (Python's
+indentation) sees it at its depth, and the `indent` it then opens with,
+and the `dedent`s it closes with beyond what the window had, are the
+file's around it and are dropped. Python's statements are `recover_lines`
+items and are stamped like the others.
+
+Every item carries an id. An item that is not read again keeps it — a
+retyped name or a comment edit renames nothing — and an item read again
+keeps it when it comes out the same (kind, token count, size) in a window
+that read several, or whatever came out when the window read it alone in
+place of itself. Only what is new is named anew. `items` lists the
+document's items with their ids and absolute ranges; `reparse-bench`
+counts, per edit, how many items lost their id.
+
 When the window parses, its nodes are cut into units the same way, the
 parent's placeholders are renumbered and the pieces between them
 re-counted, and the totals along the path are summed again.

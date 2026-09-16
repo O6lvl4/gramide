@@ -42,7 +42,8 @@ fn median(sorted: List[Int]) -> Int = list.get(sorted, list.len(sorted) / 2) ?? 
 fn percentile(sorted: List[Int], p: Int) -> Int = list.get(sorted, (list.len(sorted) * p) / 100) ?? 0
 fn us(ns: Int) -> String = int.to_string(ns / 1000) + "." + int.to_string((ns % 1000) / 100)
 
-type Report = { edits: Int, fallbacks: Int, mismatches: Int, incremental_ns: List[Int], whole_ns: List[Int], reasons: List[Int], initial_mismatch: Bool }
+// `renamed` is, per edit, how many items lost their id (a fall-back renames every item)
+type Report = { edits: Int, fallbacks: Int, mismatches: Int, incremental_ns: List[Int], whole_ns: List[Int], reasons: List[Int], initial_mismatch: Bool, items: Int, renamed: List[Int] }
 
 fn render(r: Report) -> String = {
   let inc = list.sort(r.incremental_ns)
@@ -52,7 +53,9 @@ fn render(r: Report) -> String = {
     + ",\"fallbacks\":" + int.to_string(r.fallbacks) + ",\"mismatches\":" + int.to_string(r.mismatches) + ",\"initial_mismatch\":" + (if r.initial_mismatch then "true" else "false")
     + ",\"fallback_reasons\":{\"no_lex\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_LEX)) + ",\"no_head\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_HEAD))
     + ",\"no_parse\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_PARSE)) + ",\"no_site\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_SITE)) + ",\"root_own\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.ROOT_OWN)) + ",\"error_near\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.ERROR_NEAR)) + "}"
-    + ",\"whole_parse_samples\":" + int.to_string(list.len(whole)) + ",\"whole_parse_median_us\":" + us(median(whole)) + "}"
+    + ",\"whole_parse_samples\":" + int.to_string(list.len(whole)) + ",\"whole_parse_median_us\":" + us(median(whole))
+    + ",\"items\":" + int.to_string(r.items) + ",\"items_renamed_median\":" + int.to_string(median(list.sort(r.renamed))) + ",\"items_renamed_p90\":" + int.to_string(percentile(list.sort(r.renamed), 90)) + ",\"items_renamed_max\":" + int.to_string(list.last(list.sort(r.renamed)) ?? 0)
+    + ",\"edits_renaming_none\":" + int.to_string(list.count(r.renamed, (x) => x == 0)) + "}"
 }
 
 // The whole parse a document is checked against: strict, or recovering
@@ -86,7 +89,7 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
   let first = whole_of(c, scan, source)!
   var doc = incremental.from_parsed(first, source, c)
   var state = seed
-  var report = Report { edits: edits, fallbacks: 0, mismatches: 0, incremental_ns: [], whole_ns: [], reasons: [], initial_mismatch: false }
+  var report = Report { edits: edits, fallbacks: 0, mismatches: 0, incremental_ns: [], whole_ns: [], reasons: [], initial_mismatch: false, items: list.len(incremental.items(doc)), renamed: [] }
   if verify_every > 0 and not incremental.same(incremental.materialize(doc), first) then {
     report.initial_mismatch = true
     eprintln("before any edit: " + incremental.first_difference(incremental.materialize(doc), first))
@@ -101,12 +104,15 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
     let edit = if i % 2 == 0 or breaks then incremental.Edit { start: pos, old_end: pos, new_end: pos + 1 } else incremental.Edit { start: pos, old_end: pos + 1, new_end: pos }
     let insert = if i % 2 == 0 or breaks then typed else bytes.new(0)
     source = incremental.apply(source, edit, insert)
+    let before = list.sort(list.map(incremental.items(doc), (r) => r.id))
     let t0 = datetime.monotonic_ns()
     let status = incremental.reparse_status(doc, source, edit, scan, c)
     let fine = status == incremental.DONE
     if not fine then { doc = fallen_back(report, doc, status, c, scan, source, i)! } else ()
     let t1 = datetime.monotonic_ns()
     list.push(report.incremental_ns, t1 - t0)
+    let after = list.sort(list.map(incremental.items(doc), (r) => r.id))
+    list.push(report.renamed, missing(before, after))
     if slow > 0 then list.push(timed, (t1 - t0, pos, i)) else ()
     if verify_every > 0 and i % verify_every == 0 then { let _ = verified(report, doc, c, scan, source, i, pos)! } else ()
     i = i + 1
@@ -114,6 +120,16 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
   if dump != "" then { let _ = fs.write(dump, bytes.to_string_lossy(source)) } else ()
   if slow > 0 then { let _ = print_slowest(timed, slow, source) } else ()
   ok(render(report))
+}
+// how many of the sorted ids `before` are not among the sorted ids `after`
+fn missing(before: List[Int], after: List[Int]) -> Int = {
+  var gone = 0
+  var a = 0
+  for id in before {
+    while a < list.len(after) and (list.get(after, a) ?? 0) < id { a = a + 1 }
+    if (list.get(after, a) ?? -1) != id then gone = gone + 1 else ()
+  }
+  gone
 }
 // the document read again from a whole parse, the reason tallied and the
 // first few traces printed

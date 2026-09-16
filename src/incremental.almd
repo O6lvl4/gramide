@@ -42,16 +42,18 @@ type Piece = { toks: List[tree.Token], atoms: List[Int], size: Int, lines: Int, 
 // order: piece 0, child 0, piece 1, child 1, …, the last piece. The
 // children's totals stand beside them so the parent finds its way through
 // integers and never reads a child.
+// `id` names the item across edits: an item that is not read again keeps
+// it, and one read again alone in place of one keeps it too.
 type Item = {
-  site: Int, child_site: Int, node: tree.Node, trace: List[String],
+  id: Int, site: Int, child_site: Int, node: tree.Node, trace: List[String],
   pieces: List[Piece], kids: List[Item],
   kid_sizes: List[Int], kid_lines: List[Int], kid_tails: List[Int], kid_toks: List[Int], kid_heads: List[Int], kid_head_lens: List[Int], kid_kinds: List[Int],
   size: Int, lines: Int, tail: Int, toks: Int,
 }
 
-type Document = { root: Item, names: nametable.Names, trace: List[String] }
+type Document = { root: Item, names: nametable.Names, trace: List[String], next_id: Int }
 
-fn empty_unit() -> Item = Item { site: -1, child_site: -1, node: tree.node(0, [], 0, 0), trace: [], pieces: [], kids: [], kid_sizes: [], kid_lines: [], kid_tails: [], kid_toks: [], kid_heads: [], kid_head_lens: [], kid_kinds: [], size: 0, lines: 0, tail: 0, toks: 0 }
+fn empty_unit() -> Item = Item { id: 0, site: -1, child_site: -1, node: tree.node(0, [], 0, 0), trace: [], pieces: [], kids: [], kid_sizes: [], kid_lines: [], kid_tails: [], kid_toks: [], kid_heads: [], kid_head_lens: [], kid_kinds: [], size: 0, lines: 0, tail: 0, toks: 0 }
 
 fn rebase_token(t: tree.Token, byte: Int, line: Int, col: Int) -> tree.Token =
   tree.Token { kind: t.kind, start: t.start - byte, end: t.end - byte, line: t.line - line + 1, col: if t.line == line then t.col - col + 1 else t.col }
@@ -77,7 +79,7 @@ fn find_units(n: tree.Node, mut out: List[tree.Node]) -> Unit = {
 // The unit for stamped node `n` over `toks` (coordinates of one slice):
 // its tokens are [t_begin, t_end) — the node's, then the separators to the
 // next item's head — and it starts at `start` in the slice.
-fn build(c: parser.Compiled, n: tree.Node, toks: List[tree.Token], source: Bytes, t_begin: Int, t_end: Int, start: Pos, site: Int) -> Item = {
+fn build(c: parser.Compiled, n: tree.Node, toks: List[tree.Token], source: Bytes, t_begin: Int, t_end: Int, start: Pos, site: Int, mut ids: List[Int]) -> Item = {
   let source_size = bytes.len(source)
   var children: List[tree.Node] = []
   let _ = find_units(n, children)
@@ -97,6 +99,8 @@ fn build(c: parser.Compiled, n: tree.Node, toks: List[tree.Token], source: Bytes
     k = k + 1
   }
   var u = empty_unit()
+  u.id = list.first(ids) ?? 1
+  ids = list.set(ids, 0, u.id + 1)
   u.site = site
   u.child_site = match list.first(children) { some(ck) => parser.site_of(ck), none => -1 }
   // pieces: [t_begin, c_start0), [c_end0, c_start1), …, [c_end_last, t_end)
@@ -121,7 +125,7 @@ fn build(c: parser.Compiled, n: tree.Node, toks: List[tree.Token], source: Bytes
       let ce = list.get(c_end, k) ?? 0
       let ck = list.get(children, k) ?? tree.node(0, [], 0, 0)
       let head = list.get(toks, cs) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 1, col: 1 }
-      let kid = build(c, ck, toks, source, cs, ce, Pos { byte: head.start, line: head.line, col: head.col }, parser.site_of(ck))
+      let kid = build(c, ck, toks, source, cs, ce, Pos { byte: head.start, line: head.line, col: head.col }, parser.site_of(ck), ids)
       list.push(u.kid_sizes, kid.size); list.push(u.kid_lines, kid.lines); list.push(u.kid_tails, kid.tail); list.push(u.kid_toks, kid.toks)
       list.push(u.kid_heads, head.kind); list.push(u.kid_head_lens, head.end - head.start); list.push(u.kid_kinds, ck.kind)
       list.push(u.kids, kid)
@@ -177,8 +181,9 @@ fn cut(n: tree.Node, t_begin: Int, c_start: List[Int], c_end: List[Int], depth: 
 // The document of a whole-file parse. The root unit is the file: its own
 // tokens are what lies before the first item and the EOF after the last.
 fn from_parsed(p: parser.Parsed, source: Bytes, c: parser.Compiled) -> Document = {
-  let root = build(c, p.root, p.toks, source, 0, list.len(p.toks), Pos { byte: 0, line: 1, col: 1 }, -1)
-  Document { root: root, names: p.names, trace: [] }
+  var ids = [1]
+  let root = build(c, p.root, p.toks, source, 0, list.len(p.toks), Pos { byte: 0, line: 1, col: 1 }, -1, ids)
+  Document { root: root, names: p.names, trace: [], next_id: list.first(ids) ?? 1 }
 }
 
 // ── the whole file again ─────────────────────────────────────────────────
@@ -224,6 +229,24 @@ fn abs_index(o: Int, tok_base: Int, slots: List[Int], kid_toks: List[Int]) -> In
 fn expand(n: tree.Node, tok_base: Int, slots: List[Int], kid_toks: List[Int], kid_nodes: List[tree.Node]) -> tree.Node =
   if n.kind == PLACEHOLDER then (list.get(kid_nodes, n.field) ?? tree.node(0, [], 0, 0))
   else tree.Node { kind: n.kind, field: n.field, start: abs_index(n.start, tok_base, slots, kid_toks), end: abs_index(n.end, tok_base, slots, kid_toks), kids: list.map(n.kids, (k) => expand(k, tok_base, slots, kid_toks, kid_nodes)) }
+
+// Every item of the document, in order, with its id, kind and absolute byte range
+type ItemRow = { id: Int, kind: Int, depth: Int, start: Int, end: Int }
+fn items(doc: Document) -> List[ItemRow] = {
+  var out: List[ItemRow] = []
+  let _ = list_items(doc.root, Pos { byte: 0, line: 1, col: 1 }, 0, out)
+  out
+}
+fn list_items(u: Item, base: Pos, depth: Int, mut out: List[ItemRow]) -> Unit = {
+  if u.site >= 0 then list.push(out, ItemRow { id: u.id, kind: u.node.kind, depth: depth, start: base.byte, end: base.byte + u.size }) else ()
+  let bases = kid_bases(u, base)
+  var k = 0
+  while k < list.len(u.kids) {
+    match (list.get(u.kids, k), list.get(bases, k)) { (some(kid), some(b)) => { let _ = list_items(kid, b, depth + 1, out) }, _ => () }
+    k = k + 1
+  }
+  ()
+}
 
 fn materialize(doc: Document) -> parser.Parsed = {
   var toks: List[tree.Token] = list.with_capacity(doc.root.toks)
@@ -376,7 +399,7 @@ fn read_items(c: parser.Compiled, site: Int, first_stamp: Int, rest_stamp: Int, 
 // Re-read children `i..j` of `u` from `source`, whose bytes for them now
 // run from `base.byte` to `new_end`; `next` is the byte where the token
 // after them starts, with its kind and length.
-fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, from_start: Bool, skip: Int) -> Int = {
+fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, from_start: Bool, skip: Int, mut ids: List[Int]) -> Int = {
   // the token after the window: the first of this unit's own that follow
   // (`}`, `else`, the EOF), or the next child's head when none do
   var head_kind = -1
@@ -435,8 +458,11 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   // it, or the file's EOF; either is excluded from the items and gives their end
   // the window as a unit of its own, then its children moved into `u`
   let holder = tree.Node { kind: 0, field: -1, start: 0, end: eof_index, kids: nodes }
-  var fresh = build(c, holder, toks, bytes.slice(slice, 0, new_end - base.byte), 0, eof_index, Pos { byte: 0, line: 1, col: 1 }, -1)
+  var fresh = build(c, holder, toks, bytes.slice(slice, 0, new_end - base.byte), 0, eof_index, Pos { byte: 0, line: 1, col: 1 }, -1, ids)
   let count = list.len(fresh.kids)
+  // what the children being replaced were: an item read again that comes
+  // out the same (kind, tokens, size) is the same item and keeps its id
+  let marks = list.map(list.slice(u.kids, i, j + 1), (k) => (k.id, k.node.kind, k.toks, k.size))
   let old_slot = slot_of(u, i)
   // a window from the unit's start read the first piece again (i is 0)
   let leading = if from_start then list.len((list.first(fresh.pieces) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }).toks) - list.len((list.first(u.pieces) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }).toks) else 0
@@ -446,7 +472,40 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   // when the window emptied and child i read a list's first item, the child
   // now at i is that list's first, if it read the rest of one
   if count == 0 and old_site == bare and rest != bare then { let _ = restamp_kid(u, i, bare, rest) } else ()
+  let _ = keep_ids(u, i, count, marks)
   DONE
+}
+// The children `at .. at + count` named again from `marks`, the (id, kind,
+// tokens, size) of the children they replaced: one replaced by one is the
+// same item whatever came out; otherwise a child is the mark it equals,
+// in order.
+fn keep_ids(mut u: Item, at: Int, count: Int, marks: List[(Int, Int, Int, Int)]) -> Unit = {
+  var aside: List[Item] = []
+  while list.len(u.kids) > at + count { match list.pop(u.kids) { some(x) => list.push(aside, x), none => () } }
+  var fresh: List[Item] = []
+  while list.len(u.kids) > at { match list.pop(u.kids) { some(x) => list.push(fresh, x), none => () } }
+  var m = 0
+  while list.len(fresh) > 0 {
+    match list.pop(fresh) {
+      some(x) => {
+        var id = x.id
+        if count == 1 and list.len(marks) == 1 then id = (list.first(marks) ?? (x.id, 0, 0, 0)).0
+        else {
+          // the first mark from `m` on that equals it; the marks before it are gone
+          var f = m
+          var found = false
+          while not found and f < list.len(marks) {
+            let mark = list.get(marks, f) ?? (0, 0, 0, 0)
+            if mark.1 == x.node.kind and mark.2 == x.toks and mark.3 == x.size then { found = true; id = mark.0; m = f + 1 } else f = f + 1
+          }
+        }
+        list.push(u.kids, Item { ...x, id: id })
+      },
+      none => (),
+    }
+  }
+  while list.len(aside) > 0 { match list.pop(aside) { some(x) => list.push(u.kids, x), none => () } }
+  ()
 }
 // child `at` stamped with `first` when its stamp is `rest`
 fn restamp_kid(mut u: Item, at: Int, first: Int, rest: Int) -> Unit = {
@@ -622,7 +681,7 @@ fn locate(u: Item, base: Pos, bases: List[Pos], edit: Edit) -> (Int, Int, Bool, 
   } else ()
   (i, j, from_start, outside)
 }
-fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
+fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, mut ids: List[Int]) -> Int = {
   let delta = edit.new_end - edit.old_end
   let bases = kid_bases(u, base)
   let (i, j, from_start, outside) = locate(u, base, bases, edit)
@@ -634,13 +693,13 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
   else if i < 0 or j < 0 or j < i then ME
   else {
     let head_edit = edit.start == (list.get(bases, i) ?? base).byte
-    if from_start then window_from(u, base, 0, j, bases, delta, source, tokenize, c, prelude_untouched(u, base, edit))
+    if from_start then window_from(u, base, 0, j, bases, delta, source, tokenize, c, prelude_untouched(u, base, edit), ids)
     else if i == j and not head_edit then {
       // inside child i: let it try first
       var aside: List[Item] = []
       while list.len(u.kids) > i + 1 { match list.pop(u.kids) { some(x) => list.push(aside, x), none => () } }
       var kid = list.pop(u.kids) ?? empty_unit()
-      let status = reparse_in(kid, list.get(bases, i) ?? base, source, edit, tokenize, c)
+      let status = reparse_in(kid, list.get(bases, i) ?? base, source, edit, tokenize, c, ids)
       let kid_size = kid.size
       let kid_lines = kid.lines
       let kid_tail = kid.tail
@@ -659,7 +718,7 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
         let _ = retotal(u, delta)
         DONE
       }
-      else if status == ME then read_window(u, i, i, bases, delta, source, tokenize, c)
+      else if status == ME then read_window(u, i, i, bases, delta, source, tokenize, c, ids)
       else status
     }
     else {
@@ -667,14 +726,14 @@ fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (Stri
       // when nothing of this unit's own stands between them
       let adjacent = i > 0 and (match list.get(u.pieces, i) { some(piece) => list.is_empty(piece.toks), none => false })
       let from = if head_edit and adjacent then i - 1 else i
-      if from_start then window_from(u, base, from, j, bases, delta, source, tokenize, c, prelude_untouched(u, base, edit)) else read_window(u, from, j, bases, delta, source, tokenize, c)
+      if from_start then window_from(u, base, from, j, bases, delta, source, tokenize, c, prelude_untouched(u, base, edit), ids) else read_window(u, from, j, bases, delta, source, tokenize, c, ids)
     }
   }
 }
-fn read_window(mut u: Item, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
+fn read_window(mut u: Item, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, mut ids: List[Int]) -> Int = {
   let base = list.get(bases, i) ?? Pos { byte: 0, line: 1, col: 1 }
   let end = (list.get(bases, j) ?? base).byte + (list.get(u.kid_sizes, j) ?? 0) + delta
-  let status = rewindow(u, i, j, base, end, source, tokenize, c, false, 0)
+  let status = rewindow(u, i, j, base, end, source, tokenize, c, false, 0, ids)
   if status == DONE then { let _ = retotal(u, delta); DONE } else status
 }
 // How many of the unit's own tokens before its first child an edit left
@@ -702,9 +761,9 @@ fn prelude_same(toks: List[tree.Token], u: Item, skip: Int) -> Bool = {
 }
 // the same, with the window starting where the unit itself starts, so that
 // the unit's first piece is read again with the first child
-fn window_from(mut u: Item, base: Pos, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, skip: Int) -> Int = {
+fn window_from(mut u: Item, base: Pos, i: Int, j: Int, bases: List[Pos], delta: Int, source: Bytes, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled, skip: Int, mut ids: List[Int]) -> Int = {
   let end = (list.get(bases, j) ?? base).byte + (list.get(u.kid_sizes, j) ?? 0) + delta
-  let status = rewindow(u, i, j, base, end, source, tokenize, c, true, skip)
+  let status = rewindow(u, i, j, base, end, source, tokenize, c, true, skip, ids)
   if status == DONE then { let _ = retotal(u, delta); DONE } else status
 }
 
@@ -715,7 +774,9 @@ fn reparse(mut doc: Document, source: Bytes, edit: Edit, tokenize: (String, Bool
   reparse_status(doc, source, edit, tokenize, c) == DONE
 // DONE, or why not: ME at the root means the edit fell in the file's own tokens
 fn reparse_status(mut doc: Document, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], c: parser.Compiled) -> Int = {
-  let status = reparse_in(doc.root, Pos { byte: 0, line: 1, col: 1 }, source, edit, tokenize, c)
+  var ids = [doc.next_id]
+  let status = reparse_in(doc.root, Pos { byte: 0, line: 1, col: 1 }, source, edit, tokenize, c, ids)
+  doc.next_id = list.first(ids) ?? doc.next_id
   while list.len(doc.root.trace) > 0 { match list.pop(doc.root.trace) { some(t) => list.push(doc.trace, t), none => () } }
   if status == ME then ROOT_OWN else status
 }
@@ -1040,4 +1101,47 @@ test "an edit in a comment after the last item, or in a file with no item, reads
     let full = whole(c, bytes.to_string_lossy(after))
     assert(same(materialize(doc), full), first_difference(materialize(doc), full))
   }
+}
+
+// ── item ids across edits ───────────────────────────────────────────────
+fn ids_of(doc: Document) -> List[Int] = list.map(items(doc), (r) => r.id)
+fn kept(before: List[Int], after: List[Int]) -> Int = list.count(before, (id) => list.contains(after, id))
+
+test "items keep their ids across edits; an item read again in place of itself keeps its id; new items get new ids" {
+  let c = parser.compile(item_grammar())
+  let source = bytes.from_string(RETYPED)
+  var doc = from_parsed(whole(c, RETYPED), source, c)
+  let start = ids_of(doc)
+  assert(list.len(start) == list.len(list.dedup(list.sort(start))), "ids are distinct")
+  assert(list.all(start, (id) => id > 0), "ids are positive")
+  // a name retyped: every id stays
+  var text = source
+  let e1 = Edit { start: retyped_at("counter =") + 3, old_end: retyped_at("counter =") + 3, new_end: retyped_at("counter =") + 4 }
+  text = apply(text, e1, bytes.from_string("t"))
+  assert_eq(reparse_status(doc, text, e1, (s, r) => scan(s, r), c), DONE)
+  assert_eq(ids_of(doc), start)
+  // a `;` after `give counter`: that statement is read again alone, and keeps its id
+  let at2 = (string.index_of(bytes.to_string_lossy(text), "give counter") ?? -1) + 12
+  let e2 = Edit { start: at2, old_end: at2, new_end: at2 + 1 }
+  text = apply(text, e2, bytes.from_string(";"))
+  let s2 = reparse_status(doc, text, e2, (s, r) => scan(s, r), c)
+  assert(s2 == DONE, "status " + int.to_string(s2) + ": " + list.join(doc.trace, " | ") + " text: " + bytes.to_string_lossy(text))
+  assert_eq(ids_of(doc), start)
+  // a statement added before `reader`: the others keep their ids, the new one is newer than all
+  let at3 = string.index_of(bytes.to_string_lossy(text), "reader") ?? -1
+  let e3 = Edit { start: at3, old_end: at3, new_end: at3 + 8 }
+  text = apply(text, e3, bytes.from_string("t = 2\n  "))
+  let s3 = reparse_status(doc, text, e3, (s, r) => scan(s, r), c)
+  assert(s3 == DONE, "status " + int.to_string(s3) + ": " + list.join(doc.trace, " | "))
+  let grown = ids_of(doc)
+  assert_eq(kept(start, grown), list.len(start))
+  assert_eq(list.len(grown), list.len(start) + 1)
+  assert(list.all(grown, (id) => list.contains(start, id) or id > (list.max(start) ?? 0)), "the new item's id is new")
+  // that statement removed again: everything else keeps its id
+  let e4 = Edit { start: at3, old_end: at3 + 8, new_end: at3 }
+  text = apply(text, e4, bytes.new(0))
+  assert_eq(reparse_status(doc, text, e4, (s, r) => scan(s, r), c), DONE)
+  assert_eq(ids_of(doc), start)
+  let full = whole(c, bytes.to_string_lossy(text))
+  assert(same(materialize(doc), full), first_difference(materialize(doc), full))
 }
