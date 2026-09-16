@@ -128,12 +128,14 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
     i = i + 1
   }
   if dump != "" then { let _ = fs.write(dump, bytes.to_string_lossy(source)) } else ()
-  if slow > 0 then {
-    let by_time = list.reverse(list.sort_by(timed, (t) => t.0))
-    for t in list.take(by_time, slow) {
-      let line = 1 + list.count(bytes.to_list(bytes.slice(source, 0, t.1)), (b) => b == 10)
-      eprintln("slow: " + us(t.0) + " us, edit " + int.to_string(t.2) + " at " + int.to_string(t.1) + " line " + int.to_string(line) + ": " + string.replace(bytes.to_string_lossy(bytes.slice(source, int.max(0, t.1 - 40), int.min(bytes.len(source), t.1 + 40))), "\n", " "))
-    }
-  } else ()
+  if slow > 0 then { let _ = print_slowest(timed, slow, source) } else ()
   ok(render(report))
+}
+effect fn print_slowest(timed: List[(Int, Int, Int)], slow: Int, source: Bytes) -> Unit = {
+  let by_time = list.reverse(list.sort_by(timed, (t) => t.0))
+  for t in list.take(by_time, slow) {
+    let line = 1 + list.count(bytes.to_list(bytes.slice(source, 0, t.1)), (b) => b == 10)
+    eprintln("slow: " + us(t.0) + " us, edit " + int.to_string(t.2) + " at " + int.to_string(t.1) + " line " + int.to_string(line) + ": " + string.replace(bytes.to_string_lossy(bytes.slice(source, int.max(0, t.1 - 40), int.min(bytes.len(source), t.1 + 40))), "\n", " "))
+  }
+  ()
 }
