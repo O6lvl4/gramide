@@ -304,20 +304,21 @@ effect fn run(p: Program, argv: List[String]) -> Unit = {
   }
   let cmd = list.get(argv, 0) ?? ""
   if cmd == "languages" then println(registry.manifest(p.packages))
-  else if cmd == "version" then print_lines(version_lines(p))
-  // matched here rather than handed to a helper: the native backend inserts
-  // a `?` on an effect call in argument position, and not on one being matched
-  else if cmd == "map" then match run_map(p.packages, argv) { ok(_) => (), err(e) => fail(e) }
-  else if cmd == "reparse-bench" then match run_reparse_bench(p.packages, argv) { ok(_) => (), err(e) => fail(e) }
-  else if cmd == "reparse" then match run_reparse(p.packages, argv) { ok(_) => (), err(e) => fail(e) }
+  else if cmd == "version" then print_lines(version_lines(p))!
+  // matched here rather than handed to a helper, and every effect call in a
+  // tail spells its propagation: an effect fn's error channel never passes
+  // out of a `-> Unit` fn implicitly (Almide E042)
+  else if cmd == "map" then match run_map(p.packages, argv) { ok(_) => (), err(e) => fail(e)! }
+  else if cmd == "reparse-bench" then match run_reparse_bench(p.packages, argv) { ok(_) => (), err(e) => fail(e)! }
+  else if cmd == "reparse" then match run_reparse(p.packages, argv) { ok(_) => (), err(e) => fail(e)! }
   else match batch_of(argv) {
     some((batch, paths)) => {
       let parts = sequential(p.packages, batch, paths)!
-      report(parts)
+      report(parts)!
     },
     none => match list.get(argv, 1) {
-      some(path) => match run_one(p, cmd, path) { ok(_) => (), err(e) => fail(e) },
-      none => fail(usage(p)),
+      some(path) => match run_one(p, cmd, path) { ok(_) => (), err(e) => fail(e)! },
+      none => fail(usage(p))!,
     },
   }
 }
