@@ -871,6 +871,8 @@ fn number_tokens(c: Compiled, source: Bytes, input: TokenInput) -> NumberedToken
 let M_COLLECT = 1
 let M_RECOVER = 2
 let M_BUILD = 4
+// closers the file never gets to are taken as there at its end (recovering only)
+let M_CLOSE = 8
 fn wants(mode: Int, flag: Int) -> Bool = int.band(mode, flag) != 0
 
 fn fresh(collect: Bool) -> Int = if collect then M_COLLECT + M_BUILD else M_BUILD
@@ -1187,9 +1189,18 @@ fn token_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
     }
 }
 
+// A closer the file never gets to: with M_CLOSE, a `)`, `]` or `}` the rule
+// wants at the end of the file is taken as there, zero tokens wide, so that
+// a body left open by an edit closes at the end and keeps what it read — the
+// class whose last `}` is gone still lists its methods. A recover site turns
+// this on only when it loses fewer tokens than skipping to the next item
+// (`recover_here`); the strict parse never does it.
+fn closer_at_eof(c: Compiled, num: List[Int], mode: Int, op: Op, pos: Int) -> Bool =
+  op.kind == K_LIT and wants(mode, M_CLOSE) and (list.get(num, pos * 2) ?? -1) == tree.T_EOF
+  and (spelled(c, op, A_RPAREN) or spelled(c, op, A_RBRACK) or spelled(c, op, A_RBRACE))
 fn literal_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
   match list.get(num, pos * 2 + 1) {
-    some(x) => if not spelled_at(c, id, op, x) then missed(c, exp, far, mode, pos, op)
+    some(x) => if not spelled_at(c, id, op, x) then (if closer_at_eof(c, num, mode, op, pos) then good(pos) else missed(c, exp, far, mode, pos, op))
       else match list.get(num, pos * 2) {
         some(k) => if k == tree.T_STRING or k == tree.T_NEG then missed(c, exp, far, mode, pos, op)
           else if op.kind == K_LIT then good(pos + 1)
@@ -1421,33 +1432,68 @@ fn uncommon_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp:
       none => miss(exp, far, mode, pos, id),
     }
   }
-  else {            // K_RECOVER and K_RECOVER_ALL: the rarest arm carries the chain
-    let mark = list.len(out)
-    let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
-    if o.ok then { stamp(out, mark, id); o }
+  else recover_here(c, num, out, exp, far, mode, id, op, pos)   // K_RECOVER and K_RECOVER_ALL: the rarest arm carries the chain
+}
+
+// The tokens under ERROR nodes (kind `err`) among the nodes pushed since
+// `mark`. Only the kind goes in, never the grammar: a closure that captured
+// it would make every caller up the chain pass it by value, and copy it.
+fn error_tokens(error_kind: Int, out: List[tree.Node], mark: Int) -> Int = {
+  var total = 0
+  var i = mark
+  while i < list.len(out) {
+    match list.get(out, i) { some(n) => { total = total + error_tokens_in(error_kind, n) }, none => () }
+    i = i + 1
+  }
+  total
+}
+fn error_tokens_in(error_kind: Int, n: tree.Node) -> Int =
+  if n.kind == error_kind then n.end - n.start
+  else list.fold(n.kids, 0, (acc, k) => acc + error_tokens_in(error_kind, k))
+
+// A recover site: the item as written, else the least that can be given up.
+// Two ways are tried when the item fails: skip to the next place the rule
+// reads (an ERROR node over what is skipped, after whatever head of the item
+// is readable on its own), or read the item again with its missing closers
+// taken as there at the end of the file (M_CLOSE), which keeps a body an
+// edit left open — with ERROR nodes inside it for what its list could not
+// read. The way that puts fewer tokens under ERROR wins; a skip that finds
+// no resume point and no real token gives up.
+fn recover_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
+  let mark = list.len(out)
+  let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
+  if o.ok then { stamp(out, mark, id); o }
+  else {
+    rollback(out, mark)
+    if not wants(mode, M_RECOVER) then Out { ok: false, pos: pos }
     else {
+      // find the next place the rule reads, and give up the tokens between
+      let limit = skip_limit(num, pos, op.kind == K_RECOVER)
+      var q = pos + 1
+      var resume = -1
+      while resume < 0 and q < limit {
+        let a = parse_rule(c, num, out, exp, far, mode, op.a, q)
+        rollback(out, mark)
+        if a.ok then resume = q else q = q + 1
+      }
+      // where the tokens given up end: at the next item, or at the end of
+      // what this list may reach
+      let stop = if resume >= 0 then resume else limit
+      // keep whatever of the failed item is readable on its own
+      let h = parse_rule(c, num, out, exp, far, mode, op.b, pos)
+      let kept = h.ok and h.pos > pos and h.pos <= stop
       rollback(out, mark)
-      if not wants(mode, M_RECOVER) then Out { ok: false, pos: pos }
+      let from = if kept then h.pos else pos
+      let skip_loses = if resume < 0 and not real_between(num, pos, limit) then -1 else stop - from
+      // the other way: the item closed at the end of the file, when the end is in reach
+      let closed = if wants(mode, M_CLOSE) or (list.get(num, limit * 2) ?? -1) != tree.T_EOF then Out { ok: false, pos: pos } else parse_rule(c, num, out, exp, far, mode + M_CLOSE, op.a, pos)
+      let close_loses = if closed.ok then error_tokens(c.extra + X_ERROR, out, mark) else -1
+      if closed.ok and (skip_loses < 0 or close_loses < skip_loses) then { stamp(out, mark, id); closed }
       else {
-        // find the next place the rule reads, and give up the tokens between
-        let limit = skip_limit(num, pos, op.kind == K_RECOVER)
-        var q = pos + 1
-        var resume = -1
-        while resume < 0 and q < limit {
-          let a = parse_rule(c, num, out, exp, far, mode, op.a, q)
-          rollback(out, mark)
-          if a.ok then resume = q else q = q + 1
-        }
-        // where the tokens given up end: at the next item, or at the end of
-        // what this list may reach
-        let stop = if resume >= 0 then resume else limit
-        if resume < 0 and not real_between(num, pos, limit) then Out { ok: false, pos: pos }
+        rollback(out, mark)
+        if skip_loses < 0 then Out { ok: false, pos: pos }
         else {
-          // keep whatever of the failed item is readable on its own
-          let h = parse_rule(c, num, out, exp, far, mode, op.b, pos)
-          let kept = h.ok and h.pos > pos and h.pos <= stop
-          if not kept then rollback(out, mark) else ()
-          let from = if kept then h.pos else pos
+          if kept then { let _ = parse_rule(c, num, out, exp, far, mode, op.b, pos) } else ()
           if real_between(num, from, stop) then { list.push(out, tree.node(c.extra + X_ERROR, [], from, stop)); stamp(out, list.len(out) - 1, id) } else ()
           if resume >= 0 then {
             let resumed = list.len(out)
@@ -1949,6 +1995,29 @@ test "a recovering parse skips what it cannot read and names the rest" {
     ok(p) => {
       assert_eq(tree.sexp(p.root, p.names), "(list (item (integer)) (ERROR) (item (integer)))")
       assert_eq(error_nodes(p.root, error_kind(c)), 1)
+    },
+  }
+}
+
+test "a closer the file never gets to is taken as there when recovering" {
+  // a block of `<integer>;` items between braces, whose `}` an edit removed
+  let g = grammar("file", [
+    ("file", wrap("file", rep(recover_all(r("block"))))),
+    ("block", wrap("block", seq([lit("{"), rep(recover(seq([r("item"), lit(";")]))), lit("}")]))),
+    ("item", wrap("item", tok("integer"))),
+  ])
+  let c = compile(g)
+  let spellings = ["{", "1", ";", "2", ";", ""]
+  let source = src_of(spellings)
+  let toks = toks_of(spellings)
+  // strict: the missing `}` fails the file
+  match parse_with(c, source, toks) { ok(_) => assert(false), err(_) => () }
+  // recovering: the block closes at the end and keeps both items, no ERROR
+  match parse_recovering(c, source, toks) {
+    err(_) => assert(false),
+    ok(p) => {
+      assert_eq(tree.sexp(p.root, p.names), "(file (block (item (integer)) (item (integer))))")
+      assert_eq(error_nodes(p.root, error_kind(c)), 0)
     },
   }
 }

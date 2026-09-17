@@ -71,7 +71,7 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
 照合される。エンジンのテストと、各言語パッケージのコーパス上のランダム編集検証で。
 
 TypeScript 5.9 の `compiler/checker.ts`(3.1 MB、うち 2.9 MB が 1 つの関数)で、識別子の
-中への 1 キー入力は中央値 82 µs。tree-sitter の増分パースは 568 µs、全文パースは 57 ms
+中への 1 キー入力は中央値 78 µs。tree-sitter の増分パースは 561 µs、全文パースは 54 ms
 ([gramide-typescript](https://github.com/O6lvl4/gramide-typescript) の
 `docs/evidence/incremental-typescript-src.json`)。木全体が要る読み手は materialize する。
 1 パスで、パースはしない。
@@ -83,6 +83,24 @@ TypeScript 5.9 の `compiler/checker.ts`(3.1 MB、うち 2.9 MB が 1 つの関�
 読み手が Python にも効く。Python の文は `recover_lines` の項目で、単独で字句解析したスライスでは
 インデントを置けないので、改行を打ちも消しもしていない編集では区間のレイアウトのトークンを
 そのまま保つ。
+
+## パースできないファイルを読む
+
+recover site は item をそのまま試し、失敗したら 2 つの道のうち `ERROR` の下に入るトークンが
+少ない方を取る。item 規則が次に読める位置までスキップするか、欠けた `)` `]` `}` をファイル末尾に
+あるものとして item を読み直すか(編集で開いたままの本体を残せる)。Python はレイアウト段で、
+開いたままの括弧をインデントの浅い文が始まる行で閉じる。[docs/recovery.md](docs/recovery.md) が
+その仕組みと計測で、各パッケージがコーパスの全ファイルを 4 通りに壊し、gramide と tree-sitter が
+まだ列挙できる宣言を、それぞれの無傷のファイルでの列挙と比べる。「残った宣言」は列挙され続けた
+宣言の割合、「きれいな破壊」は壊した箇所以外を失わず余計なものも出さなかった破壊の割合:
+
+| コーパス | ファイル、破壊 | 残った宣言: gramide / tree-sitter | きれいな破壊: gramide / tree-sitter |
+|---|---:|---:|---:|
+| JavaScript, Node `lib/` | 427, 1,694 | 94.3% / 95.9% | 89.7% / 90.6% |
+| TypeScript, TypeScript `src/` | 697, 2,588 | 97.3% / 99.0% | 91.5% / 94.6% |
+| Go, Go `src/` | 8,010, 30,927 | 99.5% / 91.1% | 99.0% / 82.9% |
+| Rust, Almide compiler `crates/` | 663, 2,632 | 99.9% / 97.5% | 99.8% / 94.9% |
+| Python, CPython `Lib/` | 1,450, 5,193 | 99.3% / 96.3% | 98.7% / 82.3% |
 
 ## 言語パッケージを書く
 
