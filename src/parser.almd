@@ -880,12 +880,30 @@ fn verifying() -> Int = 0
 fn recovering() -> Int = M_RECOVER + M_BUILD
 // The farthest failure lives in a one-place list so a result does not have to
 // carry it. Only the collecting pass ever writes or reads it.
-fn far_cell() -> List[Int] = [0]
+// The cell holds the farthest failure, and beside it a repair a recover site
+// may be trying: the token index where a closer the file lacks is taken as
+// there (zero tokens wide) and the atom of that closer; -1 when none
+fn far_cell() -> List[Int] = [0, 0 - 1, 0 - 1]
 fn far_of(far: List[Int]) -> Int = match list.get(far, 0) { some(v) => v, none => 0 }
 fn set_far(mut far: List[Int], pos: Int) -> Unit = {
-  let _ = list.pop(far)
+  let at = list.get(far, 1) ?? (0 - 1)
+  let atom = list.get(far, 2) ?? (0 - 1)
+  list.clear(far)
   list.push(far, pos)
+  list.push(far, at)
+  list.push(far, atom)
 }
+fn repair_of(far: List[Int]) -> Int = list.get(far, 1) ?? (0 - 1)
+fn set_repair(mut far: List[Int], at: Int, atom: Int) -> Unit = {
+  let farthest = far_of(far)
+  list.clear(far)
+  list.push(far, farthest)
+  list.push(far, at)
+  list.push(far, atom)
+}
+// Whether the literal is the closer a repair takes as there at `pos`
+fn repaired_here(c: Compiled, far: List[Int], op: Op, pos: Int) -> Bool =
+  op.kind == K_LIT and repair_of(far) == pos and spelled(c, op, list.get(far, 2) ?? (0 - 1))
 
 // A rule reports whether it matched and where it stopped. The nodes it built
 // are not carried in the result: they are pushed onto a single list that the
@@ -1200,7 +1218,7 @@ fn closer_at_eof(c: Compiled, num: List[Int], mode: Int, op: Op, pos: Int) -> Bo
   and (spelled(c, op, A_RPAREN) or spelled(c, op, A_RBRACK) or spelled(c, op, A_RBRACE))
 fn literal_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
   match list.get(num, pos * 2 + 1) {
-    some(x) => if not spelled_at(c, id, op, x) then (if closer_at_eof(c, num, mode, op, pos) then good(pos) else missed(c, exp, far, mode, pos, op))
+    some(x) => if not spelled_at(c, id, op, x) then (if closer_at_eof(c, num, mode, op, pos) or repaired_here(c, far, op, pos) then good(pos) else missed(c, exp, far, mode, pos, op))
       else match list.get(num, pos * 2) {
         some(k) => if k == tree.T_STRING or k == tree.T_NEG then missed(c, exp, far, mode, pos, op)
           else if op.kind == K_LIT then good(pos + 1)
@@ -1491,6 +1509,13 @@ fn recover_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: 
       if closed.ok and (skip_loses < 0 or close_loses < skip_loses) then { stamp(out, mark, id); closed }
       else {
         rollback(out, mark)
+        // the third way: one closer the file lacks, taken as there where the
+        // item failed farthest — a `)` gone from a parameter list — and the
+        // item read again with it. The way that loses least of the three wins
+        let (repaired, repair_loses) = repair_here(c, num, out, exp, far, mode, op.a, pos, limit)
+        if repaired.ok and (skip_loses < 0 or repair_loses < skip_loses) then { stamp(out, mark, id); repaired }
+        else {
+        rollback(out, mark)
         if skip_loses < 0 then Out { ok: false, pos: pos }
         else {
           if kept then { let _ = parse_rule(c, num, out, exp, far, mode, op.b, pos) } else ()
@@ -1504,9 +1529,55 @@ fn recover_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: 
             }
           } else Out { ok: true, pos: limit }
         }
+        }
       }
     }
   }
+}
+
+// The item read with one closer taken as there where it failed farthest:
+// the farthest failure is collected (a second read of the failed item), and
+// each of `)`, `]`, `}` is tried at that place; the read that comes out with
+// the fewest tokens under ERROR is the answer, with that count, or a failed
+// read. Nothing is tried inside a repair already under way, or when the
+// item failed at its first token.
+fn repair_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, item: Int, pos: Int, limit: Int) -> (Out, Int) = {
+  let mark = list.len(out)
+  if repair_of(far) >= 0 then (Out { ok: false, pos: pos }, 0 - 1)
+  else {
+    var wanted: List[Int] = []
+    var far2: List[Int] = far_cell()
+    let _ = parse_rule(c, num, out, wanted, far2, mode + M_COLLECT, item, pos)
+    rollback(out, mark)
+    let at = far_of(far2)
+    var best = Out { ok: false, pos: pos }
+    var best_loses = 0 - 1
+    var kept: List[tree.Node] = []
+    if at <= pos or at > limit then () else {
+      for atom in [A_RPAREN, A_RBRACK, A_RBRACE] {
+        set_repair(far, at, atom)
+        let o = parse_rule(c, num, out, exp, far, mode, item, pos)
+        set_repair(far, 0 - 1, 0 - 1)
+        if o.ok and o.pos > at then {
+          let loses = error_tokens(c.extra + X_ERROR, out, mark)
+          if best_loses < 0 or loses < best_loses then {
+            // this read's nodes move aside; the one they replace is dropped
+            best = o
+            best_loses = loses
+            kept = take_from(out, mark)
+          } else rollback(out, mark)
+        } else rollback(out, mark)
+      }
+      put_back(out, kept)
+    }
+    (best, best_loses)
+  }
+}
+// The nodes taken from `out` by `take_from`, back on it in their order
+fn put_back(mut out: List[tree.Node], mut kept: List[tree.Node]) -> Unit = {
+  var rev: List[tree.Node] = []
+  while list.len(kept) > 0 { match list.pop(kept) { some(n) => list.push(rev, n), none => () } }
+  while list.len(rev) > 0 { match list.pop(rev) { some(n) => list.push(out, n), none => () } }
 }
 
 // A recover item that came out as one node is stamped with the recover op
@@ -2019,6 +2090,42 @@ test "a closer the file never gets to is taken as there when recovering" {
       assert_eq(tree.sexp(p.root, p.names), "(file (block (item (integer)) (item (integer))))")
       assert_eq(error_nodes(p.root, error_kind(c)), 0)
     },
+  }
+}
+
+test "a closer the file lacks is taken as there where the item failed farthest" {
+  // `( <integer> )` items, one of which lost its `)`: the item is read with
+  // a `)` taken as there at the `;`, and nothing is given up
+  let g = grammar("file", [
+    ("file", wrap("file", rep(recover_all(seq([r("item"), lit(";")]))))),
+    ("item", wrap("item", seq([lit("("), tok("integer"), lit(")")]))),
+  ])
+  let c = compile(g)
+  let spellings = ["(", "1", ")", ";", "(", "2", ";", "(", "3", ")", ";", ""]
+  let source = src_of(spellings)
+  let toks = toks_of(spellings)
+  match parse_with(c, source, toks) { ok(_) => assert(false), err(_) => () }
+  match parse_recovering(c, source, toks) {
+    err(_) => assert(false),
+    ok(p) => {
+      assert_eq(tree.sexp(p.root, p.names), "(file (item (integer)) (item (integer)) (item (integer)))")
+      assert_eq(error_nodes(p.root, error_kind(c)), 0)
+    },
+  }
+}
+
+test "a closer the file lacks is taken as there before the body that follows" {
+  // `( <integer> ) { … }` items; the first lost its `)`, and its block is read
+  let g = grammar("file", [
+    ("file", wrap("file", rep(recover_all(r("item"))))),
+    ("item", wrap("item", seq([lit("("), tok("integer"), lit(")"), r("block")]))),
+    ("block", wrap("block", seq([lit("{"), rep(recover(seq([tok("integer"), lit(";")]))), lit("}")]))),
+  ])
+  let c = compile(g)
+  let spellings = ["(", "1", "{", "2", ";", "}", "(", "3", ")", "{", "}", ""]
+  match parse_recovering(c, src_of(spellings), toks_of(spellings)) {
+    err(_) => assert(false),
+    ok(p) => assert_eq(tree.sexp(p.root, p.names), "(file (item (integer) (block (integer))) (item (integer) (block)))"),
   }
 }
 

@@ -86,8 +86,8 @@ and node for node, in the engine's tests and in each language package's
 random-edit check over its corpora.
 
 On `compiler/checker.ts` of TypeScript 5.9 (3.1 MB, one function of
-2.9 MB) a keystroke inside an identifier costs 78 µs at the median
-against 561 µs for tree-sitter's incremental parse and 54 ms for a whole
+2.9 MB) a keystroke inside an identifier costs 88 µs at the median
+against 593 µs for tree-sitter's incremental parse and 58 ms for a whole
 parse ([gramide-typescript](https://github.com/O6lvl4/gramide-typescript),
 `docs/evidence/incremental-typescript-src.json`). A reader that wants the
 whole tree again materializes it, which is one pass and no parsing.
@@ -106,9 +106,11 @@ deleted.
 ## Reading a file that does not parse
 
 A recover site tries the item as written, and when it fails takes whichever
-of two ways puts fewer tokens under `ERROR`: skip to the next place the item
-rule reads, or read the item again with its missing `)`, `]`, `}` taken as
-there at the end of the file, which keeps a body an edit left open. Python's
+of three ways puts fewer tokens under `ERROR`: skip to the next place the
+item rule reads; read the item again with its missing `)`, `]`, `}` taken as
+there at the end of the file, which keeps a body an edit left open; or read
+it again with one closer taken as there where it failed farthest, which
+reads a method whose parameter list lost its `)` whole. Python's
 layout pass closes a bracket left open where a dedented statement begins.
 [docs/recovery.md](docs/recovery.md) is the model, and the measurement: each
 package breaks every file of its corpus four ways and compares the
@@ -118,9 +120,9 @@ share of breaks that lost nothing beyond the break and invented nothing:
 
 | corpus | files, breaks | kept: gramide / tree-sitter | clean breaks: gramide / tree-sitter |
 |---|---:|---:|---:|
-| JavaScript, Node `lib/` | 427, 1,694 | 94.3% / 95.9% | 89.7% / 90.6% |
-| TypeScript, TypeScript `src/` | 697, 2,588 | 97.3% / 99.0% | 91.5% / 94.6% |
-| Go, Go `src/` | 8,010, 30,927 | 99.5% / 91.1% | 99.0% / 82.9% |
+| JavaScript, Node `lib/` | 427, 1,694 | 96.1% / 95.9% | 92.1% / 90.6% |
+| TypeScript, TypeScript `src/` | 697, 2,588 | 98.2% / 99.0% | 95.2% / 94.6% |
+| Go, Go `src/` | 8,010, 30,927 | 99.7% / 91.1% | 99.2% / 82.9% |
 | Rust, Almide compiler `crates/` | 663, 2,632 | 99.9% / 97.5% | 99.8% / 94.9% |
 | Python, CPython `Lib/` | 1,450, 5,193 | 98.9% / 96.3% | 98.1% / 82.3% |
 

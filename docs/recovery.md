@@ -10,8 +10,8 @@ was measured against tree-sitter's.
 A grammar marks the lists whose members can be given up one at a time —
 `recover(item)` inside `rep`, `recover_all` for a whole list — and the parser
 in recovering mode tries, at each such site, the item as written. When the
-item fails there are two ways on, and the site takes the one that puts fewer
-tokens under an `ERROR` node:
+item fails there are three ways on, and the site takes the one that puts
+fewer tokens under an `ERROR` node:
 
 - **skip.** Find the next place the item rule reads again (bounded by the
   enclosing closer for `recover`, by the end of the list for `recover_all`),
@@ -28,6 +28,15 @@ tokens under an `ERROR` node:
   as a statement, so skipping would resume a few tokens on and drop the class
   with every method before the break; closing keeps the class and its methods
   and loses only what follows the break.
+- **repair.** Read the item once more in collecting mode to learn where it
+  failed farthest, and read it again with a `)`, `]` or `}` taken as there at
+  that place, zero tokens wide — each of the three is tried, the read with
+  the fewest tokens under `ERROR` stands. This is the way for a method whose
+  parameter list lost its `)`: the parser wanted `)` where it found `:`, and
+  with one taken as there the member reads whole, where skipping resumed
+  inside the member and let its `}` close the class. It is the analogue of
+  the `MISSING` node an LR recovery inserts, one token at a time and only at
+  the item level. Nothing is tried inside a repair already under way.
 
 The strict parse never takes a closer as there; a file is the language or it
 is not. The incremental reader compares its result with the recovering whole
@@ -64,23 +73,20 @@ The table below is filled from each package's `docs/evidence/recovery-*.json`
 
 | corpus | files, breaks | kept: gramide / tree-sitter | clean breaks: gramide / tree-sitter |
 |---|---:|---:|---:|
-| JavaScript, Node `lib/` | 427, 1,694 | 94.3% / 95.9% | 89.7% / 90.6% |
-| TypeScript, TypeScript `src/` | 697, 2,588 | 97.3% / 99.0% | 91.5% / 94.6% |
-| Go, Go `src/` | 8,010, 30,927 | 99.5% / 91.1% | 99.0% / 82.9% |
+| JavaScript, Node `lib/` | 427, 1,694 | 96.1% / 95.9% | 92.1% / 90.6% |
+| TypeScript, TypeScript `src/` | 697, 2,588 | 98.2% / 99.0% | 95.2% / 94.6% |
+| Go, Go `src/` | 8,010, 30,927 | 99.7% / 91.1% | 99.2% / 82.9% |
 | Rust, Almide compiler `crates/` | 663, 2,632 | 99.9% / 97.5% | 99.8% / 94.9% |
 | Python, CPython `Lib/` | 1,450, 5,193 | 98.9% / 96.3% | 98.1% / 82.3% |
 
-Where tree-sitter is ahead the shape is the same each time: a break inside
-a member of a brace-delimited body. A `)` deleted in a TypeScript method's
-parameter list makes the member fail; the skip resumes a few tokens on,
-inside the method (`file: string` reads as a field), and the method's `}`
-then closes the class, so every member after it is read as top-level
-statements. A `}` deleted from a JavaScript method lets the class body run
-on, and since anything reads as a statement the skip resumes right after the
-`class` keyword and the class is gone; closing at the end keeps it but nests
-what follows. tree-sitter's LR recovery can put the missing token where it
-belongs. Where gramide is ahead the item is the reason again: a Go or Rust
-file whose `}` went missing resumes at the next `func` or `fn` and loses
-that one item, where tree-sitter's cost model nests the rest of the file
-into the open body; and a Python bracket or f-string left open costs one
-statement where tree-sitter loses the block.
+Where tree-sitter still keeps more the shape is one: a `}` deleted from a
+JavaScript or TypeScript method. The class body runs on, and since anything
+after reads as a statement, skipping resumes right after the `class` keyword
+and the class is gone, while closing at the end keeps it but nests what
+follows; a repair cannot help, since the failure is at the end of the file.
+tree-sitter's LR recovery can put the missing brace where it belongs. On
+every other kind of break gramide is ahead: a Go or Rust file whose `}` went
+missing resumes at the next `func` or `fn` and loses that one item, where
+tree-sitter's cost model nests the rest of the file into the open body; a
+`)` gone from a parameter list is repaired; a Python bracket or f-string
+left open costs one statement where tree-sitter loses the block.
