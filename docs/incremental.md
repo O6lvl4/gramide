@@ -83,7 +83,7 @@ nothing follows it to separate, an indent, a dedent, the EOF — are the
 run's own as they were, moved by the edit. What such an edit costs is the
 lex of the run that holds it, so it grows with the comment: the block of
 `@typedef` comments at the top of Node's `quic.js` is one run of 20 KB,
-and an edit inside it is 50 µs where the file's median edit is 9.
+and an edit inside it is 50 µs where the file's median edit is 6.
 
 The same path takes an edit that touches exactly one token — a letter
 typed into a name, or put right after it, or deleted from it — when the run
@@ -136,13 +136,13 @@ Medians over 1,000 edits, and the whole parse of the same file:
 
 | file | gramide | tree-sitter | whole parse |
 |---|---:|---:|---:|
-| Node `internal/quic/quic.js` (190 KB) | 8.8 µs | 101 µs | 3.5 ms |
-| TypeScript `compiler/parser.ts` (540 KB) | 26 µs | 128 µs | 9.5 ms |
-| TypeScript `compiler/checker.ts` (3.1 MB) | 88 µs | 593 µs | 58 ms |
-| Excalidraw `components/App.tsx` (465 KB) | 22 µs | 234 µs | 9.7 ms |
-| Go `net/http/server.go` (140 KB) | 13 µs | 156 µs | 1.6 ms |
-| Rust `lower/expressions.rs` (92 KB) | 6.2 µs | 56 µs | 1.8 ms |
-| Python `argparse.py` (107 KB) | 6.7 µs | 45 µs | 2.7 ms |
+| Node `internal/quic/quic.js` (190 KB) | 6.1 µs | 98 µs | 3.3 ms |
+| TypeScript `compiler/parser.ts` (540 KB) | 18 µs | 120 µs | 9.0 ms |
+| TypeScript `compiler/checker.ts` (3.1 MB) | 75 µs | 563 µs | 55 ms |
+| Excalidraw `components/App.tsx` (465 KB) | 16 µs | 221 µs | 9.3 ms |
+| Go `net/http/server.go` (140 KB) | 12 µs | 151 µs | 1.5 ms |
+| Rust `lower/expressions.rs` (92 KB) | 5.4 µs | 54 µs | 1.7 ms |
+| Python `argparse.py` (107 KB) | 5.4 µs | 44 µs | 2.6 ms |
 
 Most of a median edit is now the lexing of one run and the walk down to
 it; what it was before — 30 to 50 µs on every file — was the Almide

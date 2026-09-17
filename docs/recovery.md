@@ -54,6 +54,33 @@ open is an error token by itself. An f-string that fails inside — a `}`
 gone from a replacement field — ends at its line when it opened with one
 quote; only one opened with three owns the rest of the file.
 
+
+## What a broken file costs
+
+Recovery must not turn a large file into a long wait. `bench/recovery_cost.py`
+in the TypeScript package deletes N `)` at random from `compiler/checker.ts`
+(3.1 MB, one function of 2.9 MB) and times the recovered outline against the
+tree-sitter harness, best of three ([evidence](https://github.com/O6lvl4/gramide-typescript/blob/main/docs/evidence/recovery-cost-checker-ts.json)):
+
+| `)` deleted | gramide | tree-sitter | outline lines (intact: 2,650) |
+|---:|---:|---:|---:|
+| 0 | 0.07 s | 0.14 s | 2,650 |
+| 50 | 0.12 s | 0.14 s | 2,650 |
+| 100 | 0.13 s | 0.14 s | 2,650 |
+| 200 | 2.08 s | 0.15 s | 2,925 |
+| 500 | 7.64 s | 0.24 s | 2,898 |
+
+Up to a hundred breaks the read costs what an intact read costs; past that
+it grows faster than the breaks do, since every failed item's resume search
+and lookahead scan the tokens after it, and an unclosed bracket makes those
+scans run to the end. tree-sitter's cost stays flat. Before the JavaScript,
+TypeScript and Rust packages were fixed on 2026-09-18, the lookahead that
+reads a bracket tree read an opener both as the group it opens and as a lone
+token, so an unclosed bracket forked the read at every opener after it:
+2^30 for thirty breaks, and this file at two hundred did not finish in ten
+minutes. A grammar that reads brackets as a tree must give an opener one
+reading only.
+
 ## What was measured
 
 `bench/recovery.py` in each package breaks every file of its corpus in four
