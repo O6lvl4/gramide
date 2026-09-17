@@ -68,7 +68,7 @@ The table below is filled from each package's `docs/evidence/recovery-*.json`
 | TypeScript, TypeScript `src/` | 697, 2,588 | 97.3% / 99.0% | 91.5% / 94.6% |
 | Go, Go `src/` | 8,010, 30,927 | 99.5% / 91.1% | 99.0% / 82.9% |
 | Rust, Almide compiler `crates/` | 663, 2,632 | 99.9% / 97.5% | 99.8% / 94.9% |
-| Python, CPython `Lib/` | 1,450, 5,193 | 99.3% / 96.3% | 98.7% / 82.3% |
+| Python, CPython `Lib/` | 1,450, 5,193 | 98.9% / 96.3% | 98.1% / 82.3% |
 
 Where tree-sitter is ahead the shape is the same each time: a break inside
 a member of a brace-delimited body. A `)` deleted in a TypeScript method's
