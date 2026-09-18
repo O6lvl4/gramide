@@ -24,9 +24,11 @@ declaration and every statement or class member inside braces.
 - its subtree, with each child unit replaced by a placeholder node that
   takes one slot of the unit's own token space (piece 0, child 0, piece 1,
   child 1, …);
-- its children, and beside them the children's totals — bytes, lines, tail,
-  tokens, first token, kind — so that finding the way through a unit reads
-  integers and never a child.
+- its children, whose totals — bytes, lines, tail, tokens, first token,
+  kind — are read where each child stands: a child is borrowed to read
+  them, never copied, so finding the way through a unit costs integers;
+- the ids of the nodes of its own subtree, in preorder, placeholders left
+  out.
 
 A unit's tokens run from its first token to the first token after its
 separators (a line break, a `;`), never into the next child: a recovered
@@ -110,6 +112,24 @@ place of itself. Only what is new is named anew. `items` lists the
 document's items with their ids and absolute ranges; `reparse-bench`
 counts, per edit, how many items lost their id.
 
+Every node carries an id too, and an id stands for one text: a node keeps
+its id exactly when the edit left its text alone — the same kind over the
+same bytes, where they were or moved by the edit — and a node whose text
+the edit changed is named anew. That is, in a window read again, each
+node that did not come out as it was; and on the way down to the edit,
+every node that holds it, up to the file's own. So an id seen again is
+the node it was, and a reader may keep what it knew about it. A node that
+ends where the edit starts, or starts where it ends, holds nothing of it:
+a letter typed onto it makes a longer node, which is new. No id is given
+twice, not even when an edit cannot be read in and the file is read
+whole: `rebuilt` numbers on from the old document and keeps every id the
+rule keeps. `node_ids` lists the ids in the preorder of the tree
+`materialize` gives, and `reparse --nodes` prints every node with its id
+and how many ids the edit left as they were. `reparse-bench --verify K`
+holds the rule against the whole trees before and after every K-th edit,
+and counts how many nodes each of those edits renamed: on `checker.ts`,
+15 of its 338,851 at the median, the nodes that hold the letter typed.
+
 When the window parses, its nodes are cut into units the same way, the
 parent's placeholders are renumbered and the pieces between them
 re-counted, and the totals along the path are summed again.
@@ -136,26 +156,65 @@ Medians over 1,000 edits, and the whole parse of the same file:
 
 | file | gramide | tree-sitter | whole parse |
 |---|---:|---:|---:|
-| Node `internal/quic/quic.js` (190 KB) | 6.1 µs | 98 µs | 3.3 ms |
-| TypeScript `compiler/parser.ts` (540 KB) | 18 µs | 120 µs | 9.0 ms |
-| TypeScript `compiler/checker.ts` (3.1 MB) | 75 µs | 563 µs | 55 ms |
-| Excalidraw `components/App.tsx` (465 KB) | 16 µs | 221 µs | 9.3 ms |
-| Go `net/http/server.go` (140 KB) | 12 µs | 151 µs | 1.5 ms |
-| Rust `lower/expressions.rs` (92 KB) | 5.4 µs | 54 µs | 1.7 ms |
-| Python `argparse.py` (107 KB) | 5.4 µs | 44 µs | 2.6 ms |
+| Node `internal/quic/quic.js` (190 KB) | 5.8 µs | 101 µs | 3.3 ms |
+| TypeScript `compiler/parser.ts` (540 KB) | 15 µs | 120 µs | 9.1 ms |
+| TypeScript `compiler/checker.ts` (3.1 MB) | 54 µs | 561 µs | 58 ms |
+| Excalidraw `components/App.tsx` (465 KB) | 13 µs | 221 µs | 9.4 ms |
+| Go `net/http/server.go` (140 KB) | 10 µs | 150 µs | 1.5 ms |
+| Rust `lower/expressions.rs` (92 KB) | 4.6 µs | 53 µs | 1.6 ms |
+| Python `argparse.py` (107 KB) | 5.1 µs | 44 µs | 2.6 ms |
 
 Most of a median edit is now the lexing of one run and the walk down to
 it; what it was before — 30 to 50 µs on every file — was the Almide
 backend cloning the compiled grammar into each call along the way, which
 a `mut` parameter (passed by reference) removed, and the run's tokens
-being cloned to read their measures, which integer lists beside the runs
-removed.
+being cloned to read their measures. Integer lists beside the runs and
+children stopped that once; reading each measure where it stands, in a
+function whose whole body is the read (`match list.get`, which borrows),
+stopped it for good, and dropped the lists, which were a third of a
+document. Naming the nodes that hold an edit walks each unit on the way
+down once more; it is in the numbers above.
 
 The evidence is in each package's `docs/evidence/incremental-*.json`.
 
+## What it holds
+
+A document holds every token once, relative to its run, every node once,
+and a few integers per unit; the parse it was cut from goes when it is
+cut. Peak resident size of one process, gramide against the tree-sitter
+harness, best of three ([evidence](evidence/memory.json), `bench/memory.py`):
+
+| file | `check` | `outline` | read, one edit, read again |
+|---|---:|---:|---:|
+| TypeScript `compiler/checker.ts` (3.1 MB) | 33.8 / 61.7 | 58.5 / 61.8 | 126.8 / 62.0 |
+| TypeScript `compiler/parser.ts` (540 KB) | 8.8 / 13.7 | 13.9 / 13.7 | 27.4 / 13.7 |
+| TSX `components/App.tsx` (465 KB) | 8.7 / 12.9 | 13.3 / 12.9 | 25.8 / 13.0 |
+| JavaScript `internal/quic/quic.js` (190 KB) | 4.6 / 5.2 | 6.3 / 5.2 | 10.6 / 5.2 |
+| Go `ssa/rewriteAMD64.go` (2.6 MB) | 44.5 / 98.7 | 75.3 / 98.7 | 175.0 / 98.9 |
+| Go `net/http/server.go` (140 KB) | 4.0 / 4.5 | 5.6 / 4.5 | 9.2 / 4.7 |
+| Rust `lower/expressions.rs` (92 KB) | 4.2 / 5.4 | 5.5 / 5.4 | 9.1 / 5.5 |
+| Python `typing.py` (136 KB) | 5.3 / 5.0 | 6.8 / 4.9 | 10.3 / 5.1 |
+| Python `argparse.py` (107 KB) | 4.7 / 4.5 | 6.1 / 4.6 | 9.3 / 4.7 |
+
+In megabytes, gramide first. `check` builds no tree: from a few hundred
+kilobytes up it holds a third to over half less than tree-sitter. A file
+read once for its outline holds within 4% of tree-sitter's tree from a few
+hundred kilobytes up, and less on the largest. A document read and edited
+holds about twice tree-sitter's tree: the parse and the document
+cut from it stand side by side while it is cut, and each unit's tokens are
+copied out of the parse. An empty file costs a process 2.5 to 3.4 MB
+against tree-sitter's 1.6 to 1.7: the compiled grammar and the lexer's tables are
+built when the process starts.
+
+The document was once far larger. The Almide backend copies a list
+element taken out with a fallback (`list.get(xs, i) ?? default`), copies a
+value used twice in a branch inside a loop instead of moving it at its
+last use, and copies what a closure captures for every element a
+`list.map` visits: each child read that way was a copy of its subtree, and
+putting the tree back together cloned the children's nodes once per node.
+Every such read is now a borrow or a move.
+
 ## What it does not do
 
-Node identity across edits: the tree after an edit is a new tree, and a
-reader that kept a node from before cannot find it again. Readers that
-want absolute positions materialize the file, one pass and no parsing.
-Both are the next thing, not this one.
+Readers that want absolute positions materialize the file, one pass and
+no parsing.

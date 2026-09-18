@@ -45,13 +45,30 @@ fn engines(packages: List[package_api.Definition]) -> Engines = Engines { loaded
 fn engines_for(packages: List[package_api.Definition], paths: List[String]) -> Engines = Engines {
   loaded: loaded_from(list.filter(packages, (d) => list.any(paths, (path) => list.any(d.extensions, (ext) => string.ends_with(path, ext)))))
 }
-fn loaded_for(e: Engines, path: String) -> Result[Language, String] = {
-  let found = list.filter(e.loaded, (l) => list.any(l.definition.extensions, (ext) => string.ends_with(path, ext)))
+// Which loaded language reads `path`, by its place in the list: taken out of
+// the list, a language is a copy of its grammar, once for every file read.
+fn loaded_index(e: Engines, path: String) -> Result[Int, String] = {
+  let found = reading_path(e, path)
   guard list.len(found) <= 1 else err(path + ": ambiguous language packages")
   list.first(found) |> option.to_result(unknown_ext(path))
 }
-fn supports_in(e: Engines, path: String, capability: String) -> Bool = match loaded_for(e, path) {
-  ok(l) => list.contains(l.definition.capabilities, capability), err(_) => false,
+// the places of the loaded languages whose extensions end `path`
+fn reading_path(e: Engines, path: String) -> List[Int] = {
+  var found: List[Int] = []
+  var k = 0
+  for l in e.loaded {
+    if list.any(l.definition.extensions, (ext) => string.ends_with(path, ext)) then list.push(found, k) else ()
+    k = k + 1
+  }
+  found
+}
+fn loaded_for(e: Engines, path: String) -> Result[Language, String] = {
+  let at = loaded_index(e, path)!
+  list.get(e.loaded, at) |> option.to_result(unknown_ext(path))
+}
+fn supports_in(e: Engines, path: String, capability: String) -> Bool = match loaded_index(e, path) {
+  ok(at) => (match list.get(e.loaded, at) { some(l) => list.contains(l.definition.capabilities, capability), none => false }),
+  err(_) => false,
 }
 fn tokenize(l: Language, src: String, recover: Bool) -> Result[List[tree.Token], lex.LexError] = {
   let scan = l.tokenize
@@ -71,9 +88,17 @@ fn tokenize(l: Language, src: String, recover: Bool) -> Result[List[tree.Token],
 // recovery touched must not trust what holds them.
 type Reading = { parsed: parser.Parsed, error: Option[String], errors: Int, sep: String, language: String, symbols: package_api.SymbolRules, gaps: List[Int] }
 
-fn recovered(c: parser.Compiled, source: Bytes, toks: List[tree.Token], msg: String, l: Language) -> Result[Reading, String] =
-  match parser.parse_recovering(c, source, toks) {
-    ok(p) => ok(Reading { parsed: p, error: some(msg), errors: parser.error_nodes(p.root, parser.error_kind(c)), sep: l.sep, language: l.definition.id, symbols: l.definition.symbols, gaps: [] }),
+// The language's fields through locals: stored straight into the record,
+// they take the language, grammar and all, by value.
+fn recovered(source: Bytes, toks: List[tree.Token], msg: String, l: Language) -> Result[Reading, String] =
+  match parser.parse_recovering(l.grammar, source, toks) {
+    ok(p) => {
+      let errors = parser.error_nodes(p.root, parser.error_kind(l.grammar))
+      let sep = l.sep
+      let language = l.definition.id
+      let symbols = l.definition.symbols
+      ok(Reading { parsed: p, error: some(msg), errors: errors, sep: sep, language: language, symbols: symbols, gaps: [] })
+    },
     err(_) => err(msg),
   }
 
@@ -86,11 +111,17 @@ fn failure_message(failure: Option[parser.Failure], path: String) -> Option[Stri
 }
 // The ERROR nodes are counted before the tree goes into the record: read
 // after it moved, the tree would be copied to count them
+// The language's fields through locals, so the language stays borrowed.
 fn reading(p: parser.Parsed, msg: Option[String], l: Language, gaps: List[Int]) -> Reading = {
   let errors = if msg == none then 0 else parser.error_nodes(p.root, parser.error_kind(l.grammar))
-  Reading { parsed: p, error: msg, errors: errors, sep: l.sep, language: l.definition.id, symbols: l.definition.symbols, gaps: gaps }
+  let sep = l.sep
+  let language = l.definition.id
+  let symbols = l.definition.symbols
+  Reading { parsed: p, error: msg, errors: errors, sep: sep, language: language, symbols: symbols, gaps: gaps }
 }
 
+// The text goes to the lexer last, so it moves there: read again after it,
+// it was copied for the lexer, the size of the file.
 fn read_lang(l: Language, path: String, src: String) -> Result[Reading, String] = {
   // The tokens are ranges into this; every reader that wants a name reads it.
   let source = bytes.from_string(src)
@@ -103,15 +134,16 @@ fn read_lang(l: Language, path: String, src: String) -> Result[Reading, String] 
     // it does not even lex, which is the ordinary state of a half-typed
     // string: lex again turning what it cannot read into `error` tokens
     err(e) => {
-      let toks = tokenize(l, src, true) |> result.map_err((failure) => lex_error(path, failure))!
-      recovered(l.grammar, source, toks, lex_error(path, e), l)
+      let toks = tokenize(l, bytes.to_string_lossy(source), true) |> result.map_err((failure) => lex_error(path, failure))!
+      recovered(source, toks, lex_error(path, e), l)
     },
   }
 }
 
 fn parse_lang(l: Language, path: String, src: String) -> Result[parser.Parsed, String] = {
+  let source = bytes.from_string(src)
   let toks = tokenize(l, src, false) |> result.map_err((e) => lex_error(path, e))!
-  parser.parse_with(l.grammar, bytes.from_string(src), toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
+  parser.parse_with(l.grammar, source, toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
 }
 
 // The gate's own path: the verdict and nothing else, so the engine builds no
@@ -119,8 +151,9 @@ fn parse_lang(l: Language, path: String, src: String) -> Result[parser.Parsed, S
 // one.
 fn verify_lang(l: Language, path: String, src: String) -> Result[Unit, String] = {
   guard list.contains(l.definition.capabilities, "check") else err(path + ": language package does not provide check")
+  let source = bytes.from_string(src)
   let toks = tokenize(l, src, false) |> result.map_err((e) => lex_error(path, e))!
-  parser.verify(l.grammar, bytes.from_string(src), toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
+  parser.verify(l.grammar, source, toks) |> result.map_err((f) => path + ":" + parser.format_failure(f))
 }
 
 // One file, compiling its grammar for this call alone.
@@ -129,6 +162,16 @@ fn parse_source(packages: List[package_api.Definition], path: String, src: Strin
 fn verify_source(packages: List[package_api.Definition], path: String, src: String) -> Result[Unit, String] = verify_lang(language_of(packages, path)!, path, src)
 
 // The same through engines a batch already compiled.
-fn read_with(e: Engines, path: String, src: String) -> Result[Reading, String] = read_lang(loaded_for(e, path)!, path, src)
-fn parse_with(e: Engines, path: String, src: String) -> Result[parser.Parsed, String] = parse_lang(loaded_for(e, path)!, path, src)
-fn verify_with(e: Engines, path: String, src: String) -> Result[Unit, String] = verify_lang(loaded_for(e, path)!, path, src)
+// Each reads the language where it stands in the list.
+fn read_with(e: Engines, path: String, src: String) -> Result[Reading, String] = {
+  let at = loaded_index(e, path)!
+  match list.get(e.loaded, at) { some(l) => read_lang(l, path, src), none => err(unknown_ext(path)) }
+}
+fn parse_with(e: Engines, path: String, src: String) -> Result[parser.Parsed, String] = {
+  let at = loaded_index(e, path)!
+  match list.get(e.loaded, at) { some(l) => parse_lang(l, path, src), none => err(unknown_ext(path)) }
+}
+fn verify_with(e: Engines, path: String, src: String) -> Result[Unit, String] = {
+  let at = loaded_index(e, path)!
+  match list.get(e.loaded, at) { some(l) => verify_lang(l, path, src), none => err(unknown_ext(path)) }
+}

@@ -105,17 +105,29 @@ type DeclarationTable = { entries: List[DeclarationEntry], scopes: List[Int], na
   callables: List[Int], envelopes: List[Int], unnamed_envelopes: List[Int],
   type_name: Int, identifier: Int, arguments: Int, field_access: Int, type_mentions: List[Int],
   f_name: Int, f_trait: Int, f_receiver: Int, f_field: Int }
+// Loops, not `list.map`: a closure over the name table copied the table for
+// every entry it mapped.
+fn ids_in(names: nametable.Names, keys: List[String]) -> List[Int] = {
+  var out: List[Int] = list.with_capacity(list.len(keys))
+  for k in keys { list.push(out, nametable.id_of(names, k)) }
+  out
+}
+fn entries_in(names: nametable.Names, declarations: List[(String, String)]) -> List[DeclarationEntry] = {
+  var out: List[DeclarationEntry] = list.with_capacity(list.len(declarations))
+  for d in declarations { list.push(out, DeclarationEntry { syntax: nametable.id_of(names, d.0), name: d.0, kind: d.1 }) }
+  out
+}
 fn declaration_table(rules: package_api.SymbolRules, names: nametable.Names) -> DeclarationTable =
   DeclarationTable {
-    entries: list.map(rules.declarations, (d) => DeclarationEntry { syntax: nametable.id_of(names, d.0), name: d.0, kind: d.1 }),
-    scopes: list.map(rules.scopes, (k) => nametable.id_of(names, k)),
-    namespaces: list.map(rules.namespaces, (k) => nametable.id_of(names, k)),
-    callables: list.map(rules.callables, (k) => nametable.id_of(names, k)),
-    envelopes: list.map(rules.envelopes, (k) => nametable.id_of(names, k)),
-    unnamed_envelopes: list.map(rules.unnamed_envelopes, (k) => nametable.id_of(names, k)),
+    entries: entries_in(names, rules.declarations),
+    scopes: ids_in(names, rules.scopes),
+    namespaces: ids_in(names, rules.namespaces),
+    callables: ids_in(names, rules.callables),
+    envelopes: ids_in(names, rules.envelopes),
+    unnamed_envelopes: ids_in(names, rules.unnamed_envelopes),
     type_name: nametable.id_of(names, "type_name"), identifier: nametable.id_of(names, "identifier"),
     arguments: nametable.id_of(names, rules.arguments), field_access: nametable.id_of(names, rules.field_access),
-    type_mentions: list.map(rules.type_mentions, (k) => nametable.id_of(names, k)),
+    type_mentions: ids_in(names, rules.type_mentions),
     f_name: nametable.id_of(names, "name"), f_trait: nametable.id_of(names, "trait"),
     f_receiver: nametable.id_of(names, "receiver"), f_field: nametable.id_of(names, "field")
   }

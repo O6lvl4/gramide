@@ -62,7 +62,7 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
 
 パーサは `recover` / `recover_all` サイトが読んだノードにそのサイトの印を付ける。
 `incremental.from_parsed` はそこで木を切り、各項目は自分のトークンだけを、子項目の間の
-区間ごとに、区間の先頭からの相対位置で持つ。子の大きさは親の隣に並べておく。編集は、
+区間ごとに、区間の先頭からの相対位置で持つ。子の大きさは子のその場で読む。編集は、
 それを丸ごと含む最も深い項目まで降り、その兄弟の窓を次のトークンまで字句解析し直し、
 サイトの本体でそのトークンに届くまでパースし、新しい項目を差し込む。上の基準位置は
 整数の和だけで決まる。字句解析かパーサが以前と食い違えば(窓の次のトークンが変わった、
@@ -71,7 +71,7 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
 照合される。エンジンのテストと、各言語パッケージのコーパス上のランダム編集検証で。
 
 TypeScript 5.9 の `compiler/checker.ts`(3.1 MB、うち 2.9 MB が 1 つの関数)で、識別子の
-中への 1 キー入力は中央値 75 µs。tree-sitter の増分パースは 563 µs、全文パースは 55 ms
+中への 1 キー入力は中央値 54 µs。tree-sitter の増分パースは 561 µs、全文パースは 58 ms
 ([gramide-typescript](https://github.com/O6lvl4/gramide-typescript) の
 `docs/evidence/incremental-typescript-src.json`)。木全体が要る読み手は materialize する。
 1 パスで、パースはしない。
@@ -83,6 +83,18 @@ TypeScript 5.9 の `compiler/checker.ts`(3.1 MB、うち 2.9 MB が 1 つの関�
 読み手が Python にも効く。Python の文は `recover_lines` の項目で、単独で字句解析したスライスでは
 インデントを置けないので、改行を打ちも消しもしていない編集では区間のレイアウトのトークンを
 そのまま保つ。
+
+各ノードも ID を持ち、ID は 1 つのテキストを表す。編集がテキストに触れなかったノードは、元の場所でも
+編集でずれた場所でも ID を保つ。テキストが変わったノード、つまり読み直して違う形で出てきたものと、
+編集を内側に含むすべてのノードは、新しい ID になる。全文を読み直すことになった場合も含め、同じ ID を
+二度与えることはない。`reparse --nodes` は全ノードを ID 付きで出す。各パッケージのランダム編集検証は、
+コーパスのすべての編集でこの規則を確かめている。`checker.ts` では 1 回の編集で ID が変わるノードは、
+338,851 個のうち中央値で 15 個。
+
+読んで編集した文書は、tree-sitter の木のおよそ 2 倍を持つ(`checker.ts` で 127 MB と 62 MB)。
+切り出す間、パース結果とそこから切った文書が並んで存在するためだ。`check` は数百 KB 以上のファイルで
+tree-sitter より 3 分の 1 から半分以上少なく、1 回読むだけなら 4% 以内に収まる
+([docs/incremental.md](docs/incremental.md)、[証拠](docs/evidence/memory.json))。
 
 ## パースできないファイルを読む
 
@@ -109,9 +121,9 @@ TypeScript 5.9 の `compiler/checker.ts`(3.1 MB、うち 2.9 MB が 1 つの関�
 | Python, CPython `Lib/` | 1,450, 5,193 | 99.0% / 96.3% | 98.2% / 82.3% |
 
 壊れたファイルでも、読むコストは無傷のファイルとほとんど変わらない。`compiler/checker.ts` から `)` か `}` を
-消す、または `(` か `{` を打つ。1 回から、打てる場所すべてまで試した outline は 0.03〜0.13 秒で、
-tree-sitter は 0.07〜0.91 秒。どの回数でも tree-sitter の 68% 以下の時間で、無傷のファイルは
-0.07〜0.08 秒と 0.14〜0.15 秒([証拠](https://github.com/O6lvl4/gramide-typescript/blob/main/docs/evidence/recovery-cost-checker-ts.json))。
+消す、または `(` か `{` を打つ。1 回から、打てる場所すべてまで試した outline は 0.03〜0.12 秒で、
+tree-sitter は 0.07〜0.89 秒。どの回数でも tree-sitter の 67% 以下の時間で、無傷のファイルは
+0.07〜0.08 秒と 0.14 秒([証拠](https://github.com/O6lvl4/gramide-typescript/blob/main/docs/evidence/recovery-cost-checker-ts.json))。
 
 ## 言語パッケージを書く
 

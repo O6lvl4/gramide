@@ -19,9 +19,11 @@
 //   <name> map <dir> [--budget N] [--task TEXT]
 //                             a ranked map of a repository within N tokens (default 1024),
 //                             personalised toward what TEXT mentions
-//   <name> reparse <file> --edit START:OLD_END:NEW_END --new <edited file>
+//   <name> reparse <file> --edit START:OLD_END:NEW_END --new <edited file> [--nodes]
 //                             the file's symbols after an edit, re-read incrementally from
-//                             the whole parse of the file (stderr says which it was)
+//                             the whole parse of the file (stderr says which it was); with
+//                             --nodes, every node after it with its id, and how many ids the
+//                             edit left as they were
 //   <name> reparse-bench <file> [--edits N] [--seed S] [--verify K] [--breaking] [--slow N]
 //                             N keystroke edits re-read incrementally, timed; every K
 //                             edits the result is checked against a whole parse
@@ -54,7 +56,7 @@ type Program = { name: String, version: String, packages: List[package_api.Defin
 fn usage(p: Program) -> String = "usage: " + p.name + " languages\n       " + p.name + " version\n       "
   + p.name + " (parse | tokens | outline | symbols | symbols-recovered | tags) <file>\n       "
   + p.name + " (check | balance) <file>...\n       " + p.name + " map <dir> [--budget N] [--task TEXT]\n       "
-  + p.name + " reparse <file> --edit START:OLD_END:NEW_END --new <edited file>\n       "
+  + p.name + " reparse <file> --edit START:OLD_END:NEW_END --new <edited file> [--nodes]\n       "
   + p.name + " reparse-bench <file> [--edits N] [--seed S] [--verify K] [--breaking] [--slow N]"
 
 // One line per component, so a bug report can say exactly what was linked.
@@ -252,6 +254,12 @@ effect fn run_reparse_bench(packages: List[package_api.Definition], argv: List[S
 
 // One edit, end to end: parse the file, take the edit and the new text,
 // re-read what the edit touched, and answer the symbols of the result.
+// Read whole, the document is made again, numbering on from the old one.
+// Its own function: the grammar handed on from inside a branch did not
+// reach the Rust it compiles to as a mutable borrow.
+effect fn print_nodes(doc: incremental.Document, status: Int, parsed: parser.Parsed, source: Bytes, mut c: parser.Compiled, edit: incremental.Edit, ids_before: List[Int]) -> Unit =
+  if status == incremental.DONE then println(incremental.nodes_json(doc, ids_before))
+  else println(incremental.nodes_json(incremental.rebuilt(doc, parsed, source, c, edit), ids_before))
 effect fn run_reparse(packages: List[package_api.Definition], argv: List[String]) -> Result[Unit, String] = {
   let path = list.get(argv, 1) ?? ""
   let spec = option_after(argv, "--edit") ?? ""
@@ -269,11 +277,13 @@ effect fn run_reparse(packages: List[package_api.Definition], argv: List[String]
   guard bytes.len(new_source) == bytes.len(old_source) + edit.new_end - edit.old_end else err("the new text is not the file with that edit applied: " + int.to_string(bytes.len(new_source)) + " bytes, expected " + int.to_string(bytes.len(old_source) + edit.new_end - edit.old_end))
   let first = parser.parse_with(c, old_source, scan(before, false) |> result.map_err((e) => path + ": " + int.to_string(e.line) + ":" + int.to_string(e.col) + ": " + e.message)!) |> result.map_err((f) => path + ":" + parser.format_failure(f))!
   var doc = incremental.from_parsed(first, old_source, c)
+  let ids_before = if list.contains(argv, "--nodes") then incremental.node_ids(doc) else []
   let status = incremental.reparse_status(doc, new_source, edit, scan, c)
   let parsed = if status == incremental.DONE then incremental.materialize(doc)
     else parser.parse_with(c, new_source, scan(after, false) |> result.map_err((e) => path + ": " + int.to_string(e.line) + ":" + int.to_string(e.col) + ": " + e.message)!) |> result.map_err((f) => path + ":" + parser.format_failure(f))!
   eprintln(if status == incremental.DONE then "reparse: incremental" else "reparse: whole file (" + int.to_string(status) + ")")
-  println(symbols.document_parsed(l, parsed, after)!)
+  if list.contains(argv, "--nodes") then { let _ = print_nodes(doc, status, parsed, new_source, c, edit, ids_before) }
+  else { let _ = println(symbols.document_parsed(l, parsed, after)!) }
   ok(())
 }
 

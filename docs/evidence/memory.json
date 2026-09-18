@@ -1,0 +1,195 @@
+{
+  "platform": "macOS-26.3-arm64-arm-64bit-Mach-O",
+  "unit": "MB, peak resident, best of three",
+  "files": [
+    {
+      "label": "TypeScript compiler/checker.ts",
+      "file": "checker.ts",
+      "bytes": 3121747,
+      "empty": {
+        "gramide": 3.4,
+        "tree_sitter": 1.6
+      },
+      "check": {
+        "gramide": 33.8,
+        "tree_sitter": 61.7
+      },
+      "outline": {
+        "gramide": 58.5,
+        "tree_sitter": 61.8
+      },
+      "edit": {
+        "gramide": 126.8,
+        "tree_sitter": 62.0
+      }
+    },
+    {
+      "label": "TypeScript compiler/parser.ts",
+      "file": "parser.ts",
+      "bytes": 539588,
+      "empty": {
+        "gramide": 3.4,
+        "tree_sitter": 1.6
+      },
+      "check": {
+        "gramide": 8.8,
+        "tree_sitter": 13.7
+      },
+      "outline": {
+        "gramide": 13.9,
+        "tree_sitter": 13.7
+      },
+      "edit": {
+        "gramide": 27.4,
+        "tree_sitter": 13.7
+      }
+    },
+    {
+      "label": "TSX components/App.tsx",
+      "file": "App.tsx",
+      "bytes": 464764,
+      "empty": {
+        "gramide": 3.4,
+        "tree_sitter": 1.7
+      },
+      "check": {
+        "gramide": 8.7,
+        "tree_sitter": 12.9
+      },
+      "outline": {
+        "gramide": 13.3,
+        "tree_sitter": 12.9
+      },
+      "edit": {
+        "gramide": 25.8,
+        "tree_sitter": 13.0
+      }
+    },
+    {
+      "label": "JavaScript internal/quic/quic.js",
+      "file": "quic.js",
+      "bytes": 190462,
+      "empty": {
+        "gramide": 2.9,
+        "tree_sitter": 1.6
+      },
+      "check": {
+        "gramide": 4.6,
+        "tree_sitter": 5.2
+      },
+      "outline": {
+        "gramide": 6.3,
+        "tree_sitter": 5.2
+      },
+      "edit": {
+        "gramide": 10.6,
+        "tree_sitter": 5.2
+      }
+    },
+    {
+      "label": "Go ssa/rewriteAMD64.go",
+      "file": "rewriteAMD64.go",
+      "bytes": 2623429,
+      "empty": {
+        "gramide": 2.5,
+        "tree_sitter": 1.6
+      },
+      "check": {
+        "gramide": 44.5,
+        "tree_sitter": 98.7
+      },
+      "outline": {
+        "gramide": 75.3,
+        "tree_sitter": 98.7
+      },
+      "edit": {
+        "gramide": 175.0,
+        "tree_sitter": 98.9
+      }
+    },
+    {
+      "label": "Go net/http/server.go",
+      "file": "server.go",
+      "bytes": 140287,
+      "empty": {
+        "gramide": 2.5,
+        "tree_sitter": 1.6
+      },
+      "check": {
+        "gramide": 4.0,
+        "tree_sitter": 4.5
+      },
+      "outline": {
+        "gramide": 5.6,
+        "tree_sitter": 4.5
+      },
+      "edit": {
+        "gramide": 9.2,
+        "tree_sitter": 4.7
+      }
+    },
+    {
+      "label": "Rust lower/expressions.rs",
+      "file": "expressions.rs",
+      "bytes": 92095,
+      "empty": {
+        "gramide": 3.0,
+        "tree_sitter": 1.7
+      },
+      "check": {
+        "gramide": 4.2,
+        "tree_sitter": 5.4
+      },
+      "outline": {
+        "gramide": 5.5,
+        "tree_sitter": 5.4
+      },
+      "edit": {
+        "gramide": 9.1,
+        "tree_sitter": 5.5
+      }
+    },
+    {
+      "label": "Python typing.py",
+      "file": "typing.py",
+      "bytes": 135870,
+      "empty": {
+        "gramide": 2.8,
+        "tree_sitter": 1.6
+      },
+      "check": {
+        "gramide": 5.3,
+        "tree_sitter": 5.0
+      },
+      "outline": {
+        "gramide": 6.8,
+        "tree_sitter": 4.9
+      },
+      "edit": {
+        "gramide": 10.3,
+        "tree_sitter": 5.1
+      }
+    },
+    {
+      "label": "Python argparse.py",
+      "file": "argparse.py",
+      "bytes": 106655,
+      "empty": {
+        "gramide": 2.8,
+        "tree_sitter": 1.6
+      },
+      "check": {
+        "gramide": 4.7,
+        "tree_sitter": 4.5
+      },
+      "outline": {
+        "gramide": 6.1,
+        "tree_sitter": 4.6
+      },
+      "edit": {
+        "gramide": 9.3,
+        "tree_sitter": 4.7
+      }
+    }
+  ]
+}

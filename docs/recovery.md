@@ -127,16 +127,16 @@ first ([evidence](https://github.com/O6lvl4/gramide-typescript/blob/main/docs/ev
 
 | breaks | `)` deleted | `}` deleted | `(` typed | `{` typed |
 |---|---:|---:|---:|---:|
-| 0 | 0.08 / 0.15 | 0.08 / 0.15 | 0.08 / 0.15 | 0.07 / 0.14 |
-| 1 | 0.10 / 0.15 | 0.10 / 0.15 | 0.08 / 0.15 | 0.08 / 0.14 |
-| 10 | 0.10 / 0.15 | 0.08 / 0.15 | 0.10 / 0.15 | 0.10 / 0.14 |
-| 100 | 0.10 / 0.15 | 0.08 / 0.15 | 0.10 / 0.16 | 0.10 / 0.21 |
-| 1,000 | 0.10 / 0.36 | 0.04 / 0.14 | 0.11 / 0.40 | 0.13 / 0.20 |
-| 10,000 | 0.13 / 0.48 | 0.03 / 0.07 | 0.13 / 0.49 | 0.10 / 0.34 |
-| every one there is | 0.12 / 0.45 (31,938) | 0.04 / 0.10 (10,455) | 0.06 / 0.37 (224,949) | 0.12 / 0.91 (224,949) |
+| 0 | 0.07 / 0.14 | 0.07 / 0.14 | 0.08 / 0.14 | 0.07 / 0.14 |
+| 1 | 0.09 / 0.14 | 0.09 / 0.14 | 0.07 / 0.14 | 0.07 / 0.14 |
+| 10 | 0.09 / 0.14 | 0.07 / 0.14 | 0.09 / 0.14 | 0.09 / 0.14 |
+| 100 | 0.09 / 0.14 | 0.07 / 0.14 | 0.09 / 0.15 | 0.10 / 0.21 |
+| 1,000 | 0.09 / 0.34 | 0.04 / 0.14 | 0.10 / 0.38 | 0.12 / 0.19 |
+| 10,000 | 0.11 / 0.45 | 0.03 / 0.07 | 0.12 / 0.46 | 0.09 / 0.32 |
+| every one there is | 0.11 / 0.43 (31,938) | 0.03 / 0.10 (10,455) | 0.05 / 0.33 (224,949) | 0.12 / 0.89 (224,949) |
 
-A broken file costs gramide at most 0.13 s where the whole one costs 0.08,
-and at no count of any kind more than 68% of what it costs tree-sitter.
+A broken file costs gramide at most 0.12 s where the whole one costs 0.08,
+and at no count of any kind more than 67% of what it costs tree-sitter.
 Three things hold it there. A file whose
 brackets do not balance is read once, recovering, with no strict read before
 it; the one break that makes the strict read fail at the end of the file

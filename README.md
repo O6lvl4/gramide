@@ -74,7 +74,7 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
 The parser stamps every node a `recover` or `recover_all` site read with
 that site. `incremental.from_parsed` cuts the tree there: each item keeps
 only its own tokens, in runs between its child items, every offset
-relative to the run, and the children's sizes beside them. An edit walks
+relative to the run; a child's size is read where the child stands. An edit walks
 down to the deepest item that holds it whole, re-lexes that sibling window
 through the first token after it, parses the window with the site's body
 until it reaches that token, and puts the new items in; the bases above
@@ -87,8 +87,8 @@ and node for node, in the engine's tests and in each language package's
 random-edit check over its corpora.
 
 On `compiler/checker.ts` of TypeScript 5.9 (3.1 MB, one function of
-2.9 MB) a keystroke inside an identifier costs 75 µs at the median
-against 563 µs for tree-sitter's incremental parse and 55 ms for a whole
+2.9 MB) a keystroke inside an identifier costs 54 µs at the median
+against 561 µs for tree-sitter's incremental parse and 58 ms for a whole
 parse ([gramide-typescript](https://github.com/O6lvl4/gramide-typescript),
 `docs/evidence/incremental-typescript-src.json`). A reader that wants the
 whole tree again materializes it, which is one pass and no parsing.
@@ -103,6 +103,22 @@ same reader serves Python, whose statements are `recover_lines` items and
 whose indentation a slice lexed on its own cannot place — so a run's
 layout tokens are kept where they were when no line break was typed or
 deleted.
+
+Every node carries an id as well, and an id stands for one text: a node
+keeps its id exactly when the edit left its text alone, where it was or
+moved by the edit, and every node whose text the edit changed — what was
+read again and came out different, and every node that holds the edit —
+is named anew; no id is given twice, not even when the file has to be
+read whole. `reparse --nodes` prints every node with its id. Each
+package's random-edit check holds that rule on every edit of its corpora;
+on `checker.ts` an edit renames 15 of its 338,851 nodes at the median.
+
+A document read and edited holds about twice what tree-sitter's tree does
+(127 MB against 62 on `checker.ts`), since the parse and the document cut
+from it stand side by side while it is cut; `check` holds a third to over
+half less than tree-sitter from a few hundred kilobytes up, and a file read
+once is within 4% of it ([docs/incremental.md](docs/incremental.md),
+[evidence](docs/evidence/memory.json)).
 
 ## Reading a file that does not parse
 
@@ -135,9 +151,9 @@ share of breaks that lost nothing beyond the break and invented nothing:
 
 A broken file costs little more than a whole one. `compiler/checker.ts` with
 a `)` or `}` deleted, or a `(` or `{` typed, from once to at every place there
-is one, reads its outline in 0.03 to 0.13 s, against 0.07 to 0.91 s for
-tree-sitter, and at no count in more than 68% of tree-sitter's time; the
-whole file takes 0.07 to 0.08 s against 0.14 to 0.15 s ([evidence](https://github.com/O6lvl4/gramide-typescript/blob/main/docs/evidence/recovery-cost-checker-ts.json)).
+is one, reads its outline in 0.03 to 0.12 s, against 0.07 to 0.89 s for
+tree-sitter, and at no count in more than 67% of tree-sitter's time; the
+whole file takes 0.07 to 0.08 s against 0.14 s ([evidence](https://github.com/O6lvl4/gramide-typescript/blob/main/docs/evidence/recovery-cost-checker-ts.json)).
 
 ## Writing a language package
 

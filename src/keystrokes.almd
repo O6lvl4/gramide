@@ -42,8 +42,10 @@ fn median(sorted: List[Int]) -> Int = list.get(sorted, list.len(sorted) / 2) ?? 
 fn percentile(sorted: List[Int], p: Int) -> Int = list.get(sorted, (list.len(sorted) * p) / 100) ?? 0
 fn us(ns: Int) -> String = int.to_string(ns / 1000) + "." + int.to_string((ns % 1000) / 100)
 
-// `renamed` is, per edit, how many items lost their id (a fall-back renames every item)
-type Report = { edits: Int, fallbacks: Int, mismatches: Int, incremental_ns: List[Int], whole_ns: List[Int], reasons: List[Int], initial_mismatch: Bool, items: Int, renamed: List[Int] }
+// `renamed` is, per edit, how many items lost their id (a fall-back renames every item);
+// `nodes_renamed`, per checked edit, how many nodes did, and `node_id_breaks`
+// the checked edits after which the node ids broke their rule (each also a mismatch)
+type Report = { edits: Int, fallbacks: Int, mismatches: Int, incremental_ns: List[Int], whole_ns: List[Int], reasons: List[Int], initial_mismatch: Bool, items: Int, renamed: List[Int], nodes: Int, nodes_renamed: List[Int], node_id_breaks: Int }
 
 fn render(r: Report) -> String = {
   let inc = list.sort(r.incremental_ns)
@@ -55,13 +57,15 @@ fn render(r: Report) -> String = {
     + ",\"no_parse\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_PARSE)) + ",\"no_site\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.NO_SITE)) + ",\"root_own\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.ROOT_OWN)) + ",\"error_near\":" + int.to_string(list.count(r.reasons, (x) => x == incremental.ERROR_NEAR)) + "}"
     + ",\"whole_parse_samples\":" + int.to_string(list.len(whole)) + ",\"whole_parse_median_us\":" + us(median(whole))
     + ",\"items\":" + int.to_string(r.items) + ",\"items_renamed_median\":" + int.to_string(median(list.sort(r.renamed))) + ",\"items_renamed_p90\":" + int.to_string(percentile(list.sort(r.renamed), 90)) + ",\"items_renamed_max\":" + int.to_string(list.last(list.sort(r.renamed)) ?? 0)
-    + ",\"edits_renaming_none\":" + int.to_string(list.count(r.renamed, (x) => x == 0)) + "}"
+    + ",\"edits_renaming_none\":" + int.to_string(list.count(r.renamed, (x) => x == 0))
+    + ",\"nodes\":" + int.to_string(r.nodes) + ",\"node_checks\":" + int.to_string(list.len(r.nodes_renamed)) + ",\"node_id_breaks\":" + int.to_string(r.node_id_breaks)
+    + ",\"nodes_renamed_median\":" + int.to_string(median(list.sort(r.nodes_renamed))) + ",\"nodes_renamed_p90\":" + int.to_string(percentile(list.sort(r.nodes_renamed), 90)) + ",\"nodes_renamed_max\":" + int.to_string(list.last(list.sort(r.nodes_renamed)) ?? 0) + "}"
 }
 
 // The whole parse a document is checked against: strict, or recovering
 // where the text no longer parses (a breaking edit was made), which is the
 // document a reader would be given.
-fn whole_of(c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes) -> Result[parser.Parsed, String] = {
+fn whole_of(mut c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes) -> Result[parser.Parsed, String] = {
   let text = bytes.to_string_lossy(source)
   match scan(text, false) {
     ok(toks) => match parser.parse_with(c, source, toks) {
@@ -86,14 +90,12 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
   var timed: List[(Int, Int, Int)] = []
   var c = l.grammar
   var source = source0
-  let first = whole_of(c, scan, source)!
-  var doc = incremental.from_parsed(first, source, c)
+  // the parse goes into the document and is not kept: a run that checks
+  // reads the file a second time to compare
+  var doc = incremental.from_parsed(whole_of(c, scan, source)!, source, c)
   var state = seed
-  var report = Report { edits: edits, fallbacks: 0, mismatches: 0, incremental_ns: [], whole_ns: [], reasons: [], initial_mismatch: false, items: list.len(incremental.items(doc)), renamed: [] }
-  if verify_every > 0 and not incremental.same(incremental.materialize(doc), first) then {
-    report.initial_mismatch = true
-    eprintln("before any edit: " + incremental.first_difference(incremental.materialize(doc), first))
-  } else ()
+  var report = Report { edits: edits, fallbacks: 0, mismatches: 0, incremental_ns: [], whole_ns: [], reasons: [], initial_mismatch: false, items: list.len(incremental.items(doc)), renamed: [], nodes: list.len(incremental.node_ids(doc)), nodes_renamed: [], node_id_breaks: 0 }
+  if verify_every > 0 then { let _ = checked_first(report, doc, c, scan, source)! } else ()
   var i = 0
   while i < edits {
     state = lcg(state)
@@ -105,16 +107,19 @@ effect fn run(l: lang.Language, source0: Bytes, edits: Int, seed: Int, verify_ev
     let insert = if i % 2 == 0 or breaks then typed else bytes.new(0)
     source = incremental.apply(source, edit, insert)
     let before = list.sort(list.map(incremental.items(doc), (r) => r.id))
+    // a checked edit: the tree and node ids before it, for the rule after it
+    let checked = verify_every > 0 and i % verify_every == 0
+    let prior = prior_of(doc, checked)
     let t0 = datetime.monotonic_ns()
     let status = incremental.reparse_status(doc, source, edit, scan, c)
     let fine = status == incremental.DONE
-    if not fine then { let again = fallen_back(report, doc, status, c, scan, source, i)!; doc = incremental.from_parsed(again, source, c) } else ()
+    if not fine then { let again = fallen_back(report, doc, status, c, scan, source, i)!; doc = incremental.rebuilt(doc, again, source, c, edit) } else ()
     let t1 = datetime.monotonic_ns()
     list.push(report.incremental_ns, t1 - t0)
     let after = list.sort(list.map(incremental.items(doc), (r) => r.id))
     list.push(report.renamed, missing(before, after))
     if slow > 0 then list.push(timed, (t1 - t0, pos, i)) else ()
-    if verify_every > 0 and i % verify_every == 0 then { let _ = verified(report, doc, c, scan, source, i, pos)! } else ()
+    let _ = checked_after(report, doc, c, scan, source, i, pos, prior, edit)!
     i = i + 1
   }
   if dump != "" then { let _ = fs.write(dump, bytes.to_string_lossy(source)) } else ()
@@ -133,14 +138,14 @@ fn missing(before: List[Int], after: List[Int]) -> Int = {
 }
 // the whole parse to read the document again from, the reason tallied and
 // the first few traces printed
-effect fn fallen_back(mut report: Report, doc: incremental.Document, status: Int, c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes, i: Int) -> Result[parser.Parsed, String] = {
+effect fn fallen_back(mut report: Report, doc: incremental.Document, status: Int, mut c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes, i: Int) -> Result[parser.Parsed, String] = {
   report.fallbacks = report.fallbacks + 1
   list.push(report.reasons, status)
   if list.len(report.reasons) <= 5 then { for t in doc.trace { eprintln("edit " + int.to_string(i) + ": " + t) } } else ()
   whole_of(c, scan, source)
 }
 // the whole parse of the text now, timed, against the document
-effect fn verified(mut report: Report, doc: incremental.Document, c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes, i: Int, pos: Int) -> Result[Unit, String] = {
+effect fn verified_whole(mut report: Report, mut doc: incremental.Document, mut c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes, i: Int, pos: Int) -> Result[Unit, String] = {
   let w0 = datetime.monotonic_ns()
   let whole = whole_of(c, scan, source)!
   let w1 = datetime.monotonic_ns()
@@ -150,6 +155,41 @@ effect fn verified(mut report: Report, doc: incremental.Document, c: parser.Comp
     eprintln("edit " + int.to_string(i) + " at " + int.to_string(pos) + ": " + incremental.first_difference(incremental.materialize(doc), whole))
   } else ()
   ok(())
+}
+// the document as first read, against a second whole parse of the file
+effect fn checked_first(mut report: Report, mut doc: incremental.Document, mut c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes) -> Result[Unit, String] = {
+  let first = whole_of(c, scan, source)!
+  if not incremental.same(incremental.materialize(doc), first) then {
+    report.initial_mismatch = true
+    eprintln("before any edit: " + incremental.first_difference(incremental.materialize(doc), first))
+  } else ()
+  ok(())
+}
+// the tree and node ids before a checked edit (a function of its own: an
+// `if` there is lifted out of the loop with the document handed over whole)
+fn prior_of(mut doc: incremental.Document, checked: Bool) -> Option[(parser.Parsed, List[Int])] =
+  if checked then some((incremental.materialize(doc), incremental.node_ids(doc))) else none
+// a checked edit: the document against the whole parse, and its node ids against the rule
+// (the document and grammar as `mut`: taken as they are, not copied, on every edit)
+effect fn checked_after(mut report: Report, mut doc: incremental.Document, mut c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes, i: Int, pos: Int, prior: Option[(parser.Parsed, List[Int])], edit: incremental.Edit) -> Result[Unit, String] = match prior {
+  some((tree_before, ids_before)) => {
+    let _ = verified_whole(report, doc, c, scan, source, i, pos)!
+    let _ = ids_checked(report, doc, tree_before, ids_before, edit, i, pos)
+    ok(())
+  },
+  none => ok(()),
+}
+// the node ids after an edit against the rule, and how many nodes lost theirs
+effect fn ids_checked(mut report: Report, mut doc: incremental.Document, tree_before: parser.Parsed, ids_before: List[Int], edit: incremental.Edit, i: Int, pos: Int) -> Unit = {
+  let ids_after = incremental.node_ids(doc)
+  list.push(report.nodes_renamed, missing(list.sort(ids_before), list.sort(ids_after)))
+  let why = incremental.node_id_breaks(tree_before, ids_before, incremental.materialize(doc), ids_after, edit)
+  if why != "" then {
+    report.node_id_breaks = report.node_id_breaks + 1
+    report.mismatches = report.mismatches + 1
+    eprintln("edit " + int.to_string(i) + " at " + int.to_string(pos) + ": node ids: " + why)
+  } else ()
+  ()
 }
 effect fn print_slowest(timed: List[(Int, Int, Int)], slow: Int, source: Bytes) -> Unit = {
   let by_time = list.reverse(list.sort_by(timed, (t) => t.0))

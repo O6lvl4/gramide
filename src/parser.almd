@@ -2602,13 +2602,17 @@ fn expectation(c: Compiled, id: Int) -> String = {
   else "`" + text + "`"
 }
 
+// A loop over the expectations, not `list.map`: a closure over the grammar
+// takes it by value, and every read that can fail copied the whole table.
 fn failure_at(c: Compiled, source: Bytes, toks: List[tree.Token], far: Int, exp: List[Int]) -> Failure = {
   let t = list.get(toks, far)
+  var expected: List[String] = list.with_capacity(list.len(exp))
+  for id in exp { list.push(expected, expectation(c, id)) }
   Failure {
     line: option.map(t, (x) => x.line) ?? 0,
     col: option.map(t, (x) => x.col) ?? 0,
     found: match t { some(x) => if x.kind == tree.T_EOF then "end of file" else if x.kind == tree.T_NEWLINE then "end of line" else "`" + tree.token_text(source, x) + "`", none => "end of file" },
-    expected: list.map(exp, (id) => expectation(c, id)),
+    expected: expected,
     note: "",
   }
 }
@@ -2637,7 +2641,10 @@ fn strict_tree(c: Compiled, source: Bytes, toks: List[tree.Token], num: List[Int
   var exp: List[Int] = []
   var far: Cell = far_cell()
   let o = parse_rule(c, num, out, exp, far, fresh(false), c.start, 0)
-  if o.ok then ok(Parsed { root: root_of(c, out, list.len(toks)), toks: toks, names: c.names })
+  // the names through a local: stored straight into the record, they would
+  // take the whole grammar by value, and its caller would copy it
+  let names = c.names
+  if o.ok then ok(Parsed { root: root_of(c, out, list.len(toks)), toks: toks, names: names })
   else err(logged_failure(c, source, toks, num))
 }
 
@@ -2731,7 +2738,8 @@ fn recovered_from(c: Compiled, toks: List[tree.Token], paired: List[Int]) -> Opt
   var exp: List[Int] = []
   var far: Cell = far_cell()
   let o = parse_rule(c, paired, out, exp, far, recovering(), c.start, 0)
-  if o.ok then some(Parsed { root: root_of(c, out, list.len(toks)), toks: toks, names: c.names }) else none
+  let names = c.names
+  if o.ok then some(Parsed { root: root_of(c, out, list.len(toks)), toks: toks, names: names }) else none
 }
 
 // Why a file whose brackets do not balance is not the language: the first
@@ -2793,7 +2801,8 @@ fn read(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Result[(Parsed, O
     var exp: List[Int] = []
     var far: Cell = far_cell()
     let o = parse_rule(c, numbered.pairs, out, exp, far, fresh(false), c.start, 0)
-    if o.ok then ok((Parsed { root: root_of(c, out, list.len(input.tokens)), toks: input.tokens, names: c.names }, none, []))
+    let names = c.names
+    if o.ok then ok((Parsed { root: root_of(c, out, list.len(input.tokens)), toks: input.tokens, names: names }, none, []))
     else {
       let f = logged_failure(c, source, input.tokens, numbered.pairs)
       match recovered_tree(c, source, input.tokens, numbered.pairs, true) {
