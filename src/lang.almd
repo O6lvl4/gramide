@@ -65,23 +65,40 @@ fn tokenize(l: Language, src: String, recover: Bool) -> Result[List[tree.Token],
 // ERROR node over each part it gave up. `check` never uses this; it wants the
 // strict answer and nothing else.
 // It carries `sep` so a reader that has a Reading needs nothing else to name a
-// method with its type.
-type Reading = { parsed: parser.Parsed, error: Option[String], errors: Int, sep: String, language: String, symbols: package_api.SymbolRules }
+// method with its type. `gaps` are the brackets a file that does not balance
+// left unpaired (token indices): recovery closed each where indentation says
+// it ends, which no ERROR node marks, and a reader that trusts only what no
+// recovery touched must not trust what holds them.
+type Reading = { parsed: parser.Parsed, error: Option[String], errors: Int, sep: String, language: String, symbols: package_api.SymbolRules, gaps: List[Int] }
 
 fn recovered(c: parser.Compiled, source: Bytes, toks: List[tree.Token], msg: String, l: Language) -> Result[Reading, String] =
   match parser.parse_recovering(c, source, toks) {
-    ok(p) => ok(Reading { parsed: p, error: some(msg), errors: parser.error_nodes(p.root, parser.error_kind(c)), sep: l.sep, language: l.definition.id, symbols: l.definition.symbols }),
+    ok(p) => ok(Reading { parsed: p, error: some(msg), errors: parser.error_nodes(p.root, parser.error_kind(c)), sep: l.sep, language: l.definition.id, symbols: l.definition.symbols, gaps: [] }),
     err(_) => err(msg),
   }
+
+// What a parser read comes to: the strict tree, or the recovered one with
+// why the strict read failed, or that failure alone. The read is taken apart
+// where it is owned: matching a field of a borrowed one copies the tree.
+fn failure_message(failure: Option[parser.Failure], path: String) -> Option[String] = match failure {
+  some(f) => some(path + ":" + parser.format_failure(f)),
+  none => none,
+}
+// The ERROR nodes are counted before the tree goes into the record: read
+// after it moved, the tree would be copied to count them
+fn reading(p: parser.Parsed, msg: Option[String], l: Language, gaps: List[Int]) -> Reading = {
+  let errors = if msg == none then 0 else parser.error_nodes(p.root, parser.error_kind(l.grammar))
+  Reading { parsed: p, error: msg, errors: errors, sep: l.sep, language: l.definition.id, symbols: l.definition.symbols, gaps: gaps }
+}
 
 fn read_lang(l: Language, path: String, src: String) -> Result[Reading, String] = {
   // The tokens are ranges into this; every reader that wants a name reads it.
   let source = bytes.from_string(src)
   match tokenize(l, src, false) {
     // it lexes; the parser decides whether it also parses
-    ok(toks) => match parser.parse_with(l.grammar, source, toks) {
-      ok(p) => ok(Reading { parsed: p, error: none, errors: 0, sep: l.sep, language: l.definition.id, symbols: l.definition.symbols }),
-      err(f) => recovered(l.grammar, source, toks, path + ":" + parser.format_failure(f), l),
+    ok(toks) => match parser.read(l.grammar, source, toks) {
+      ok((p, failure, gaps)) => ok(reading(p, failure_message(failure, path), l, gaps)),
+      err(f) => err(path + ":" + parser.format_failure(f)),
     },
     // it does not even lex, which is the ordinary state of a half-typed
     // string: lex again turning what it cannot read into `error` tokens

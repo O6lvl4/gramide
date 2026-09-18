@@ -9,39 +9,100 @@ was measured against tree-sitter's.
 
 A grammar marks the lists whose members can be given up one at a time —
 `recover(item)` inside `rep`, `recover_all` for a whole list — and the parser
-in recovering mode tries, at each such site, the item as written. When the
-item fails there are three ways on, and the site takes the one that puts
-fewer tokens under an `ERROR` node:
+in recovering mode reads, at each such site, the item as written.
 
-- **skip.** Find the next place the item rule reads again (bounded by the
-  enclosing closer for `recover`, by the end of the list for `recover_all`),
-  keep whatever head of the failed item is readable on its own (the second
-  rule of `recover_keeping`), and put one `ERROR` node over the tokens
-  between. This is the way for a Go file whose function lost its `}`: nothing
-  inside a Go body reads as a top-level declaration, so the next `func` is the
-  resume point and only the broken function is lost.
-- **close.** Read the item again with the closers it wants at the end of the
-  file — `)`, `]`, `}` — taken as there, zero tokens wide, so that the body an
-  edit left open closes at the end and keeps what it read, with `ERROR` nodes
-  inside it for what its own lists could not read. This is the way for a
-  JavaScript class whose method lost its `}`: everything after the break reads
-  as a statement, so skipping would resume a few tokens on and drop the class
-  with every method before the break; closing keeps the class and its methods
-  and loses only what follows the break.
-- **repair.** Read the item once more in collecting mode to learn where it
-  failed farthest, and read it again with a `)`, `]` or `}` taken as there at
-  that place, zero tokens wide — each of the three is tried, the read with
+Before it reads, the recovering parse pairs the file's brackets by kind: a
+closer pairs with the nearest open bracket of its kind, and the brackets
+open above that one never close. When the brackets do not balance, the
+file's indentation has a say. A closer that begins its line, where the
+nearest open bracket of its kind stands on a line indented deeper, pairs with
+the next one of its kind on a line indented as its own: the nearer ones are
+the brackets that lost their closers. The `}` gone from an `if` leaves the
+`if`'s `{` unpaired, not the function's. A bracket left unpaired ends, for
+the parse, before the first token after it that begins a line indented no
+deeper than the bracket's own line, outside every pair opened after it — the
+`if`'s next statement; the next `func` after a function whose own `}` went
+missing — or before the closer that ends what holds it. A tab and a space
+count one each: a file indents one way.
+
+Most of what recovery decides, it reads off that pairing:
+
+- **A bracket that lost its closer.** A sequence that reads an opener the
+  pairing left unpaired bounds what it reads after it where that opener
+  ends: its lists stop there, and no skip goes past. The closer it then wants
+  is taken as there, zero tokens wide. The body of an `if` whose `}` went
+  missing holds the lines indented under the `if` and ends; the function
+  around it reads on as written, and nothing goes under `ERROR`.
+- **A closer the file lacks.** Where the parse wants a `)`, `]` or `}` and
+  the token is not it, the closer is taken as there, zero tokens wide, in two
+  cases: the token is a closer of another kind that pairs — the next closer
+  belongs to something outside, as the `}` after a call that lost its `)`
+  inside braces — or the innermost bracket open at that point is one no
+  closer answers, so a `)` gone from a call is read as ending where the call
+  ends, at the `;`. At the end of the file every bracket still open is such a
+  one, so a body an edit left open closes there and keeps what it read.
+  Neither applies inside a lookahead or a negation, which ask what the next
+  token is; there an opener no closer answers begins nothing.
+- **Where a list ends.** A list stops at a closer that pairs with an opener
+  before the list began: it ends something the list is inside. A closer that
+  pairs inside the list — its opener went under an `ERROR` node — or with
+  nothing is one error token, and the list reads on. An item that begins with
+  a negation refusing the token, as a case body refuses the next `case`, ends
+  its list as a strict read would.
+
+When the item still fails there are two ways on, and a third when the first
+read closed brackets at the end of the file:
+
+- **skip.** Find the next place the item rule reads again, no further than
+  the closer of the innermost pair around the item (the end of the file for
+  `recover_all`), keep whatever head of the failed item is readable on its own
+  (the second rule of `recover_keeping`), and put one `ERROR` node over the
+  tokens between. A try that fails at an opener the pairing left unpaired
+  goes on from where that opener ends: a try from every token inside it would
+  read to that same end. A run of tries that each read far before failing is
+  one construct read again from every token in it; after 32 tries that read
+  more than 64 tokens each, the search goes on from the farthest any failed
+  at.
+- **repair.** Read the item again with a `)`, `]` or `}` taken as there where
+  its first read failed farthest — each of the three is tried, the read with
   the fewest tokens under `ERROR` stands. This is the way for a method whose
-  parameter list lost its `)`: the parser wanted `)` where it found `:`, and
-  with one taken as there the member reads whole, where skipping resumed
-  inside the member and let its `}` close the class. It is the analogue of
-  the `MISSING` node an LR recovery inserts, one token at a time and only at
-  the item level. Nothing is tried inside a repair already under way.
+  parameter list lost its `)` before its body: the parser wanted `)` where it
+  found `{`. It is the analogue of the `MISSING` node an LR recovery inserts,
+  one token at a time and only at the item level. Inside a repair under way
+  nothing else is repaired, except by items after the repaired place, which
+  it cannot reach.
+- **close.** A first read that took closers at the end of the file keeps a
+  body an edit left open, and it is weighed against skipping. It loses when
+  its first `ERROR` begins where the item rule reads: a Go method after a
+  function that lost its `}`, read inside the function as a few statements
+  and an `ERROR` over `func`, loses few tokens but ends the function too
+  late. Otherwise it wins when the skip would read on to the same end — the
+  same tokens with fewer of them — or when it puts fewer tokens under
+  `ERROR`, counting for the skip what the items it reads on through put
+  there.
+
+A site remembers what it worked out, by position: the ways read the item
+again, and an enclosing item's ways read everything in it again, so without
+the memo a break nested k lists deep would cost the ways to the k-th power.
+An answer holds under the bound it was worked out under, and an item read as
+written, leaning on nothing, is remembered only by the trials that read it.
+The ways are tried without a tree, and the one chosen is read again with the
+tree, its items replaying what they worked out. Lists nested more than 256
+deep are not read — every `{` an edit typed that no `}` answers opens one
+more, and the stack is finite.
 
 The strict parse never takes a closer as there; a file is the language or it
-is not. The incremental reader compares its result with the recovering whole
-parse on every breaking edit of the corpora (`ci/incremental_check.py
---breaking`), so the two ways are the same tree by construction.
+is not. A reader does not run it on a file whose brackets do not balance:
+every grammar reads a bracket only as one of a pair, so such a file is not
+the language, and what the reader says is wrong with it is the first bracket
+the pairing leaves unpaired — ``21493:26: `{` is never closed`` for a `}`
+deleted ten lines below it, where a strict read would have read the 3 MB
+file to its end to say that it ended. `check` still reads strictly, and
+names what it expected where it failed. The incremental reader compares its
+result with the recovering whole parse on every breaking edit of the corpora
+(`ci/incremental_check.py --breaking`), so the two ways are the same tree by
+construction. A body closed zero tokens wide ends at its last item; the line
+break after it is the enclosing item's, not that item's.
 
 Python has no closers to take: its blocks are indentation, which the layout
 pass turns into `indent` and `dedent` tokens, and a bracket left open joins
@@ -58,28 +119,42 @@ quote; only one opened with three owns the rest of the file.
 ## What a broken file costs
 
 Recovery must not turn a large file into a long wait. `bench/recovery_cost.py`
-in the TypeScript package deletes N `)` at random from `compiler/checker.ts`
-(3.1 MB, one function of 2.9 MB) and times the recovered outline against the
-tree-sitter harness, best of three ([evidence](https://github.com/O6lvl4/gramide-typescript/blob/main/docs/evidence/recovery-cost-checker-ts.json)):
+in the TypeScript package breaks `compiler/checker.ts` (3.1 MB, one function
+of 2.9 MB) N times at random — a `)` or `}` deleted, a `(` or `{` typed at the
+start of a word, up to every place there is one — and times the recovered
+outline against the tree-sitter harness, best of three, in seconds, gramide
+first ([evidence](https://github.com/O6lvl4/gramide-typescript/blob/main/docs/evidence/recovery-cost-checker-ts.json)):
 
-| `)` deleted | gramide | tree-sitter | outline lines (intact: 2,650) |
-|---:|---:|---:|---:|
-| 0 | 0.07 s | 0.14 s | 2,650 |
-| 50 | 0.12 s | 0.14 s | 2,650 |
-| 100 | 0.13 s | 0.14 s | 2,650 |
-| 200 | 2.08 s | 0.15 s | 2,925 |
-| 500 | 7.64 s | 0.24 s | 2,898 |
+| breaks | `)` deleted | `}` deleted | `(` typed | `{` typed |
+|---|---:|---:|---:|---:|
+| 0 | 0.08 / 0.15 | 0.08 / 0.15 | 0.08 / 0.15 | 0.07 / 0.14 |
+| 1 | 0.10 / 0.15 | 0.10 / 0.15 | 0.08 / 0.15 | 0.08 / 0.14 |
+| 10 | 0.10 / 0.15 | 0.08 / 0.15 | 0.10 / 0.15 | 0.10 / 0.14 |
+| 100 | 0.10 / 0.15 | 0.08 / 0.15 | 0.10 / 0.16 | 0.10 / 0.21 |
+| 1,000 | 0.10 / 0.36 | 0.04 / 0.14 | 0.11 / 0.40 | 0.13 / 0.20 |
+| 10,000 | 0.13 / 0.48 | 0.03 / 0.07 | 0.13 / 0.49 | 0.10 / 0.34 |
+| every one there is | 0.12 / 0.45 (31,938) | 0.04 / 0.10 (10,455) | 0.06 / 0.37 (224,949) | 0.12 / 0.91 (224,949) |
 
-Up to a hundred breaks the read costs what an intact read costs; past that
-it grows faster than the breaks do, since every failed item's resume search
-and lookahead scan the tokens after it, and an unclosed bracket makes those
-scans run to the end. tree-sitter's cost stays flat. Before the JavaScript,
-TypeScript and Rust packages were fixed on 2026-09-18, the lookahead that
-reads a bracket tree read an opener both as the group it opens and as a lone
-token, so an unclosed bracket forked the read at every opener after it:
-2^30 for thirty breaks, and this file at two hundred did not finish in ten
-minutes. A grammar that reads brackets as a tree must give an opener one
-reading only.
+A broken file costs gramide at most 0.13 s where the whole one costs 0.08,
+and at no count of any kind more than 68% of what it costs tree-sitter.
+Three things hold it there. A file whose
+brackets do not balance is read once, recovering, with no strict read before
+it; the one break that makes the strict read fail at the end of the file
+would otherwise read the file twice. A bracket that lost its closer closes
+where its indentation ends, so nothing after it is read as its body and no
+item fails. And a skip steps over an opener the pairing left unpaired: with
+a `(` typed before every word, a try from each token of a line read to the
+line's end, and the search cost the square of the line.
+
+It was not always so. At first the read grew faster than the breaks did:
+200 `)` deleted cost 2.08 s and 500 cost 7.64 s, against tree-sitter's 0.15
+and 0.24 s, since every failed item's resume search and lookahead scanned
+the tokens after it, and an unclosed bracket made those scans run to the
+end. Before the JavaScript, TypeScript and Rust packages were fixed on
+2026-09-18, the lookahead that reads a bracket tree read an opener both as
+the group it opens and as a lone token, so an unclosed bracket forked the
+read at every opener after it: 2^30 for thirty breaks. A grammar that reads
+brackets as a tree must give an opener one reading only.
 
 ## What was measured
 
@@ -100,20 +175,20 @@ The table below is filled from each package's `docs/evidence/recovery-*.json`
 
 | corpus | files, breaks | kept: gramide / tree-sitter | clean breaks: gramide / tree-sitter |
 |---|---:|---:|---:|
-| JavaScript, Node `lib/` | 427, 1,694 | 96.1% / 95.9% | 92.1% / 90.6% |
-| TypeScript, TypeScript `src/` | 697, 2,588 | 98.2% / 99.0% | 95.2% / 94.6% |
-| Go, Go `src/` | 8,010, 30,927 | 99.7% / 91.1% | 99.2% / 82.9% |
-| Rust, Almide compiler `crates/` | 663, 2,632 | 99.9% / 97.5% | 99.8% / 94.9% |
-| Python, CPython `Lib/` | 1,450, 5,193 | 98.9% / 96.3% | 98.1% / 82.3% |
+| JavaScript, Node `lib/` | 427, 1,694 | 99.4% / 95.9% | 98.3% / 90.6% |
+| TypeScript, TypeScript `src/` | 697, 2,588 | 99.2% / 99.0% | 98.1% / 94.6% |
+| Go, Go `src/` | 8,010, 30,927 | 99.8% / 91.1% | 99.3% / 82.9% |
+| Rust, Almide compiler `crates/` | 663, 2,632 | 100.0% / 97.5% | 100.0% / 94.9% |
+| Python, CPython `Lib/` | 1,450, 5,193 | 99.0% / 96.3% | 98.2% / 82.3% |
 
-Where tree-sitter still keeps more the shape is one: a `}` deleted from a
-JavaScript or TypeScript method. The class body runs on, and since anything
-after reads as a statement, skipping resumes right after the `class` keyword
-and the class is gone, while closing at the end keeps it but nests what
-follows; a repair cannot help, since the failure is at the end of the file.
-tree-sitter's LR recovery can put the missing brace where it belongs. On
-every other kind of break gramide is ahead: a Go or Rust file whose `}` went
-missing resumes at the next `func` or `fn` and loses that one item, where
-tree-sitter's cost model nests the rest of the file into the open body; a
-`)` gone from a parameter list is repaired; a Python bracket or f-string
-left open costs one statement where tree-sitter loses the block.
+gramide is ahead on every kind of break in every language. The indentation
+pairing is most of it: a `}` deleted from a JavaScript method once lost the
+class or nested what followed into the method, since anything after reads
+as a statement; now the method's body ends before the next member, indented
+as the method is, and the class reads on — 96.6% of those breaks are clean,
+against 82.2% before and tree-sitter's 83.7%, whose LR recovery puts the
+brace back by other means. A Go or Rust function whose `}` went missing ends
+before the next `func` or `fn` and keeps what it held, where tree-sitter's
+cost model nests the rest of the file into the open body. A `)` gone from a
+parameter list closes at the `{` after it; a Python bracket or f-string left
+open costs one statement where tree-sitter loses the block.

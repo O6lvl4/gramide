@@ -23,7 +23,7 @@ fn document_with(e: lang.Engines, path: String, source: String) -> Result[String
 // The document of a parse the caller holds — the incremental reader's,
 // materialized — for the language it was read with.
 fn document_parsed(l: lang.Language, parsed: parser.Parsed, source: String) -> Result[String, String] =
-  complete_document(lang.Reading { parsed: parsed, error: none, errors: 0, sep: l.sep, language: l.definition.id, symbols: l.definition.symbols }, source)
+  complete_document(lang.Reading { parsed: parsed, error: none, errors: 0, sep: l.sep, language: l.definition.id, symbols: l.definition.symbols, gaps: [] }, source)
 
 fn complete_document(d: lang.Reading, source: String) -> Result[String, String] =
   match d.error { some(e) => err(e), none => {
@@ -50,7 +50,7 @@ fn recovered_document_with(e: lang.Engines, path: String, source: String) -> Res
 
 fn recovered_of(d: lang.Reading, path: String, source: String) -> Result[String, String] = {
   let bytes_source = bytes.from_string(source)
-  let ranges = tags.error_ranges(d.parsed.root, d.parsed.toks, bytes_source, d.parsed.names)
+  let ranges = tags.with_gaps(tags.error_ranges(d.parsed.root, d.parsed.toks, bytes_source, d.parsed.names), d.gaps, d.parsed.toks)
   guard option.is_none(d.error) or not list.is_empty(ranges) else err(path + ": recovered parse has no bounded error ranges")
   let found = rows(d.parsed.root, d.parsed.toks, bytes_source, d.parsed.names, "", d.sep, d.symbols)
   let errors = list.map(ranges, (r) => "{\"start\":" + int.to_string(r.start) + ",\"end\":" + int.to_string(r.end)

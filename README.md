@@ -44,7 +44,8 @@ source ──lexer──▶ tokens ──parser(grammar)──▶ tree ──▶
   nodes, and a run reads that arena from a package's committed table rather
   than compiling anything. The parser remembers the farthest token anything
   failed at, which is the error `check` prints, and a reader that fails asks
-  again recovering, with an `ERROR` node over each part the grammar gave up.
+  again recovering, with an `ERROR` node over each part the grammar gave up;
+  a file whose brackets do not balance goes to recovery straight away.
 - **`src/tree.almd`**, **`src/names.almd`** — `Node { kind, field, start, end, kids }`
   over token indices, with kinds and fields as numbers into one name table.
 - **`src/package_api.almd`** — the contract: `Definition` and `SymbolRules`.
@@ -105,14 +106,20 @@ deleted.
 
 ## Reading a file that does not parse
 
-A recover site tries the item as written, and when it fails takes whichever
-of three ways puts fewer tokens under `ERROR`: skip to the next place the
-item rule reads; read the item again with its missing `)`, `]`, `}` taken as
-there at the end of the file, which keeps a body an edit left open; or read
-it again with one closer taken as there where it failed farthest, which
-reads a method whose parameter list lost its `)` whole. Python's
-layout pass closes a bracket left open where a dedented statement begins.
-[docs/recovery.md](docs/recovery.md) is the model, and the measurement: each
+A file whose brackets do not balance is paired first, by kind and by
+indentation: a closer that begins its line pairs with the open bracket of
+its kind on a line indented as its own, and a nearer one on a deeper line is
+the bracket that lost its closer. That bracket ends before the next line
+indented no deeper than its own — the body of an `if` whose `}` went missing
+ends where the `if`'s next statement begins, and the function around it
+reads on as written. Such a file is not read strictly at all, since no
+grammar reads a lone bracket, and the reader names the bracket the pairing
+left open: ``21493:26: `{` is never closed``. Where an item still fails, a
+recover site skips to the next place the item rule reads, reads it again
+with one closer taken as there where it failed farthest, or keeps a body
+left open at the end of the file, whichever puts fewer tokens under
+`ERROR`. Python's layout pass closes a bracket left open where a dedented
+statement begins. [docs/recovery.md](docs/recovery.md) is the model, and the measurement: each
 package breaks every file of its corpus four ways and compares the
 declarations gramide and tree-sitter still list with their own listings of
 the whole file. Kept is the share of declarations still listed; clean is the
@@ -120,11 +127,17 @@ share of breaks that lost nothing beyond the break and invented nothing:
 
 | corpus | files, breaks | kept: gramide / tree-sitter | clean breaks: gramide / tree-sitter |
 |---|---:|---:|---:|
-| JavaScript, Node `lib/` | 427, 1,694 | 96.1% / 95.9% | 92.1% / 90.6% |
-| TypeScript, TypeScript `src/` | 697, 2,588 | 98.2% / 99.0% | 95.2% / 94.6% |
-| Go, Go `src/` | 8,010, 30,927 | 99.7% / 91.1% | 99.2% / 82.9% |
-| Rust, Almide compiler `crates/` | 663, 2,632 | 99.9% / 97.5% | 99.8% / 94.9% |
-| Python, CPython `Lib/` | 1,450, 5,193 | 98.9% / 96.3% | 98.1% / 82.3% |
+| JavaScript, Node `lib/` | 427, 1,694 | 99.4% / 95.9% | 98.3% / 90.6% |
+| TypeScript, TypeScript `src/` | 697, 2,588 | 99.2% / 99.0% | 98.1% / 94.6% |
+| Go, Go `src/` | 8,010, 30,927 | 99.8% / 91.1% | 99.3% / 82.9% |
+| Rust, Almide compiler `crates/` | 663, 2,632 | 100.0% / 97.5% | 100.0% / 94.9% |
+| Python, CPython `Lib/` | 1,450, 5,193 | 99.0% / 96.3% | 98.2% / 82.3% |
+
+A broken file costs little more than a whole one. `compiler/checker.ts` with
+a `)` or `}` deleted, or a `(` or `{` typed, from once to at every place there
+is one, reads its outline in 0.03 to 0.13 s, against 0.07 to 0.91 s for
+tree-sitter, and at no count in more than 68% of tree-sitter's time; the
+whole file takes 0.07 to 0.08 s against 0.14 to 0.15 s ([evidence](https://github.com/O6lvl4/gramide-typescript/blob/main/docs/evidence/recovery-cost-checker-ts.json)).
 
 ## Writing a language package
 

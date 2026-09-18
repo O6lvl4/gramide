@@ -74,9 +74,10 @@ fn tail_of(size: Int, lines: Int, end: Pos) -> Int = if lines == 0 then size els
 fn after(p: Pos, size: Int, lines: Int, tail: Int) -> Pos =
   Pos { byte: p.byte + size, line: p.line + lines, col: if lines == 0 then p.col + tail else 1 + tail }
 
-// The stamped nodes under `n`, in order, not descending into them.
-fn find_units(n: tree.Node, mut out: List[tree.Node]) -> Unit = {
-  for k in n.kids { if parser.site_of(k) >= 0 then list.push(out, k) else { let _ = find_units(k, out) } }
+// The stamped nodes under `n`, in order, not descending into them, and for
+// each the end of the node that holds it.
+fn find_units(n: tree.Node, mut out: List[tree.Node], mut holders: List[Int]) -> Unit = {
+  for k in n.kids { if parser.site_of(k) >= 0 then { list.push(out, k); list.push(holders, n.end) } else { let _ = find_units(k, out, holders) } }
   ()
 }
 
@@ -86,7 +87,8 @@ fn find_units(n: tree.Node, mut out: List[tree.Node]) -> Unit = {
 fn build(mut c: parser.Compiled, n: tree.Node, toks: List[tree.Token], source: Bytes, t_begin: Int, t_end: Int, start: Pos, site: Int, mut ids: List[Int]) -> Item = {
   let source_size = bytes.len(source)
   var children: List[tree.Node] = []
-  let _ = find_units(n, children)
+  var holders: List[Int] = []
+  let _ = find_units(n, children, holders)
   let count = list.len(children)
   // each child's tokens extend to the next child's head, or to the first own token after it
   var c_start: List[Int] = []
@@ -97,9 +99,12 @@ fn build(mut c: parser.Compiled, n: tree.Node, toks: List[tree.Token], source: B
     list.push(c_start, ck.start)
     // to the separators after it, but never into the next child: a recovered
     // parse can resume on a `;` right after an ERROR item. The next child
-    // may sit in another block, with this unit's own tokens between.
+    // may sit in another block, with this unit's own tokens between. Nor
+    // past the node that holds it: a body whose closer recovery took as
+    // there, zero tokens wide, ends right after its last item, and the line
+    // break that follows is the enclosing item's.
     let next_start = match list.get(children, k + 1) { some(nx) => nx.start, none => t_end }
-    list.push(c_end, int.min(own_after(toks, source, ck.end, t_end), next_start))
+    list.push(c_end, int.max(ck.end, int.min(int.min(own_after(toks, source, ck.end, t_end), next_start), list.get(holders, k) ?? t_end)))
     k = k + 1
   }
   var u = empty_unit()

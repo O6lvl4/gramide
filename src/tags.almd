@@ -420,6 +420,45 @@ fn error_ranges(n: tree.Node, toks: List[tree.Token], source: Bytes, names: name
   append_errors(n, toks, source, nametable.id_of(names, "ERROR"), ranges)
   ranges
 }
+// The ERROR ranges with a range over each unpaired bracket (`gaps`, in
+// source order) added: a declaration that holds one lost a closer that
+// recovery put back where indentation says, and is not error-free. A bracket
+// under an ERROR node already is not added again; the ranges stay ordered and
+// disjoint.
+fn with_gaps(ranges: List[ErrorRange], gaps: List[Int], toks: List[tree.Token]) -> List[ErrorRange] = {
+  var out: List[ErrorRange] = []
+  var i = 0
+  for g in gaps {
+    match list.get(toks, g) {
+      some(t) => {
+        while i < list.len(ranges) and (list.get(ranges, i) ?? ErrorRange { start: 0, end: 0, start_byte: 0, end_byte: 0 }).end_byte <= t.start {
+          list.push(out, list.get(ranges, i) ?? ErrorRange { start: 0, end: 0, start_byte: 0, end_byte: 0 })
+          i = i + 1
+        }
+        let under = match list.get(ranges, i) { some(r) => r.start_byte < t.end, none => false }
+        let after_last = match list.last(out) { some(r) => r.end_byte <= t.start, none => true }
+        if not under and after_last and t.end > t.start then list.push(out, ErrorRange { start: t.line, end: t.line, start_byte: t.start, end_byte: t.end }) else ()
+      },
+      none => (),
+    }
+  }
+  while i < list.len(ranges) {
+    list.push(out, list.get(ranges, i) ?? ErrorRange { start: 0, end: 0, start_byte: 0, end_byte: 0 })
+    i = i + 1
+  }
+  out
+}
+test "an unpaired bracket is a range of its own unless an ERROR range holds it" {
+  let toks = [
+    tree.Token { kind: tree.T_PUNCT, start: 0, end: 1, line: 1, col: 1 },
+    tree.Token { kind: tree.T_PUNCT, start: 10, end: 11, line: 2, col: 1 },
+    tree.Token { kind: tree.T_PUNCT, start: 30, end: 31, line: 4, col: 1 },
+  ]
+  let errors = [ErrorRange { start: 2, end: 3, start_byte: 8, end_byte: 20 }]
+  let merged = with_gaps(errors, [0, 1, 2], toks)
+  assert_eq(list.map(merged, (r) => r.start_byte), [0, 8, 30])
+  assert_eq(list.map(merged, (r) => r.end_byte), [1, 20, 31])
+}
 fn overlaps(ranges: List[ErrorRange], start: Int, end: Int) -> Bool = {
   var lo = 0
   var hi = list.len(ranges)

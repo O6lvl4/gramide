@@ -62,7 +62,7 @@ fn version_lines(p: Program) -> List[String] =
   [p.name + " " + p.version, "gramide " + about.VERSION + " (engine)"]
   + list.map(p.packages, (d) => d.package_name + " " + d.version + " (" + list.join(d.extensions, " ") + ")")
 
-effect fn read(path: String) -> Result[String, String] = fs.read_text(path) |> result.map_err((e) => path + ": " + e)
+effect fn read_source(path: String) -> Result[String, String] = fs.read_text(path) |> result.map_err((e) => path + ": " + e)
 
 // A reader that had to recover says so, on stderr, so its answer is never
 // mistaken for the answer about a file that parses.
@@ -90,7 +90,7 @@ fn provides(packages: List[package_api.Definition], path: String, cmd: String) -
 
 effect fn run_one(p: Program, cmd: String, path: String) -> Result[Unit, String] = {
   if cmd == "balance" then () else provides(p.packages, path, cmd)!
-  let src = read(path)!
+  let src = read_source(path)!
   match cmd {
     "tokens" => {
       let toks = lang.tokens_for(p.packages, path, src)!
@@ -132,7 +132,7 @@ effect fn check_chunk(packages: List[package_api.Definition], cmd: String, paths
   var lines: List[Line] = []
   var failed = false
   for p in mine {
-    match read(p) {
+    match read_source(p) {
       err(e) => {
         list.push(lines, Line { text: e, is_err: true })
         failed = true
@@ -245,7 +245,7 @@ effect fn run_reparse_bench(packages: List[package_api.Definition], argv: List[S
   let seed = int.parse(option_after(argv, "--seed") ?? "7") ?? 7
   let verify = int.parse(option_after(argv, "--verify") ?? "50") ?? 50
   let l = lang.language_of(packages, path)!
-  let src = read(path)!
+  let src = read_source(path)!
   println(keystrokes.run(l, bytes.from_string(src), edits, seed, verify, option_after(argv, "--dump") ?? "", list.contains(argv, "--breaking"), int.parse(option_after(argv, "--slow") ?? "0") ?? 0)!)
   ok(())
 }
@@ -260,8 +260,8 @@ effect fn run_reparse(packages: List[package_api.Definition], argv: List[String]
   let edit = incremental.Edit { start: int.parse(list.get(parts, 0) ?? "") ?? -1, old_end: int.parse(list.get(parts, 1) ?? "") ?? -1, new_end: int.parse(list.get(parts, 2) ?? "") ?? -1 }
   guard edit.start >= 0 and edit.old_end >= edit.start and edit.new_end >= edit.start else err("--edit START:OLD_END:NEW_END")
   let l = lang.language_of(packages, path)!
-  let before = read(path)!
-  let after = read(option_after(argv, "--new") ?? "")!
+  let before = read_source(path)!
+  let after = read_source(option_after(argv, "--new") ?? "")!
   let scan = l.tokenize
   var c = l.grammar
   let old_source = bytes.from_string(before)

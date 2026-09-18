@@ -798,7 +798,7 @@ fn from_tables(t: Tables) -> Compiled = {
 
 // The same arena, flattened, so a generator can write it down.
 fn to_tables(c: Compiled) -> Tables = {
-  var flat: List[Int] = list.with_capacity(list.len(c.ops) * 3)
+  var flat: List[Int] = list.with_capacity(list.len(c.ops) * 4)
   for op in c.ops {
     list.push(flat, op.kind)
     list.push(flat, op.a)
@@ -827,14 +827,255 @@ fn to_tables(c: Compiled) -> Tables = {
 type TokenInput = { tokens: List[tree.Token] }
 // One array, a token's kind and its text number side by side: the engine reads
 // both of a token at once, and one argument travels instead of two.
-type NumberedTokens = { pairs: List[Int] }
+type NumberedTokens = { pairs: List[Int], balanced: Bool }
+// Two numbers a token, its kind and its text number, side by side. A
+// recovering parse appends three a token after all of them
+// (`pair_brackets`): the bracket it pairs with, the closer of the innermost
+// pair around it, and the innermost bracket open where it stands. A strict
+// parse carries only the two it reads: the array is walked for every token.
+// `balanced` says whether every bracket pairs with one of its kind, the
+// way a file that parses has them: a reader takes a verdict without a tree
+// first when they do not (`read`).
 fn number_tokens(c: Compiled, source: Bytes, input: TokenInput) -> NumberedTokens = {
+  var pairs: List[Int] = list.with_capacity(list.len(input.tokens) * 2)
+  var open: List[Int] = []
+  var unpaired = false
+  for t in input.tokens {
+    let atom = atom_at(c, source, t.start, t.end)
+    list.push(pairs, t.kind)
+    list.push(pairs, atom)
+    // the six bracket atoms are 0 to 5, each opener even and its closer next;
+    // only punctuation is a bracket — a Python f-string's middle can be `)`
+    if atom >= 0 and atom <= A_RBRACE and t.kind == tree.T_PUNCT then {
+      if int.band(atom, 1) == 0 then list.push(open, atom)
+      else if (list.last(open) ?? -1) == atom - 1 then { let _ = list.pop(open) }
+      else unpaired = true
+    } else ()
+  }
+  NumberedTokens { pairs: pairs, balanced: not unpaired and list.is_empty(open) }
+}
+// The same numbers without the bracket count, for the reads that never ask
+// whether the brackets balance: `check` runs on every write, and the count
+// is a branch and a push a token.
+fn plain_numbers(c: Compiled, source: Bytes, input: TokenInput) -> List[Int] = {
   var pairs: List[Int] = list.with_capacity(list.len(input.tokens) * 2)
   for t in input.tokens {
     list.push(pairs, t.kind)
     list.push(pairs, atom_at(c, source, t.start, t.end))
   }
-  NumberedTokens { pairs: pairs }
+  pairs
+}
+
+fn kind_of(num: List[Int], pos: Int) -> Int = list.get(num, pos * 2) ?? -1
+fn is_recover_op(c: Compiled, id: Int) -> Bool = match list.get(c.ops, id) {
+  some(o) => o.kind == K_RECOVER or o.kind == K_RECOVER_ALL,
+  none => false,
+}
+// Where a paired stream's pairing numbers begin: after the kinds and text
+// numbers of all its tokens, five numbers a token in all
+fn pairing_base(num: List[Int]) -> Int = list.len(num) / 5 * 2
+// The bracket a bracket pairs with (`pair_brackets`), or -1
+fn match_of(num: List[Int], pos: Int) -> Int = list.get(num, pairing_base(num) + pos * 3) ?? -1
+// Where an unpaired opener ends for the parse (`pair_brackets`): the token
+// it ends before, or -1 for the end of the file
+fn vclose_of(num: List[Int], pos: Int) -> Int = {
+  let m = match_of(num, pos)
+  if m <= -2 then -2 - m else -1
+}
+// The closer of the innermost pair of brackets around `pos` — `pos` itself
+// for a closer that pairs — or the end of the file
+fn enclosing_closer(num: List[Int], pos: Int) -> Int = list.get(num, pairing_base(num) + pos * 3 + 1) ?? eof_index(num)
+// The innermost opener still open where the token at `pos` stands — paired
+// later or never — or -1
+fn open_before(num: List[Int], pos: Int) -> Int = list.get(num, pairing_base(num) + pos * 3 + 2) ?? -1
+// The end of the file in a paired stream
+fn eof_index(num: List[Int]) -> Int = eof_at(num, list.len(num) / 5)
+fn eof_at(num: List[Int], n: Int) -> Int = if n > 0 and kind_of(num, n - 1) == tree.T_EOF then n - 1 else n
+
+// Pair the brackets of a numbered stream, by kind: a closer pairs with the
+// nearest open bracket of its kind, and the brackets open above that one
+// stay unpaired, as ones the file never closed; a closer with no open
+// bracket of its kind is unpaired. With `leads` (`line_leads`, for a file
+// whose brackets do not balance) the file's indentation has a say: a closer
+// that begins its line, where the nearest open bracket of its kind stands on
+// a line indented deeper, pairs with the next one of its kind on a line
+// indented as its own, and the nearer ones are the ones that lost their
+// closers — the `}` of an `if` gone, the function's `}` is still the
+// function's. An unpaired opener then ends, for the parse, before the first
+// token that begins a line indented no deeper than its own, outside every
+// pair opened after it (`vclose_of`), or before the closer that ends what
+// holds it. The pairs nest, so one pass back over them gives every opener
+// its closer and every token the closer of the innermost pair around it.
+// Recovery reads the pairing to know where a list ends (`skip_limit`), to
+// tell a closer that ends the list it is in from one the list should step
+// over (`recover_here`), to take a closer the file lacks as there
+// (`literal_here`, `recovering_seq`), and to know an opener no closer
+// answers.
+fn pair_brackets(num: List[Int], leads: List[Int]) -> List[Int] = {
+  let n = list.len(num) / 2
+  let eof = eof_at(num, n)
+  let by_indent = list.len(leads) > 0
+  var closer_pair: List[Int] = list.with_capacity(n)
+  var open_atoms: List[Int] = []
+  var open_at: List[Int] = []
+  var q = 0
+  while q < n {
+    let x = real_atom(num, q)
+    var paired = -1
+    if is_opener(x) then { list.push(open_atoms, x); list.push(open_at, q) }
+    else if is_closer(x) and list.contains(open_atoms, opener_of(x)) then {
+      let partner = if by_indent then indent_partner(open_atoms, open_at, leads, opener_of(x), lead_of(leads, q)) else -1
+      while paired < 0 and list.len(open_at) > 0 {
+        let depth = list.len(open_at) - 1
+        let top = list.pop(open_atoms) ?? -1
+        let at = list.pop(open_at) ?? 0
+        if top == opener_of(x) and (partner < 0 or depth == partner) then paired = at else ()
+      }
+    } else ()
+    list.push(closer_pair, paired)
+    q = q + 1
+  }
+  // back to front: a pair opens where the pass meets its closer and closes
+  // where it meets its opener; the innermost open one encloses the token
+  var back: List[Int] = list.with_capacity(n * 2)
+  var starts: List[Int] = []
+  var ends: List[Int] = []
+  var p = n - 1
+  while p >= 0 {
+    var opener_pair = -1
+    if (list.last(starts) ?? -1) == p then {
+      opener_pair = list.pop(ends) ?? -1
+      let _ = list.pop(starts)
+    } else ()
+    let a = list.get(closer_pair, p) ?? -1
+    if a >= 0 then { list.push(starts, a); list.push(ends, p) } else ()
+    list.push(back, opener_pair)
+    list.push(back, list.last(ends) ?? eof)
+    p = p - 1
+  }
+  // front to back: the innermost bracket open where each token stands, and
+  // where an unpaired opener ends
+  var innermost: List[Int] = list.with_capacity(n)
+  var ends_at: Map[Int, Int] = map.new()
+  var open: List[Int] = []
+  var r = 0
+  while r < n {
+    list.push(innermost, list.last(open) ?? -1)
+    if by_indent and lead_of(leads, r) >= 0 then indent_ends(open, back, n, leads, r, ends_at) else ()
+    let x = real_atom(num, r)
+    if is_opener(x) then list.push(open, r)
+    else if is_closer(x) and (list.get(closer_pair, r) ?? -1) >= 0 then {
+      let partner = list.get(closer_pair, r) ?? -1
+      var going = true
+      while going {
+        match list.pop(open) {
+          some(u) => { if u == partner then going = false else map.insert(ends_at, u, r) },
+          none => { going = false },
+        }
+      }
+    } else ()
+    r = r + 1
+  }
+  var out: List[Int] = list.with_capacity(n * 5)
+  var k = 0
+  while k < n * 2 {
+    list.push(out, list.get(num, k) ?? -1)
+    k = k + 1
+  }
+  var i = 0
+  while i < n {
+    let b = (n - 1 - i) * 2
+    let cp = list.get(closer_pair, i) ?? -1
+    let op = list.get(back, b) ?? -1
+    // an unpaired opener carries where it ends, as -2 - that token
+    list.push(out, if cp >= 0 then cp else if op >= 0 or not is_opener(real_atom(num, i)) then op else match map.get(ends_at, i) { some(e) => 0 - 2 - e, none => -1 })
+    list.push(out, list.get(back, b + 1) ?? eof)
+    list.push(out, list.get(innermost, i) ?? -1)
+    i = i + 1
+  }
+  out
+}
+
+// The unpaired openers the token at `at`, which begins its line, ends: every
+// one on top of the open brackets whose line is indented as deep as the
+// token's or deeper
+fn indent_ends(mut open: List[Int], back: List[Int], n: Int, leads: List[Int], at: Int, mut ends_at: Map[Int, Int]) -> Unit = {
+  let lead = lead_of(leads, at)
+  var going = true
+  while going {
+    match list.last(open) {
+      some(u) => {
+        if (list.get(back, (n - 1 - u) * 2) ?? -1) < 0 and line_indent_of(leads, u) >= lead then {
+          let _ = list.pop(open)
+          map.insert(ends_at, u, at)
+        } else going = false
+      },
+      none => { going = false },
+    }
+  }
+}
+
+// Where a closer that begins its line, `indent` deep, pairs when the nearest
+// open bracket of its kind stands on a line indented deeper: the next one of
+// its kind on a line indented as deep as the closer, as a place on the stack
+// of open brackets; -1 for the nearest (the closer does not begin its line,
+// the nearest is not deeper, or no deeper one is as deep as the closer)
+fn indent_partner(open_atoms: List[Int], open_at: List[Int], leads: List[Int], want: Int, indent: Int) -> Int =
+  if indent < 0 then -1 else {
+    var j = list.len(open_at) - 1
+    var found = -1
+    var nearest = true
+    while j >= 0 {
+      if (list.get(open_atoms, j) ?? -1) == want then {
+        let li = line_indent_of(leads, list.get(open_at, j) ?? 0)
+        if li < indent then j = -1
+        else if li == indent then { if not nearest then found = j else (); j = -1 }
+        else { nearest = false; j = j - 1 }
+      } else j = j - 1
+    }
+    found
+  }
+
+// Where each token stands on its line, two numbers a token: how deep its
+// line is indented when the token begins it, else -1, and how deep the line
+// it is on is indented. Tokens that are not code — a newline, an indent, a
+// comment, the end — begin nothing. Tabs and spaces count one each: a file
+// indents one way.
+fn line_leads(source: Bytes, toks: List[tree.Token]) -> List[Int] = {
+  var out: List[Int] = list.with_capacity(list.len(toks) * 2)
+  var line = 0
+  // by index: a list walked with `for` is taken whole, and this one is the
+  // file's tokens
+  var i = 0
+  while i < list.len(toks) {
+    let t = list.get(toks, i) ?? tree.Token { kind: tree.T_EOF, start: 0, end: 0, line: 0, col: 0 }
+    let code = t.end > t.start and t.kind != tree.T_NEWLINE and t.kind != tree.T_INDENT and t.kind != tree.T_DEDENT
+      and t.kind != tree.T_EOF and t.kind != tree.T_COMMENT and t.kind != tree.T_CONTINUATION
+    let lead = if code then indent_before(source, t.start) else -1
+    if lead >= 0 then line = lead else ()
+    list.push(out, lead)
+    list.push(out, line)
+    i = i + 1
+  }
+  out
+}
+fn lead_of(leads: List[Int], at: Int) -> Int = list.get(leads, at * 2) ?? -1
+fn line_indent_of(leads: List[Int], at: Int) -> Int = list.get(leads, at * 2 + 1) ?? 0
+// How much blank is before `at` on its line, when nothing else is; else -1
+fn indent_before(source: Bytes, at: Int) -> Int = {
+  var i = at - 1
+  var width = 0
+  var result = -2
+  while result == -2 {
+    if i < 0 then result = width
+    else {
+      let b = bytes.get_or(source, i, 10)
+      if b == 32 or b == 9 then { width = width + 1; i = i - 1 }
+      else if b == 10 or b == 13 then result = width
+      else result = -1
+    }
+  }
+  result
 }
 
 // Parser state, threaded through every rule and returned with each result.
@@ -862,48 +1103,153 @@ fn number_tokens(c: Compiled, source: Bytes, input: TokenInput) -> NumberedToken
 // would have made. `check` is that caller, and it is the one an agent runs on
 // every write. Verified: `check` output is byte-identical on all 39,021 files
 // of the validation corpus with the tree off.
-// What a pass does, fixed before it starts. The three flags never change while
-// it runs, and `far` is read only by the pass that collects expectations, so
-// neither travels in the result: the mode is one scalar argument and `far` is a
-// cell the collecting pass writes. What comes back from a rule is then two
+// What a pass does, fixed before it starts. The flags never change while it
+// runs, except that a lookahead or a negation reads with `M_AHEAD` and
+// `M_PEEK`, and a recovery tries its ways without `M_BUILD`; `far` is a
+// cell, so neither travels in the result: the
+// mode is one scalar argument. What comes back from a rule is then two
 // words — whether it matched and where it ended — which fit in registers,
 // where the four-field record it used to carry did not.
 let M_COLLECT = 1
 let M_RECOVER = 2
 let M_BUILD = 4
-// closers the file never gets to are taken as there at its end (recovering only)
-let M_CLOSE = 8
+// a strict read that logs every recover item it reads (`strict_item`), for
+// the pass that names what a failed parse expected (`failure_of`). Only a
+// read that already failed once asks for it: the log is four numbers an
+// item, and a file that parses never reads it
+let M_LOG = 8
+// inside a lookahead of a recovering parse: an opener no closer answers
+// cannot begin anything the lookahead is looking for
+let M_AHEAD = 16
+// inside a lookahead or a negation of a recovering parse: it asks what the
+// next token is, so no closer the file lacks is taken as there for it
+// (`closer_pairs_outward`, `closer_never_came`)
+let M_PEEK = 32
 fn wants(mode: Int, flag: Int) -> Bool = int.band(mode, flag) != 0
+// Above the flags a recovering mode carries a bound: the token where the
+// unpaired opener a sequence read ends (`recovering_seq`). No list inside
+// reads at it or past it, and no skip reaches it. Being in the mode, it
+// holds for what the sequence reads after the opener and nothing else.
+let MODE_FLAGS = 64
+fn bound_of(mode: Int) -> Int = mode / MODE_FLAGS - 1
+fn with_bound(mode: Int, at: Int) -> Int = {
+  let b = bound_of(mode)
+  int.band(mode, MODE_FLAGS - 1) + (if b >= 0 and b < at then b else at) * MODE_FLAGS + MODE_FLAGS
+}
 
 fn fresh(collect: Bool) -> Int = if collect then M_COLLECT + M_BUILD else M_BUILD
 fn verifying() -> Int = 0
 fn recovering() -> Int = M_RECOVER + M_BUILD
-// The farthest failure lives in a one-place list so a result does not have to
-// carry it. Only the collecting pass ever writes or reads it.
-// The cell holds the farthest failure, and beside it a repair a recover site
-// may be trying: the token index where a closer the file lacks is taken as
-// there (zero tokens wide) and the atom of that closer; -1 when none
-fn far_cell() -> List[Int] = [0, 0 - 1, 0 - 1]
-fn far_of(far: List[Int]) -> Int = match list.get(far, 0) { some(v) => v, none => 0 }
-fn set_far(mut far: List[Int], pos: Int) -> Unit = {
-  let at = list.get(far, 1) ?? (0 - 1)
-  let atom = list.get(far, 2) ?? (0 - 1)
-  list.clear(far)
-  list.push(far, pos)
-  list.push(far, at)
-  list.push(far, atom)
+// The collecting pass that names what was expected: no tree, and every
+// branch walked at the farthest failure the first pass noted (`unpruned`)
+fn collecting() -> Int = M_COLLECT
+fn ahead_mode(mode: Int) -> Int = if wants(mode, M_RECOVER) then int.bor(int.bor(mode, M_AHEAD), M_PEEK) else mode
+// A negation asks whether a token is there at all, so it tests an opener
+// as the token it is: the rule a bracket tree is read with refuses a lone
+// bracket through a negation, and must go on refusing an unpaired one
+fn not_ahead(mode: Int) -> Int = {
+  let peeking = if wants(mode, M_RECOVER) then int.bor(mode, M_PEEK) else mode
+  if wants(peeking, M_AHEAD) then peeking - M_AHEAD else peeking
 }
-fn repair_of(far: List[Int]) -> Int = list.get(far, 1) ?? (0 - 1)
-fn set_repair(mut far: List[Int], at: Int, atom: Int) -> Unit = {
-  let farthest = far_of(far)
-  list.clear(far)
-  list.push(far, farthest)
-  list.push(far, at)
-  list.push(far, atom)
+
+// The cell every pass carries:
+//   repair_at, repair_atom  a repair a recover site is trying: the token
+//         index where a closer the file lacks is taken as there (zero tokens
+//         wide), and the atom of that closer; -1 when none
+//   list_start, list_owner  the list being read (`recover_here`): where it
+//         began, and the recover op of its items; -1 when none
+//   depth  how many lists of recover items a recovering read is inside
+//   floor  below this position the collecting pass prunes as the first did
+//   flags  what the reads of the recover item being worked out leaned on
+//         (`FL_REPAIRED`, `FL_EOF`), for the memo to know where its answer holds
+//   errors  how many ERROR nodes a recovering pass has made, ever
+//   first_error  where the first ERROR node the recover item being worked
+//         out made begins; -1 when none
+//   far   the farthest failure
+//   memo  what recover sites worked out (`memo_find`); it rides in the cell
+//         so that the parser's functions take one argument fewer
+// A record whose fields a pass sets in place: every recover item sets and
+// restores several of them, and as a list each was a rebuild of all ten.
+type Cell = {
+  repair_at: Int, repair_atom: Int, list_start: Int, list_owner: Int, depth: Int,
+  floor: Int, flags: Int, errors: Int, first_error: Int, far: Int,
+  memo: Map[Int, List[Int]],
 }
+fn far_cell() -> Cell = Cell {
+  repair_at: 0 - 1, repair_atom: 0 - 1, list_start: 0, list_owner: 0 - 1, depth: 0,
+  floor: 0, flags: 0, errors: 0, first_error: 0 - 1, far: 0,
+  memo: map.new(),
+}
+fn far_of(far: Cell) -> Int = far.far
+fn set_far(mut far: Cell, pos: Int) -> Unit = { far.far = pos }
+fn note_far(mut far: Cell, pos: Int) -> Unit = if pos > far.far then { far.far = pos } else ()
+fn repair_of(far: Cell) -> Int = far.repair_at
+fn repair_atom(far: Cell) -> Int = far.repair_atom
+fn set_repair(mut far: Cell, at: Int, atom: Int) -> Unit = {
+  far.repair_at = at
+  far.repair_atom = atom
+}
+fn list_start(far: Cell) -> Int = far.list_start
+fn list_owner(far: Cell) -> Int = far.list_owner
+fn list_depth(far: Cell) -> Int = far.depth
+// The list being read: where it began, whose items it holds, and how many
+// lists it is inside
+fn set_list(mut far: Cell, start: Int, owner: Int, depth: Int) -> Unit = {
+  far.list_start = start
+  far.list_owner = owner
+  far.depth = depth
+}
+fn floor_of(far: Cell) -> Int = far.floor
+fn set_floor(mut far: Cell, pos: Int) -> Unit = { far.floor = pos }
+fn flags_of(far: Cell) -> Int = far.flags
+fn set_flags(mut far: Cell, flags: Int) -> Unit = { far.flags = flags }
+fn add_flags(mut far: Cell, flags: Int) -> Unit = { far.flags = int.bor(far.flags, flags) }
+fn errors_made(far: Cell) -> Int = far.errors
+// An ERROR node on `out`, counted
+fn push_error(mut out: List[tree.Node], mut far: Cell, kind: Int, from: Int, to: Int) -> Unit = {
+  list.push(out, tree.node(kind, [], from, to))
+  far.errors = far.errors + 1
+  note_first_error(far, from)
+}
+fn first_error_of(far: Cell) -> Int = far.first_error
+fn set_first_error(mut far: Cell, at: Int) -> Unit = { far.first_error = at }
+fn note_first_error(mut far: Cell, at: Int) -> Unit =
+  if at >= 0 and (far.first_error < 0 or at < far.first_error) then { far.first_error = at } else ()
+// Whether a collecting pass walks every branch at `pos`: at and past the
+// farthest failure the first pass noted. Below it a branch the token cannot
+// begin fails where it starts, and what it expected there is forgotten when
+// the pass moves on, so pruning it changes nothing the message says
+fn unpruned(mode: Int, far: Cell, pos: Int) -> Bool = wants(mode, M_COLLECT) and pos >= far.floor
+
+fn is_closer(x: Int) -> Bool = x == A_RPAREN or x == A_RBRACK or x == A_RBRACE
+fn is_opener(x: Int) -> Bool = x == A_LPAREN or x == A_LBRACK or x == A_LBRACE
+fn opener_of(closer: Int) -> Int = if closer == A_RPAREN then A_LPAREN else if closer == A_RBRACK then A_LBRACK else A_LBRACE
+// The atom of the token at `pos` when it is punctuation: a string, a piece
+// of an f-string or template, or a negation marker is never a bracket
+fn real_atom(num: List[Int], pos: Int) -> Int = {
+  let k = list.get(num, pos * 2) ?? -1
+  if k != tree.T_PUNCT then -1 else list.get(num, pos * 2 + 1) ?? -1
+}
+// Whether the closer at `pos` pairs with an opener before `from`: the
+// closer of something that holds the tokens from `from` on
+fn pairs_outward(num: List[Int], pos: Int, from: Int) -> Bool = {
+  let m = match_of(num, pos)
+  m >= 0 and m < from
+}
+// Whether the token at `pos` is an opener no closer answers
+fn unpaired_opener(num: List[Int], pos: Int) -> Bool = is_opener(real_atom(num, pos)) and match_of(num, pos) < 0
+// Whether the wanted literal is a closer, the token at `pos` a closer of
+// another kind that pairs, and the parse a recovering one: the wanted
+// closer is taken as there, zero tokens wide, since the file's next closer
+// belongs to something outside — a `)` gone from a call inside braces, a
+// `}` gone from a body inside a call. The strict parse never does this,
+// and the pairing is only filled for a recovering parse.
+fn closer_pairs_outward(c: Compiled, num: List[Int], mode: Int, op: Op, pos: Int) -> Bool =
+  op.kind == K_LIT and wants(mode, M_RECOVER) and not wants(mode, M_PEEK) and is_closer(real_atom(num, pos)) and match_of(num, pos) >= 0
+  and (spelled(c, op, A_RPAREN) or spelled(c, op, A_RBRACK) or spelled(c, op, A_RBRACE))
 // Whether the literal is the closer a repair takes as there at `pos`
-fn repaired_here(c: Compiled, far: List[Int], op: Op, pos: Int) -> Bool =
-  op.kind == K_LIT and repair_of(far) == pos and spelled(c, op, list.get(far, 2) ?? (0 - 1))
+fn repaired_here(c: Compiled, far: Cell, op: Op, pos: Int) -> Bool =
+  op.kind == K_LIT and repair_of(far) == pos and spelled(c, op, repair_atom(far))
 
 // A rule reports whether it matched and where it stopped. The nodes it built
 // are not carried in the result: they are pushed onto a single list that the
@@ -912,12 +1258,16 @@ fn repaired_here(c: Compiled, far: List[Int], op: Op, pos: Int) -> Bool =
 // which `rollback` does; `mark` is the length on entry.
 type Out = { ok: Bool, pos: Int }
 
-type Failure = { line: Int, col: Int, found: String, expected: List[String] }
+// Where a read failed, what it found there and what it expected; `note`,
+// when not empty, says it instead (a bracket that does not pair)
+type Failure = { line: Int, col: Int, found: String, expected: List[String], note: String }
 
 // `exp` holds arena node ids, not strings: a name is only needed once, when
 // the message is written.
-fn noted(mut exp: List[Int], mut far: List[Int], pos: Int, what: Int) -> Unit = {
-  if pos > far_of(far) then {
+fn noted(mut exp: List[Int], mut far: Cell, pos: Int, what: Int) -> Unit = {
+  // below the first pass's farthest failure nothing noted would last
+  if pos < floor_of(far) then ()
+  else if pos > far_of(far) then {
     list.clear(exp)
     list.push(exp, what)
     set_far(far, pos)
@@ -932,8 +1282,8 @@ fn noted(mut exp: List[Int], mut far: List[Int], pos: Int, what: Int) -> Unit = 
 // of every one that does not, therefore records nothing at a failed
 // alternative — which is the busiest path in the engine, and was 20% of a
 // 2.5 MB parse in a CPU sample.
-fn miss(mut exp: List[Int], mut far: List[Int], mode: Int, pos: Int, what: Int) -> Out = {
-  if wants(mode, M_COLLECT) then noted(exp, far, pos, what) else ()
+fn miss(mut exp: List[Int], mut far: Cell, mode: Int, pos: Int, what: Int) -> Out = {
+  if wants(mode, M_COLLECT) then noted(exp, far, pos, what) else note_far(far, pos)
   Out { ok: false, pos: pos }
 }
 fn good(pos: Int) -> Out = Out { ok: true, pos: pos }
@@ -951,29 +1301,28 @@ fn untrack(mut exp: List[Int], mark: Int) -> Unit = {
 // How far a recovery may skip from `from`.
 //
 // Never past the end of the file. If `bounded`, never past a closing bracket
-// that belongs to something outside: a statement list inside braces must not
-// recover by eating the brace that ends it. At the top level nothing encloses
-// the skip, so a stray closer is itself part of what could not be read.
-fn skip_limit(num: List[Int], from: Int, bounded: Bool) -> Int = {
-  var depth = 0
-  var q = from
-  var limit = -1
-  while limit < 0 {
-    match list.get(num, q * 2) {
-      none => { limit = q },
-      some(k) => if k == tree.T_EOF then { limit = q }
-        else {
-          let x = match list.get(num, q * 2 + 1) { some(v) => v, none => -1 }
-          let real = k != tree.T_STRING and k != tree.T_NEG
-          if real and (x == A_LPAREN or x == A_LBRACK or x == A_LBRACE) then depth = depth + 1
-          else if real and (x == A_RPAREN or x == A_RBRACK or x == A_RBRACE) then {
-            if depth == 0 and bounded then limit = q else depth = int.max(0, depth - 1)
-          } else ()
-          if limit < 0 then q = q + 1 else ()
-        },
-    }
-  }
-  limit
+// that pairs with an opener before `from` (`pair_brackets`): a statement
+// list inside braces must not recover by eating the brace that ends it. A
+// closer that pairs inside the skipped tokens, or with nothing, is stepped
+// over: it is part of what could not be read. At the top level nothing
+// encloses the skip.
+fn skip_limit(num: List[Int], from: Int, bounded: Bool, mode: Int) -> Int = {
+  let limit = if bounded then enclosing_closer(num, from) else eof_index(num)
+  let bound = bound_of(mode)
+  if bound >= from and bound < limit then bound else limit
+}
+
+// Where the run of separators (line ends, `;`, layout) that ends at `to`
+// begins, no earlier than `from`
+fn separators_before(num: List[Int], from: Int, to: Int) -> Int = {
+  var t = to
+  while t > from and not real_at(num, t - 1) { t = t - 1 }
+  t
+}
+fn real_at(num: List[Int], i: Int) -> Bool = {
+  let k = list.get(num, i * 2) ?? -1
+  let x = list.get(num, i * 2 + 1) ?? -1
+  k != tree.T_NEWLINE and k != tree.T_INDENT and k != tree.T_DEDENT and not (k != tree.T_STRING and x == A_SEMI)
 }
 
 // Is there anything between these two positions but separators? Giving up on
@@ -1172,14 +1521,14 @@ fn needs_here(c: Compiled, num: List[Int], want: Op, pos: Int) -> Bool = {
 
 // A literal that did not match names every spelling it would have taken, which
 // is what the alternation's branches named one by one before.
-fn missed(c: Compiled, mut exp: List[Int], mut far: List[Int], mode: Int, pos: Int, op: Op) -> Out = {
+fn missed(c: Compiled, mut exp: List[Int], mut far: Cell, mode: Int, pos: Int, op: Op) -> Out = {
   if wants(mode, M_COLLECT) then {
     var i = 0
     while i < op.b {
       noted(exp, far, pos, kid_at(c, op.a + op.b + i))
       i = i + 1
     }
-  } else ()
+  } else note_far(far, pos)
   Out { ok: false, pos: pos }
 }
 
@@ -1195,7 +1544,7 @@ fn missed(c: Compiled, mut exp: List[Int], mut far: List[Int], mode: Int, pos: I
 // The two terminals, lifted out of the dispatch so the engine's one big
 // function stays about choosing what to do rather than about doing it. Neither
 // calls `parse_rule`, so neither joins its recursive group.
-fn token_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
+fn token_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out = {
     match list.get(num, pos * 2) {
       some(k) => if k != op.b then miss(exp, far, mode, pos, id)
         else if op.b == tree.T_NEWLINE or op.b == tree.T_EOF then good(pos + 1)
@@ -1207,20 +1556,39 @@ fn token_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
     }
 }
 
-// A closer the file never gets to: with M_CLOSE, a `)`, `]` or `}` the rule
-// wants at the end of the file is taken as there, zero tokens wide, so that
-// a body left open by an edit closes at the end and keeps what it read — the
-// class whose last `}` is gone still lists its methods. A recover site turns
-// this on only when it loses fewer tokens than skipping to the next item
-// (`recover_here`); the strict parse never does it.
-fn closer_at_eof(c: Compiled, num: List[Int], mode: Int, op: Op, pos: Int) -> Bool =
-  op.kind == K_LIT and wants(mode, M_CLOSE) and (list.get(num, pos * 2) ?? -1) == tree.T_EOF
+// A literal the token at `pos` is not: a closer the file lacks is taken as
+// there when recovering (`repaired_here`, `closer_pairs_outward`,
+// `closer_never_came`), and one taken at the end of the file is noted, for
+// the recover site that reads it to weigh against skipping; anything else
+// is a miss.
+fn lacking_here(c: Compiled, num: List[Int], mut exp: List[Int], mut far: Cell, mode: Int, op: Op, pos: Int) -> Out =
+  if repaired_here(c, far, op, pos) or closer_pairs_outward(c, num, mode, op, pos) then good(pos)
+  else if closer_never_came(c, num, mode, op, pos) then {
+    if pos >= eof_index(num) then add_flags(far, FL_EOF) else ()
+    good(pos)
+  }
+  else missed(c, exp, far, mode, pos, op)
+// Whether the wanted literal is a closer, the parse a recovering one, and
+// the innermost bracket open where the token at `pos` stands one no closer
+// answers: the closer is taken as there, zero tokens wide, where the parse
+// first wants it — a `)` gone from a call, read as the call ends at the `;`.
+// The pairing says the file never closes that bracket, so every closer
+// wanted inside it before an enclosing one comes is one the file lacks. At
+// the end of the file every bracket still open is such a one: a body an
+// edit left open closes there and keeps what it read.
+fn closer_never_came(c: Compiled, num: List[Int], mode: Int, op: Op, pos: Int) -> Bool =
+  op.kind == K_LIT and wants(mode, M_RECOVER) and not wants(mode, M_PEEK) and unclosed_around(num, pos)
   and (spelled(c, op, A_RPAREN) or spelled(c, op, A_RBRACK) or spelled(c, op, A_RBRACE))
-fn literal_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
+fn unclosed_around(num: List[Int], pos: Int) -> Bool = {
+  let o = open_before(num, pos)
+  o >= 0 and match_of(num, o) < 0
+}
+fn literal_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out = {
   match list.get(num, pos * 2 + 1) {
-    some(x) => if not spelled_at(c, id, op, x) then (if closer_at_eof(c, num, mode, op, pos) or repaired_here(c, far, op, pos) then good(pos) else missed(c, exp, far, mode, pos, op))
+    some(x) => if not spelled_at(c, id, op, x) then lacking_here(c, num, exp, far, mode, op, pos)
       else match list.get(num, pos * 2) {
         some(k) => if k == tree.T_STRING or k == tree.T_NEG then missed(c, exp, far, mode, pos, op)
+          else if wants(mode, M_AHEAD) and unpaired_opener(num, pos) then missed(c, exp, far, mode, pos, op)
           else if op.kind == K_LIT then good(pos + 1)
           else {
             if wants(mode, M_BUILD) then list.push(out, tree.leaf(c.extra + X_OP, pos)) else ()
@@ -1238,7 +1606,7 @@ fn literal_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: 
 // reference on native, so the arena and the token lists are no longer copied
 // at the call. Measured at the boundary: extracting an arm this way moves the
 // three code-heavy files by less than half a percent either way.
-fn recover_lines_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
+fn recover_lines_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out = {
     let mark = list.len(out)
     let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
     // a line item is stamped like any recover item: the incremental reader re-reads it alone
@@ -1263,7 +1631,7 @@ fn recover_lines_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut
             else if k == tree.T_NEWLINE then line_start = true
             else {
               if line_start and depth == 0 and q > pos then {
-                let a = parse_rule(c, num, out, exp, far, mode, op.a, q)
+                let a = parse_rule(c, num, out, exp, far, trial_mode(mode), op.a, q)
                 rollback(out, mark)
                 if a.ok and a.pos > q then resume = q else ()
               } else ()
@@ -1275,7 +1643,7 @@ fn recover_lines_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut
         let stop = if resume >= 0 then resume else limit
         if not real_between(num, pos, stop) then Out { ok: false, pos: pos }
         else {
-          list.push(out, tree.node(c.extra + X_ERROR, [], pos, stop))
+          push_error(out, far, c.extra + X_ERROR, pos, stop)
           stamp(out, list.len(out) - 1, id)
           if resume >= 0 then {
             let resumed = list.len(out)
@@ -1290,15 +1658,21 @@ fn recover_lines_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut
 // A rule that names what it matched. `K_NEST` keeps quiet when the rule left
 // exactly one node behind, because a node with one child and a name that only
 // says which rule ran says nothing a reader can use.
-fn wrapped_seq_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
+fn wrapped_seq_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out = {
   let mark = list.len(out)
   var p = pos
   var failed = false
-  var i = 0
-  while not failed and i < op.b {
-    let o = parse_rule(c, num, out, exp, far, mode, kid_at(c, op.a + i), p)
-    if o.ok then { p = o.pos } else { failed = true }
-    i = i + 1
+  if closing(mode) then {
+    let read = recovering_seq(c, num, out, exp, far, mode, op, pos)
+    p = read.pos
+    failed = not read.ok
+  } else {
+    var i = 0
+    while not failed and i < op.b {
+      let o = parse_rule(c, num, out, exp, far, mode, kid_at(c, op.a + i), p)
+      if o.ok then { p = o.pos } else { failed = true }
+      i = i + 1
+    }
   }
   if failed then {
     rollback(out, mark)
@@ -1312,26 +1686,102 @@ fn wrapped_seq_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut e
   }
 }
 
+// Every operator a precedence read still holds, folded at the end of the
+// expression
+fn reduce_all(c: Compiled, mut out: List[tree.Node], mut marks: List[Int], mut opmarks: List[Int],
+  mut levels: List[Int], mut froms: List[Int], id: Int, right: Int, to: Int, build: Bool) -> Unit = {
+  var mark = right
+  while list.len(levels) > 0 {
+    let (m, _) = reduce_top(c, out, marks, opmarks, levels, froms, id, mark, to, build)
+    mark = m
+  }
+}
+
+// A negation: the rule read without keeping anything, the answer inverted
+fn not_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, op: Op, pos: Int) -> Out = {
+  let mark = list.len(out)
+  let emark = list.len(exp)
+  let o = parse_rule(c, num, out, exp, far, not_ahead(mode), op.a, pos)
+  rollback(out, mark)
+  if wants(mode, M_COLLECT) then untrack(exp, emark) else ()
+  if o.ok then Out { ok: false, pos: pos } else good(pos)
+}
+// Whether a read takes closers the file lacks as there: recovering, and not
+// inside a lookahead or a negation, which ask what the next token is
+fn closing(mode: Int) -> Bool = wants(mode, M_RECOVER) and not wants(mode, M_PEEK)
+// A sequence in a recovering read (`recovering_seq`), its nodes rolled back
+// when it fails
+fn seq_recovering(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, op: Op, pos: Int) -> Out = {
+  let mark = list.len(out)
+  let o = recovering_seq(c, num, out, exp, far, mode, op, pos)
+  if o.ok then o else {
+    rollback(out, mark)
+    Out { ok: false, pos: pos }
+  }
+}
+
+// The items of a sequence, in a recovering read. When one of them reads an
+// opener no closer answers (`pair_brackets`), what the sequence reads after
+// it is bounded where that opener ends (`with_bound`): its lists stop there
+// and no skip reaches it. The closer the sequence then wants for that opener
+// is taken as there, zero tokens wide, where the parse gets to it — the
+// body of an `if` whose `}` went missing ends before the line indented as
+// the `if` is, and the function around it goes on. Nodes a failed read made
+// are the caller's to roll back.
+fn recovering_seq(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, op: Op, pos: Int) -> Out = {
+  var p = pos
+  var failed = false
+  var i = 0
+  var m = mode
+  var opened = -1
+  while not failed and i < op.b {
+    let kid = kid_at(c, op.a + i)
+    if opened >= 0 and closes_opener(c, kid, real_atom(num, opened)) then {
+      if p >= eof_index(num) then add_flags(far, FL_EOF) else ()
+      m = mode
+      opened = -1
+    } else {
+      let o = parse_rule(c, num, out, exp, far, m, kid, p)
+      if not o.ok then failed = true
+      else {
+        if o.pos == p + 1 and unpaired_opener(num, p) then {
+          opened = p
+          let v = vclose_of(num, p)
+          if v >= 0 then m = with_bound(m, v) else ()
+        } else ()
+        p = o.pos
+      }
+    }
+    i = i + 1
+  }
+  Out { ok: not failed, pos: p }
+}
+// Whether the op is the literal that closes the opener `atom`
+fn closes_opener(c: Compiled, id: Int, atom: Int) -> Bool = match list.get(c.ops, id) {
+  some(o) => (o.kind == K_LIT or o.kind == K_KEEP) and spelled(c, o, atom + 1),
+  none => false,
+}
+
 // A negation of a terminal. The terminal itself never builds a node the
 // negation keeps and never names an expectation it keeps either, so what is
 // left of it is the test and its answer, inverted.
-fn not_lit_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
+fn not_lit_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out = {
   let emark = list.len(exp)
-  let o = literal_here(c, num, out, exp, far, mode, id, Op { kind: K_LIT, a: op.a, b: op.b }, pos)
-  untrack(exp, emark)
+  let o = literal_here(c, num, out, exp, far, not_ahead(mode), id, Op { kind: K_LIT, a: op.a, b: op.b }, pos)
+  if wants(mode, M_COLLECT) then untrack(exp, emark) else ()
   if o.ok then bad(pos) else good(pos)
 }
 
-fn not_tok_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, op: Op, pos: Int) -> Out = {
+fn not_tok_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, op: Op, pos: Int) -> Out = {
   let mark = list.len(out)
   let emark = list.len(exp)
   let o = token_here(c, num, out, exp, far, mode, op.a, Op { kind: K_TOK, a: -1, b: op.b }, pos)
   rollback(out, mark)
-  untrack(exp, emark)
+  if wants(mode, M_COLLECT) then untrack(exp, emark) else ()
   if o.ok then bad(pos) else good(pos)
 }
 
-fn leaf_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out =
+fn leaf_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out =
   if op.kind == K_LIT or op.kind == K_KEEP then literal_here(c, num, out, exp, far, mode, id, op, pos)
   else if op.kind == K_TOK then token_here(c, num, out, exp, far, mode, id, op, pos)
   else if op.kind == K_NOT_LIT then not_lit_here(c, num, out, exp, far, mode, id, op, pos)
@@ -1340,7 +1790,7 @@ fn leaf_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Lis
 // A sequence of nothing but terminal tests, run where it stands. Like any
 // sequence it builds no node of its own: what its members left behind belongs
 // to whatever wraps it.
-fn terms_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, op: Op, pos: Int) -> Out = {
+fn terms_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, op: Op, pos: Int) -> Out = {
   let mark = list.len(out)
   var p = pos
   var failed = false
@@ -1358,7 +1808,7 @@ fn terms_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
   } else good(p)
 }
 
-fn wrapped_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
+fn wrapped_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out = {
   let mark = list.len(out)
   let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
   if o.ok then {
@@ -1376,9 +1826,9 @@ fn wrapped_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: 
 // The rest of the ladder. Every kind below carries less than one visit in a
 // hundred on a Python file, and leaving them in front of `parse_rule`'s common
 // arms cost every visit the compares to walk past them.
-fn uncommon_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
+fn uncommon_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out = {
   if op.kind == K_RECOVER_LINES then recover_lines_here(c, num, out, exp, far, mode, id, op, pos)
-  else if op.kind == K_NEEDS then (if wants(mode, M_COLLECT) or needs_here(c, num, match list.get(c.ops, op.a) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }, pos) then good(pos) else miss(exp, far, mode, pos, id))
+  else if op.kind == K_NEEDS then (if unpruned(mode, far, pos) or needs_here(c, num, match list.get(c.ops, op.a) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }, pos) then good(pos) else miss(exp, far, mode, pos, id))
   else if op.kind == K_NOT_TOK then not_tok_here(c, num, out, exp, far, mode, op, pos)
   // the body of a macro is a balanced run of tokens the grammar has no reading
   // of; `any` consumes one and leaves nothing behind
@@ -1438,9 +1888,9 @@ fn uncommon_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp:
   else if op.kind == K_AHEAD then {
     let mark = list.len(out)
     let emark = list.len(exp)
-    let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
+    let o = parse_rule(c, num, out, exp, far, ahead_mode(mode), op.a, pos)
     rollback(out, mark)
-    untrack(exp, emark)
+    if wants(mode, M_COLLECT) then untrack(exp, emark) else ()
     if o.ok then good(pos) else Out { ok: false, pos: pos }
   }
   else if op.kind == K_EPS then good(pos)
@@ -1456,123 +1906,462 @@ fn uncommon_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp:
 // The tokens under ERROR nodes (kind `err`) among the nodes pushed since
 // `mark`. Only the kind goes in, never the grammar: a closure that captured
 // it would make every caller up the chain pass it by value, and copy it.
-fn error_tokens(error_kind: Int, out: List[tree.Node], mark: Int) -> Int = {
+// Both walks are `for` loops over borrowed lists: `list.get` and a fold's
+// closure copy the node they are handed, subtree and all, which made
+// counting what went under ERROR in a large item cost more than reading it.
+// `out` is `mut` only so that it is borrowed: iterating a plain list
+// parameter takes it by value on the native target
+fn error_tokens(error_kind: Int, mut out: List[tree.Node], mark: Int) -> Int = {
   var total = 0
-  var i = mark
-  while i < list.len(out) {
-    match list.get(out, i) { some(n) => { total = total + error_tokens_in(error_kind, n) }, none => () }
+  var i = 0
+  for n in out {
+    if i >= mark then total = total + error_tokens_in(error_kind, n) else ()
     i = i + 1
   }
   total
 }
 fn error_tokens_in(error_kind: Int, n: tree.Node) -> Int =
   if n.kind == error_kind then n.end - n.start
-  else list.fold(n.kids, 0, (acc, k) => acc + error_tokens_in(error_kind, k))
+  else {
+    var total = 0
+    for k in n.kids { total = total + error_tokens_in(error_kind, k) }
+    total
+  }
 
 // A recover site: the item as written, else the least that can be given up.
-// Two ways are tried when the item fails: skip to the next place the rule
-// reads (an ERROR node over what is skipped, after whatever head of the item
-// is readable on its own), or read the item again with its missing closers
-// taken as there at the end of the file (M_CLOSE), which keeps a body an
-// edit left open — with ERROR nodes inside it for what its list could not
-// read. The way that puts fewer tokens under ERROR wins; a skip that finds
-// no resume point and no real token gives up.
-fn recover_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, op: Op, pos: Int) -> Out = {
+// When the item fails there are two ways on — skip to the next place the
+// rule reads (an ERROR node over what is skipped, after whatever head of the
+// item is readable on its own), or read it with one closer the file lacks
+// taken as there where it failed farthest (`repair_trial`) — and a third is
+// the first read itself when it closed brackets at the end of the file
+// (`closer_never_came`), keeping a body an edit left open: that read is
+// weighed against skipping. The way that puts fewer tokens under ERROR wins;
+// a skip that finds no resume point and no real token gives up.
+//
+// A list stops at a closer that pairs with an opener before the list began
+// (`pairs_outward`): that closer ends something the list is inside, and
+// what follows the list reads it. A closer that pairs inside the list —
+// its opener went under an ERROR node — or with nothing is one error token,
+// and the list reads on: it would otherwise end the list where the list's
+// own closer should, so that the item holding the list fails and is read
+// again at every way its site has, and again at every level above.
+//
+// What a site works out is remembered (`memo_find`). The ways read the item
+// again, and an enclosing item's ways read everything in it again, so
+// without the memo a break nested k lists deep costs the ways to the k-th
+// power. The ways are tried without a tree (`trial_mode`); the one chosen is
+// read again with the tree when the pass builds one, and the items in it
+// replay what they worked out (`memo_apply`).
+let E_WRITTEN = 0
+let E_CLOSE = 1
+let E_REPAIR = 2
+let E_SKIP = 3
+let E_FAIL = 4
+// what an answer leaned on: a repair taken somewhere in its reads, and a
+// closer taken as there at the end of the file somewhere in its reads
+let FL_REPAIRED = 1
+let FL_EOF = 2
+
+fn trial_mode(mode: Int) -> Int = if wants(mode, M_BUILD) then mode - M_BUILD else mode
+
+fn recover_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out =
+  if not wants(mode, M_RECOVER) then {
+    if wants(mode, M_COLLECT) then collected_item(c, num, out, exp, far, mode, id, op, pos)
+    else strict_item(c, num, out, exp, far, mode, id, op, pos)
+  } else {
+    let at = repair_of(far)
+    if at >= 0 and pos > at then {
+      // a repair behind this item cannot reach it: it reads as if none were
+      // under way, and may take one of its own
+      let atom = repair_atom(far)
+      set_repair(far, 0 - 1, 0 - 1)
+      let o = recover_site(c, num, out, exp, far, mode, id, op, pos)
+      set_repair(far, at, atom)
+      o
+    } else recover_site(c, num, out, exp, far, mode, id, op, pos)
+  }
+
+// A recover item in a strict pass: read as written, and what it read to
+// logged on `exp` — site, position, end (-1: failed), farthest failure —
+// for the pass that names what a failed parse expected (`failure_of`)
+fn strict_item(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out =
+  if not wants(mode, M_LOG) then {
+    let mark = list.len(out)
+    let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
+    if o.ok then { stamp(out, mark, id); o } else { rollback(out, mark); Out { ok: false, pos: pos } }
+  } else logged_item(c, num, out, exp, far, mode, id, op, pos)
+fn logged_item(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out = {
+  let mark = list.len(out)
+  let outer = far_of(far)
+  set_far(far, pos)
+  let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
+  let item_far = far_of(far)
+  list.push(exp, id)
+  list.push(exp, pos)
+  list.push(exp, if o.ok then o.pos else 0 - 1)
+  list.push(exp, item_far)
+  if item_far < outer then set_far(far, outer) else ()
+  if o.ok then { stamp(out, mark, id); o } else { rollback(out, mark); Out { ok: false, pos: pos } }
+}
+
+// A recover item in a collecting pass: one the strict pass read without
+// reaching its farthest failure is stepped over (`failure_of`), the rest
+// read as written
+fn collected_item(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out =
+  match map.get(far.memo, memo_key(id, pos, 0)) {
+    some(e) => if e_at(e, 0) == 1 then good(e_at(e, 1)) else Out { ok: false, pos: pos },
+    none => {
+      let mark = list.len(out)
+      let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
+      if o.ok then { stamp(out, mark, id); o } else { rollback(out, mark); Out { ok: false, pos: pos } }
+    },
+  }
+
+// Lists nested deeper than this are not read: every `{` an edit typed that
+// no `}` answers opens one more, and the read of a file with thousands of
+// them would outrun the stack. Code nests a few dozen deep.
+let MAX_LIST_DEPTH = 256
+
+fn recover_site(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out =
+  if is_closer(real_atom(num, pos)) and list_owner(far) == id then closer_item(c, num, out, exp, far, mode, id, op, pos)
+  else if list_depth(far) > MAX_LIST_DEPTH then too_deep(c, num, out, far, mode, id, op, pos)
+  // inside a lookahead or a negation an answer is worked out apart: the
+  // rules that hold there differ, so it is neither looked up nor kept
+  else if wants(mode, M_PEEK) then recover_fresh(c, num, out, exp, far, mode, id, op, pos, false)
+  else match memo_find(far, num, id, pos, mode) {
+    some(e) => memo_apply(c, num, out, exp, far, mode, id, op, pos, e),
+    none => recover_fresh(c, num, out, exp, far, mode, id, op, pos, repair_of(far) < 0),
+  }
+
+// An item past `MAX_LIST_DEPTH`: what its list may reach goes under one
+// ERROR node, unread
+fn too_deep(c: Compiled, num: List[Int], mut out: List[tree.Node], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out = {
+  let limit = skip_limit(num, pos, op.kind == K_RECOVER, mode)
+  if not real_between(num, pos, limit) then Out { ok: false, pos: pos }
+  else {
+    push_error(out, far, c.extra + X_ERROR, pos, limit)
+    stamp(out, list.len(out) - 1, id)
+    good(limit)
+  }
+}
+
+// The item at a closer: as written, else the list ends there when the
+// closer pairs outward, else the closer is one error token. Where the list
+// began decides it, so the answer is not remembered.
+fn closer_item(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int) -> Out = {
   let mark = list.len(out)
   let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
   if o.ok then { stamp(out, mark, id); o }
   else {
     rollback(out, mark)
-    if not wants(mode, M_RECOVER) then Out { ok: false, pos: pos }
+    if pairs_outward(num, pos, list_start(far)) then Out { ok: false, pos: pos }
     else {
-      // find the next place the rule reads, and give up the tokens between
-      let limit = skip_limit(num, pos, op.kind == K_RECOVER)
-      var q = pos + 1
-      var resume = -1
-      while resume < 0 and q < limit {
-        let a = parse_rule(c, num, out, exp, far, mode, op.a, q)
-        rollback(out, mark)
-        if a.ok then resume = q else q = q + 1
-      }
-      // where the tokens given up end: at the next item, or at the end of
-      // what this list may reach
-      let stop = if resume >= 0 then resume else limit
-      // keep whatever of the failed item is readable on its own
-      let h = parse_rule(c, num, out, exp, far, mode, op.b, pos)
-      let kept = h.ok and h.pos > pos and h.pos <= stop
-      rollback(out, mark)
-      let from = if kept then h.pos else pos
-      let skip_loses = if resume < 0 and not real_between(num, pos, limit) then -1 else stop - from
-      // the other way: the item closed at the end of the file, when the end is in reach
-      let closed = if wants(mode, M_CLOSE) or (list.get(num, limit * 2) ?? -1) != tree.T_EOF then Out { ok: false, pos: pos } else parse_rule(c, num, out, exp, far, mode + M_CLOSE, op.a, pos)
-      let close_loses = if closed.ok then error_tokens(c.extra + X_ERROR, out, mark) else -1
-      if closed.ok and (skip_loses < 0 or close_loses < skip_loses) then { stamp(out, mark, id); closed }
+      push_error(out, far, c.extra + X_ERROR, pos, pos + 1)
+      stamp(out, mark, id)
+      good(pos + 1)
+    }
+  }
+}
+
+// ── the memo ─────────────────────────────────────────────────────────────
+// A site's answer at a position:
+//   [ok, end, errors, far, flags, way, the way's four numbers, first error, bound]
+// `errors` counts the tokens it put under ERROR, `first error` is where the
+// first of them begins, `far` is the farthest any
+// of its reads failed, `flags` what they leaned on. A repair under way
+// changes nothing for reads that never failed at its place and took no
+// repair of their own. `M_BUILD` changes nothing a rule matches, so one
+// answer serves a read with or without a tree; the bound a read is under
+// (`with_bound`) does, so an answer serves reads under its own.
+fn memo_key(site: Int, pos: Int, close: Int) -> Int = (site * 4294967296 + pos) * 2 + close
+fn e_at(e: List[Int], i: Int) -> Int = list.get(e, i) ?? 0
+fn holds_under_repair(e: List[Int], at: Int) -> Bool = at < 0 or (e_at(e, 3) < at and int.band(e_at(e, 4), FL_REPAIRED) == 0)
+fn memo_find(far: Cell, num: List[Int], site: Int, pos: Int, mode: Int) -> Option[List[Int]] =
+  match map.get(far.memo, memo_key(site, pos, 0)) {
+    some(e) => if holds_under_repair(e, repair_of(far)) and e_at(e, 11) == bound_of(mode) then some(e) else none,
+    none => none,
+  }
+
+// A remembered answer used: its farthest failure and what it leaned on go
+// to the enclosing item; without a tree only the count of what went under
+// ERROR is carried, and with one the way is read again, the items in it
+// replaying theirs.
+fn memo_apply(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int, e: List[Int]) -> Out = {
+  note_far(far, e_at(e, 3))
+  add_flags(far, e_at(e, 4))
+  if e_at(e, 0) == 0 then Out { ok: false, pos: pos }
+  else if not wants(mode, M_BUILD) then {
+    // the count stands at the answer's first ERROR, for `swallowed_at`
+    let first = int.max(0, e_at(e, 10))
+    if e_at(e, 2) > 0 then push_error(out, far, c.extra + X_ERROR, first, first + e_at(e, 2)) else ()
+    good(e_at(e, 1))
+  } else take_way(c, num, out, exp, far, mode, id, op, pos, e)
+}
+
+// A site's answer worked out. Its reads note their farthest failure and
+// what they leaned on from here; the enclosing item's come back after,
+// joined with them. The answer is remembered when `store`.
+fn recover_fresh(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int, store: Bool) -> Out = {
+  let mark = list.len(out)
+  let outer_far = far_of(far)
+  let outer_flags = flags_of(far)
+  let errors_before = errors_made(far)
+  let outer_first = first_error_of(far)
+  set_far(far, pos)
+  set_flags(far, 0)
+  set_first_error(far, 0 - 1)
+  var way: List[Int] = [0, 0, 0, 0, 0, E_FAIL, 0, 0, 0, 0]
+  let o = recover_ways(c, num, out, exp, far, mode, id, op, pos, way)
+  let item_far = far_of(far)
+  let item_flags = int.bor(flags_of(far), if e_at(way, 5) == E_REPAIR then FL_REPAIRED else 0)
+  let item_first = first_error_of(far)
+  // an item that read as written, leaning on nothing, is remembered only by
+  // a trial: a read with a tree reaches it once, and the trials of an
+  // enclosing item that fails remember it when they read it
+  let plain = e_at(way, 5) == E_WRITTEN and item_flags == 0 and wants(mode, M_BUILD)
+  if store and not plain then {
+    let errors = if not o.ok or errors_made(far) == errors_before then 0 else error_tokens(c.extra + X_ERROR, out, mark)
+    map.insert(far.memo, memo_key(id, pos, 0), [if o.ok then 1 else 0, o.pos, errors, item_far, item_flags, e_at(way, 5), e_at(way, 6), e_at(way, 7), e_at(way, 8), e_at(way, 9), if errors > 0 then item_first else 0 - 1, bound_of(mode)])
+  } else ()
+  set_flags(far, int.bor(outer_flags, item_flags))
+  if item_far < outer_far then set_far(far, outer_far) else ()
+  set_first_error(far, outer_first)
+  note_first_error(far, item_first)
+  o
+}
+
+// The way a site worked out, in the answer's layout (slot 5 and on)
+fn set_way(mut way: List[Int], code: Int, a: Int, b: Int, d: Int, e: Int) -> Unit = {
+  list.clear(way)
+  for x in [0, 0, 0, 0, 0, code, a, b, d, e] { list.push(way, x) }
+}
+
+// The item read, and the ways on when it fails, `way` set to the one taken
+fn recover_ways(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int, mut way: List[Int]) -> Out = {
+  let mark = list.len(out)
+  let errors_before = errors_made(far)
+  let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
+  // a read that closed brackets at the end of the file is weighed against skipping
+  let closed = int.band(flags_of(far), FL_EOF) != 0
+  let first_error = first_error_of(far)
+  if o.ok and not closed then { stamp(out, mark, id); set_way(way, E_WRITTEN, 0, 0, 0, 0); o }
+  else if not o.ok and refused_here(c, num, out, exp, far, mode, op.a, pos) then {
+    set_way(way, E_FAIL, 0, 0, 0, 0)
+    Out { ok: false, pos: pos }
+  }
+  else {
+    let failed_at = far_of(far)
+    let close_loses = if not o.ok then 0 - 1 else if errors_made(far) == errors_before then 0 else error_tokens(c.extra + X_ERROR, out, mark)
+    // the closed read's nodes are set aside while the skip is worked out
+    var closed_nodes: List[tree.Node] = []
+    if o.ok then closed_nodes = take_from(out, mark) else rollback(out, mark)
+    var plan: List[Int] = []
+    let skip_loses = skip_plan(c, num, out, exp, far, mode, op, pos, plan)
+    // closing loses when it swallowed an item of its own list; else it wins
+    // when the skip would read on to where it ends anyway, the same tokens
+    // with fewer of them, or when it loses less
+    let close_wins = o.ok and (skip_loses < 0
+      or (not swallowed_at(c, num, out, exp, far, mode, op, pos, e_at(plan, 3), first_error)
+        and (e_at(plan, 5) >= o.pos or close_loses < skip_loses
+          or close_loses < skip_loses + read_on_errors(c, num, out, exp, far, mode, id, op, e_at(plan, 5), o.pos))))
+    if close_wins then {
+      put_back(out, closed_nodes)
+      stamp(out, mark, id)
+      set_way(way, E_CLOSE, 0, 0, 0, 0)
+      o
+    } else {
+      // a closed read that loses to skipping took its closers at the end of
+      // the file, where a repair has nothing to add
+      var best: List[Int] = [0 - 1, 0 - 1]
+      if not o.ok then repair_trial(c, num, out, exp, far, mode, op.a, pos, e_at(plan, 4), failed_at, best) else ()
+      if e_at(best, 0) >= 0 and (skip_loses < 0 or e_at(best, 1) < skip_loses) then {
+        set_way(way, E_REPAIR, failed_at, e_at(best, 0), 0, 0)
+        take_way(c, num, out, exp, far, mode, id, op, pos, way)
+      } else if skip_loses < 0 then { set_way(way, E_FAIL, 0, 0, 0, 0); Out { ok: false, pos: pos } }
       else {
-        rollback(out, mark)
-        // the third way: one closer the file lacks, taken as there where the
-        // item failed farthest — a `)` gone from a parameter list — and the
-        // item read again with it. The way that loses least of the three wins
-        let (repaired, repair_loses) = repair_here(c, num, out, exp, far, mode, op.a, pos, limit)
-        if repaired.ok and (skip_loses < 0 or repair_loses < skip_loses) then { stamp(out, mark, id); repaired }
-        else {
-        rollback(out, mark)
-        if skip_loses < 0 then Out { ok: false, pos: pos }
-        else {
-          if kept then { let _ = parse_rule(c, num, out, exp, far, mode, op.b, pos) } else ()
-          if real_between(num, from, stop) then { list.push(out, tree.node(c.extra + X_ERROR, [], from, stop)); stamp(out, list.len(out) - 1, id) } else ()
-          if resume >= 0 then {
-            let resumed = list.len(out)
-            let a = parse_rule(c, num, out, exp, far, mode, op.a, resume)
-            if a.ok then { stamp(out, resumed, id); Out { ok: true, pos: a.pos } } else {
-              rollback(out, mark)
-              Out { ok: false, pos: pos }
-            }
-          } else Out { ok: true, pos: limit }
-        }
-        }
+        set_way(way, E_SKIP, e_at(plan, 0), e_at(plan, 1), e_at(plan, 2), e_at(plan, 3))
+        take_way(c, num, out, exp, far, mode, id, op, pos, way)
       }
     }
   }
 }
 
-// The item read with one closer taken as there where it failed farthest:
-// the farthest failure is collected (a second read of the failed item), and
-// each of `)`, `]`, `}` is tried at that place; the read that comes out with
-// the fewest tokens under ERROR is the answer, with that count, or a failed
-// read. Nothing is tried inside a repair already under way, or when the
-// item failed at its first token.
-fn repair_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, item: Int, pos: Int, limit: Int) -> (Out, Int) = {
-  let mark = list.len(out)
-  if repair_of(far) >= 0 then (Out { ok: false, pos: pos }, 0 - 1)
+// Whether the item begins with a negation that refuses the token at `pos`:
+// the grammar's word that its list ends there — a case body at the next
+// `case` — so the list ends as a strict read would, with nothing skipped
+fn refused_here(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, item: Int, pos: Int) -> Bool = {
+  let op = match list.get(c.ops, item) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
+  if op.kind != K_SEQ or op.b == 0 then false
   else {
-    var wanted: List[Int] = []
-    var far2: List[Int] = far_cell()
-    let _ = parse_rule(c, num, out, wanted, far2, mode + M_COLLECT, item, pos)
-    rollback(out, mark)
-    let at = far_of(far2)
-    var best = Out { ok: false, pos: pos }
-    var best_loses = 0 - 1
-    var kept: List[tree.Node] = []
-    if at <= pos or at > limit then () else {
-      for atom in [A_RPAREN, A_RBRACK, A_RBRACE] {
-        set_repair(far, at, atom)
-        let o = parse_rule(c, num, out, exp, far, mode, item, pos)
-        set_repair(far, 0 - 1, 0 - 1)
-        if o.ok and o.pos > at then {
-          let loses = error_tokens(c.extra + X_ERROR, out, mark)
-          if best_loses < 0 or loses < best_loses then {
-            // this read's nodes move aside; the one they replace is dropped
-            best = o
-            best_loses = loses
-            kept = take_from(out, mark)
-          } else rollback(out, mark)
-        } else rollback(out, mark)
-      }
-      put_back(out, kept)
+    let first = kid_at(c, op.a)
+    let kind = match list.get(c.ops, first) { some(o) => o.kind, none => K_EPS }
+    if kind != K_NOT and kind != K_NOT_LIT and kind != K_NOT_TOK then false
+    else {
+      let mark = list.len(out)
+      let o = parse_rule(c, num, out, exp, far, trial_mode(mode), first, pos)
+      rollback(out, mark)
+      not o.ok
     }
-    (best, best_loses)
   }
 }
+
+let LONG_TRY = 64
+let LONG_TRIES = 32
+
+// Whether a read that closed at the end of the file swallowed an item of
+// its own list: its first ERROR begins where the item rule reads — a Go
+// method after a function that lost its `}`, read inside the function as a
+// few statements and an ERROR over `func`. Such a read ends too late
+// however few tokens it loses, and the skip, which resumes at the first
+// place the item rule reads, puts the item back where it was.
+fn swallowed_at(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, op: Op, pos: Int, resume: Int, first_error: Int) -> Bool =
+  if resume < 0 or first_error <= pos then false
+  else {
+    let mark = list.len(out)
+    let a = parse_rule(c, num, out, exp, far, trial_mode(mode), op.a, first_error)
+    rollback(out, mark)
+    a.ok
+  }
+
+// What the items after a skip's resumed one put under ERROR, read on
+// without a tree up to `to`, where the closed read ended: the closed read's
+// ERROR tokens past the resume point are the same tokens the skip reads on
+// through, and a skip is not lighter for counting only what it skips. Only
+// a site whose list reads the items after it (`list_owner`) reads on.
+fn read_on_errors(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, from: Int, to: Int) -> Int =
+  if from < 0 or list_owner(far) != id then 0
+  else {
+    let tmode = trial_mode(mode)
+    var q = from
+    var total = 0
+    var going = true
+    while going and q < to {
+      let mark = list.len(out)
+      let before = errors_made(far)
+      let r = recover_here(c, num, out, exp, far, tmode, id, op, q)
+      if r.ok and r.pos > q then {
+        if errors_made(far) != before then total = total + error_tokens(c.extra + X_ERROR, out, mark) else ()
+        q = r.pos
+      } else going = false
+      rollback(out, mark)
+    }
+    total
+  }
+
+// The skip worked out without a tree: where the rule reads again, what head
+// of the failed item is readable on its own, and how many tokens skipping
+// gives up (-1: nothing real to give up and nowhere to resume). `plan` gets
+// [kept, from, stop, resume, limit, where the item read from `resume` ends].
+fn skip_plan(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, op: Op, pos: Int, mut plan: List[Int]) -> Int = {
+  let mark = list.len(out)
+  let tmode = trial_mode(mode)
+  let limit = skip_limit(num, pos, op.kind == K_RECOVER, mode)
+  var q = pos + 1
+  var resume = -1
+  var resumed_to = -1
+  // Tries that read far before failing are counted: a run of them is one
+  // construct read again from every token in it — a list of two thousand
+  // names, each try reading to the same end — and past `LONG_TRIES` of them
+  // the search goes on from the farthest any failed at.
+  var long_tries = 0
+  var farthest = pos
+  while resume < 0 and q < limit {
+    let outer = far_of(far)
+    set_far(far, q)
+    let a = parse_rule(c, num, out, exp, far, tmode, op.a, q)
+    let reached = far_of(far)
+    if reached < outer then set_far(far, outer) else ()
+    rollback(out, mark)
+    if a.ok then { resume = q; resumed_to = a.pos }
+    else {
+      if reached - q > LONG_TRY then { long_tries = long_tries + 1; farthest = int.max(farthest, reached) } else ()
+      // an opener no closer answers that the item does not read from is
+      // stepped over whole, to where indentation ends it: tries inside it
+      // would each read to that same end. The separators before that end are
+      // tried again, since an item may begin with one
+      let ends = if unpaired_opener(num, q) then separators_before(num, q + 1, vclose_of(num, q)) else -1
+      if long_tries >= LONG_TRIES and farthest > q + 1 then { q = farthest; long_tries = 0 }
+      else if ends > q + 1 then q = ends
+      else q = q + 1
+    }
+  }
+  // where the tokens given up end: at the next item, or at the end of what
+  // this list may reach
+  let stop = if resume >= 0 then resume else limit
+  // keep whatever of the failed item is readable on its own
+  let h = parse_rule(c, num, out, exp, far, tmode, op.b, pos)
+  let kept = h.ok and h.pos > pos and h.pos <= stop
+  rollback(out, mark)
+  let from = if kept then h.pos else pos
+  list.clear(plan)
+  for x in [if kept then 1 else 0, from, stop, resume, limit, resumed_to] { list.push(plan, x) }
+  if resume < 0 and not real_between(num, pos, limit) then 0 - 1 else stop - from
+}
+
+// The repair worked out without a tree: each of `)`, `]`, `}` taken as there
+// at `at`, where the item failed farthest when read as written; `best` gets
+// the atom of the read that loses least and that count, or stays [-1, -1].
+// Nothing is tried inside a repair already under way, or where the item
+// failed at its first token or at the end of what its list may reach —
+// there a closer of another kind is taken as there already
+// (`closer_pairs_outward`), and at the end of the file closing does it.
+fn repair_trial(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, item: Int, pos: Int, limit: Int, at: Int, mut best: List[Int]) -> Unit = {
+  let mark = list.len(out)
+  if repair_of(far) >= 0 or at <= pos or at >= limit then ()
+  else for atom in [A_RPAREN, A_RBRACK, A_RBRACE] {
+    let errors_before = errors_made(far)
+    set_repair(far, at, atom)
+    let o = parse_rule(c, num, out, exp, far, trial_mode(mode), item, pos)
+    set_repair(far, 0 - 1, 0 - 1)
+    if o.ok and o.pos > at then {
+      let loses = if errors_made(far) == errors_before then 0 else error_tokens(c.extra + X_ERROR, out, mark)
+      if e_at(best, 1) < 0 or loses < e_at(best, 1) then {
+        list.clear(best)
+        list.push(best, atom)
+        list.push(best, loses)
+      } else ()
+    } else ()
+    rollback(out, mark)
+  }
+}
+
+// The item read the way worked out (`w` in the answer's layout: the way in
+// slot 5, its numbers after)
+fn take_way(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int, w: List[Int]) -> Out = {
+  let mark = list.len(out)
+  let way = e_at(w, 5)
+  if way == E_SKIP then skip_way(c, num, out, exp, far, mode, id, op, pos, w)
+  else if way == E_FAIL then Out { ok: false, pos: pos }
+  else {
+    let repairing = way == E_REPAIR
+    if repairing then set_repair(far, e_at(w, 6), e_at(w, 7)) else ()
+    let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
+    if repairing then set_repair(far, 0 - 1, 0 - 1) else ()
+    if o.ok then stamp(out, mark, id) else rollback(out, mark)
+    o
+  }
+}
+
+fn skip_way(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, op: Op, pos: Int, w: List[Int]) -> Out = {
+  let mark = list.len(out)
+  let from = e_at(w, 7)
+  let stop = e_at(w, 8)
+  let resume = e_at(w, 9)
+  if e_at(w, 6) == 1 then { let _ = parse_rule(c, num, out, exp, far, mode, op.b, pos) } else ()
+  if real_between(num, from, stop) then {
+    push_error(out, far, c.extra + X_ERROR, from, stop)
+    stamp(out, list.len(out) - 1, id)
+  } else ()
+  if resume >= 0 then {
+    let resumed = list.len(out)
+    let a = parse_rule(c, num, out, exp, far, mode, op.a, resume)
+    if a.ok then { stamp(out, resumed, id); good(a.pos) } else {
+      rollback(out, mark)
+      Out { ok: false, pos: pos }
+    }
+  } else good(stop)
+}
+
 // The nodes taken from `out` by `take_from`, back on it in their order
 fn put_back(mut out: List[tree.Node], mut kept: List[tree.Node]) -> Unit = {
   var rev: List[tree.Node] = []
@@ -1631,7 +2420,46 @@ fn same_body(c: Compiled, x: Int, y: Int) -> Bool = x == y or (match (list.get(c
   _ => false,
 })
 
-fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: List[Int], mode: Int, id: Int, pos: Int) -> Out = {
+// `rep` and `rep1`: the item for as long as it reads and moves on
+// A list in a recovering read. A list of recover items says where it began,
+// whose items it holds and how deep it is, for the recover sites in it; the
+// enclosing list's come back after. Apart from `parse_rule`, whose strict
+// arms stay as small as the compiler inlines them.
+fn rep_recovering(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, op: Op, pos: Int) -> Out =
+  if is_recover_op(c, op.a) then {
+    let outer_start = list_start(far)
+    let outer_owner = list_owner(far)
+    let outer_depth = list_depth(far)
+    set_list(far, pos, op.a, outer_depth + 1)
+    let o = rep_bounded(c, num, out, exp, far, mode, op, pos)
+    set_list(far, outer_start, outer_owner, outer_depth)
+    o
+  } else rep_bounded(c, num, out, exp, far, mode, op, pos)
+
+// The items of a list in a recovering read, stopping at the bound the mode
+// carries (`with_bound`)
+fn rep_bounded(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, op: Op, pos: Int) -> Out = {
+  var p = pos
+  var count = 0
+  var go = true
+  let bound = bound_of(mode)
+  while go {
+    if bound >= 0 and p >= bound then go = false
+    else if not (unpruned(mode, far, p) or may_start(c, op.a, num, p)) then go = false
+    else {
+      let mark = list.len(out)
+      let o = parse_rule(c, num, out, exp, far, mode, op.a, p)
+      if o.ok and o.pos != p then { p = o.pos; count = count + 1 }
+      else {
+        rollback(out, mark)
+        go = false
+      }
+    }
+  }
+  if op.kind == K_REP1 and count == 0 then Out { ok: false, pos: pos } else good(p)
+}
+
+fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, mode: Int, id: Int, pos: Int) -> Out = {
   let op = match list.get(c.ops, id) { some(o) => o, none => Op { kind: K_EPS, a: 0, b: 0 } }
   if op.kind == K_ALT then {
     let mark = list.len(out)
@@ -1642,7 +2470,7 @@ fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
       let branch = kid_at(c, op.a + i)
       // a branch the token cannot begin is not walked into; the collecting
       // pass walks every one of them, so the message is the same message
-      if wants(mode, M_COLLECT) or may_start(c, branch, num, pos) then {
+      if unpruned(mode, far, pos) or may_start(c, branch, num, pos) then {
         let o = parse_rule(c, num, out, exp, far, mode, branch, pos)
         if o.ok then { done = true; p = o.pos } else rollback(out, mark)
       } else ()
@@ -1652,7 +2480,7 @@ fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
   }
   else if op.kind == K_WRAP_SEQ or op.kind == K_NEST_SEQ then wrapped_seq_here(c, num, out, exp, far, mode, id, op, pos)
   else if op.kind == K_OPT then {
-    if not (wants(mode, M_COLLECT) or may_start(c, op.a, num, pos)) then good(pos)
+    if not (unpruned(mode, far, pos) or may_start(c, op.a, num, pos)) then good(pos)
     else {
       let mark = list.len(out)
       let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
@@ -1665,6 +2493,7 @@ fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
   else if op.kind == K_LIT or op.kind == K_KEEP then literal_here(c, num, out, exp, far, mode, id, op, pos)
   else if op.kind == K_SEQ then {
     let mark = list.len(out)
+    if closing(mode) then seq_recovering(c, num, out, exp, far, mode, op, pos) else {
     var p = pos
     var failed = false
     var i = 0
@@ -1677,13 +2506,15 @@ fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
       rollback(out, mark)
       Out { ok: false, pos: pos }
     } else good(p)
+    }
   }
   else if op.kind == K_REP or op.kind == K_REP1 then {
+    if wants(mode, M_RECOVER) then rep_recovering(c, num, out, exp, far, mode, op, pos) else {
     var p = pos
     var count = 0
     var go = true
     while go {
-      if not (wants(mode, M_COLLECT) or may_start(c, op.a, num, p)) then go = false
+      if not (unpruned(mode, far, p) or may_start(c, op.a, num, p)) then go = false
       else {
         let mark = list.len(out)
         let o = parse_rule(c, num, out, exp, far, mode, op.a, p)
@@ -1695,6 +2526,7 @@ fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
       }
     }
     if op.kind == K_REP1 and count == 0 then Out { ok: false, pos: pos } else good(p)
+    }
   }
   else if op.kind == K_TERMS then terms_here(c, num, out, exp, far, mode, op, pos)
   else if op.kind == K_PREC then {
@@ -1747,25 +2579,14 @@ fn parse_rule(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Li
           }
         }
       }
-      while list.len(levels) > 0 {
-        let (m, f) = reduce_top(c, out, marks, opmarks, levels, froms, id, mark, p, wants(mode, M_BUILD))
-        mark = m
-        from = f
-      }
+      reduce_all(c, out, marks, opmarks, levels, froms, id, mark, p, wants(mode, M_BUILD))
       good(p)
     }
   }
   else if op.kind == K_NOT_LIT then not_lit_here(c, num, out, exp, far, mode, id, op, pos)
   else if op.kind == K_WRAP or op.kind == K_NEST then wrapped_here(c, num, out, exp, far, mode, id, op, pos)
   else if op.kind == K_TOK then token_here(c, num, out, exp, far, mode, id, op, pos)
-  else if op.kind == K_NOT then {
-    let mark = list.len(out)
-    let emark = list.len(exp)
-    let o = parse_rule(c, num, out, exp, far, mode, op.a, pos)
-    rollback(out, mark)
-    untrack(exp, emark)
-    if o.ok then Out { ok: false, pos: pos } else good(pos)
-  }
+  else if op.kind == K_NOT then not_here(c, num, out, exp, far, mode, op, pos)
   else uncommon_here(c, num, out, exp, far, mode, id, op, pos)
 }
 
@@ -1788,12 +2609,13 @@ fn failure_at(c: Compiled, source: Bytes, toks: List[tree.Token], far: Int, exp:
     col: option.map(t, (x) => x.col) ?? 0,
     found: match t { some(x) => if x.kind == tree.T_EOF then "end of file" else if x.kind == tree.T_NEWLINE then "end of line" else "`" + tree.token_text(source, x) + "`", none => "end of file" },
     expected: list.map(exp, (id) => expectation(c, id)),
+    note: "",
   }
 }
 
 fn format_failure(f: Failure) -> String = {
   let exp = if list.is_empty(f.expected) then "" else " (expected " + list.join(list.take(list.unique(f.expected), 6), ", ") + ")"
-  int.to_string(f.line) + ":" + int.to_string(f.col) + ": unexpected " + f.found + exp
+  int.to_string(f.line) + ":" + int.to_string(f.col) + ": " + (if f.note != "" then f.note else "unexpected " + f.found + exp)
 }
 
 // Parse the whole token stream with the grammar's start rule. The start
@@ -1806,50 +2628,80 @@ fn parse(g: Grammar, source: Bytes, toks: List[tree.Token]) -> Result[Parsed, Fa
 // should pay it once.
 fn parse_with(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
   let input = TokenInput { tokens: toks }
-  let numbered = number_tokens(c, source, input)
+  let num = plain_numbers(c, source, input)
+  strict_tree(c, source, input.tokens, num)
+}
+
+fn strict_tree(c: Compiled, source: Bytes, toks: List[tree.Token], num: List[Int]) -> Result[Parsed, Failure] = {
   var out: List[tree.Node] = []
   var exp: List[Int] = []
-  var far: List[Int] = far_cell()
-  let o = parse_rule(c, numbered.pairs, out, exp, far, fresh(false), c.start, 0)
-  if o.ok then {
-    // the start rule leaves one node; take it without copying it, which
-    // means draining the list rather than reading its first element
-    var rev: List[tree.Node] = []
-    while list.len(out) > 0 {
-      match list.pop(out) { some(n) => list.push(rev, n), none => () }
-    }
-    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(kind_at(c, c.start), [], 0, list.len(input.tokens)) }, toks: input.tokens, names: c.names })
-  } else {
-    // the run above knows where it failed but not what it wanted there;
-    // this second run collects that, and only a file that fails pays for it
-    var again: List[tree.Node] = []
-    var wanted: List[Int] = []
-    var far2: List[Int] = far_cell()
-    let d = parse_rule(c, numbered.pairs, again, wanted, far2, fresh(true), c.start, 0)
-    err(failure_at(c, source, input.tokens, far_of(far2), wanted))
+  var far: Cell = far_cell()
+  let o = parse_rule(c, num, out, exp, far, fresh(false), c.start, 0)
+  if o.ok then ok(Parsed { root: root_of(c, out, list.len(toks)), toks: toks, names: c.names })
+  else err(logged_failure(c, source, toks, num))
+}
+
+// What a strict read that failed expected where it failed: read again, no
+// tree, logging its recover items, and then the pass that collects the
+// expectations steps over every item that did not reach the failure
+fn logged_failure(c: Compiled, source: Bytes, toks: List[tree.Token], num: List[Int]) -> Failure = {
+  var out: List[tree.Node] = []
+  var log: List[Int] = []
+  var far: Cell = far_cell()
+  let _ = parse_rule(c, num, out, log, far, M_LOG, c.start, 0)
+  failure_of(c, source, toks, num, far_of(far), log)
+}
+
+// The start rule leaves one node; it is taken without copying it, which
+// means draining the list rather than reading its first element
+fn root_of(c: Compiled, mut out: List[tree.Node], count: Int) -> tree.Node = {
+  var rev: List[tree.Node] = []
+  while list.len(out) > 0 {
+    match list.pop(out) { some(n) => list.push(rev, n), none => () }
   }
+  match list.pop(rev) { some(n) => n, none => tree.node(kind_at(c, c.start), [], 0, count) }
+}
+
+// What a failed parse expected at its farthest failure `far`. The first
+// pass knows where it failed but not what it wanted there; a second pass
+// collects that, and only a file that fails pays for it. It walks every
+// branch at `far` and prunes below it as the first did (`unpruned`), and it
+// steps over every recover item the first pass logged (`strict_item`) as
+// read without reaching `far`: such an item notes nothing that lasts. What
+// is left to read is the items the failure is in.
+fn failure_of(c: Compiled, source: Bytes, toks: List[tree.Token], num: List[Int], far: Int, log: List[Int]) -> Failure = {
+  var cell: Cell = far_cell()
+  var i = 0
+  while i + 3 < list.len(log) {
+    let end = e_at(log, i + 2)
+    if e_at(log, i + 3) < far and end < far then map.insert(cell.memo, memo_key(e_at(log, i), e_at(log, i + 1), 0), [if end >= 0 then 1 else 0, end]) else ()
+    i = i + 4
+  }
+  var again: List[tree.Node] = []
+  var wanted: List[Int] = []
+  set_floor(cell, far)
+  let _ = parse_rule(c, num, again, wanted, cell, collecting(), c.start, 0)
+  failure_at(c, source, toks, far_of(cell), wanted)
 }
 
 // The gate: does this parse, and if not, where. No tree is built, because
 // nothing above asks for one and whether a rule matches never depended on the
-// nodes it made — the tree is output. The failing path is unchanged: it runs
-// again to collect what was expected, and a file that fails is not the one
-// anybody is timing.
+// nodes it made — the tree is output. A file that fails is read again to
+// collect what was expected (`failure_of`), and it is not the one anybody is
+// timing.
 fn verify(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Result[Unit, Failure] = {
   let input = TokenInput { tokens: toks }
-  let numbered = number_tokens(c, source, input)
+  let num = plain_numbers(c, source, input)
+  verified(c, source, input.tokens, num)
+}
+
+fn verified(c: Compiled, source: Bytes, toks: List[tree.Token], num: List[Int]) -> Result[Unit, Failure] = {
   var out: List[tree.Node] = []
   var exp: List[Int] = []
-  var far: List[Int] = far_cell()
-  let o = parse_rule(c, numbered.pairs, out, exp, far, verifying(), c.start, 0)
+  var far: Cell = far_cell()
+  let o = parse_rule(c, num, out, exp, far, verifying(), c.start, 0)
   if o.ok then ok(())
-  else {
-    var again: List[tree.Node] = []
-    var wanted: List[Int] = []
-    var far2: List[Int] = far_cell()
-    let d = parse_rule(c, numbered.pairs, again, wanted, far2, fresh(true), c.start, 0)
-    err(failure_at(c, source, input.tokens, far_of(far2), wanted))
-  }
+  else err(logged_failure(c, source, toks, num))
 }
 
 // A tree for a file that does not parse, if the grammar says where it is
@@ -1861,22 +2713,94 @@ fn verify(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Result[Unit, Fa
 fn parse_recovering(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Result[Parsed, Failure] = {
   let input = TokenInput { tokens: toks }
   let numbered = number_tokens(c, source, input)
+  recovered_tree(c, source, input.tokens, numbered.pairs, numbered.balanced)
+}
+
+fn recovered_tree(c: Compiled, source: Bytes, toks: List[tree.Token], num: List[Int], balanced: Bool) -> Result[Parsed, Failure] = {
+  // a file whose brackets balance pairs them as written; one whose do not
+  // asks its indentation which of them lost a closer
+  let paired = pair_brackets(num, if balanced then [] else line_leads(source, toks))
+  match recovered_from(c, toks, paired) {
+    some(p) => ok(p),
+    // the recovering pass noted no strict failure: every branch is walked
+    none => err(failure_of(c, source, toks, num, 0, [])),
+  }
+}
+fn recovered_from(c: Compiled, toks: List[tree.Token], paired: List[Int]) -> Option[Parsed] = {
   var out: List[tree.Node] = []
   var exp: List[Int] = []
-  var far: List[Int] = far_cell()
-  let o = parse_rule(c, numbered.pairs, out, exp, far, recovering(), c.start, 0)
-  if o.ok then {
-    var rev: List[tree.Node] = []
-    while list.len(out) > 0 {
-      match list.pop(out) { some(n) => list.push(rev, n), none => () }
+  var far: Cell = far_cell()
+  let o = parse_rule(c, paired, out, exp, far, recovering(), c.start, 0)
+  if o.ok then some(Parsed { root: root_of(c, out, list.len(toks)), toks: toks, names: c.names }) else none
+}
+
+// Why a file whose brackets do not balance is not the language: the first
+// bracket the pairing leaves unpaired (`pair_brackets`) — an opener no
+// closer answers, the one that lost its closer when indentation could tell,
+// or a closer that answers none
+fn bracket_failure(source: Bytes, toks: List[tree.Token], paired: List[Int], gaps: List[Int]) -> Failure = {
+  let at = list.first(gaps) ?? -1
+  let t = list.get(toks, at)
+  let text = "`" + (match t { some(x) => tree.token_text(source, x), none => "" }) + "`"
+  Failure {
+    line: option.map(t, (x) => x.line) ?? 0,
+    col: option.map(t, (x) => x.col) ?? 0,
+    found: text,
+    expected: [],
+    note: if at < 0 then "the brackets do not balance" else if is_opener(real_atom(paired, at)) then text + " is never closed" else text + " closes nothing",
+  }
+}
+
+// The brackets the pairing leaves unpaired, as token indices in order
+fn unpaired_brackets(paired: List[Int]) -> List[Int] = {
+  var out: List[Int] = []
+  var i = 0
+  let n = list.len(paired) / 5
+  while i < n {
+    let x = real_atom(paired, i)
+    if (is_opener(x) or is_closer(x)) and match_of(paired, i) < 0 then list.push(out, i) else ()
+    i = i + 1
+  }
+  out
+}
+
+// A reader's parse: the tree, why the file is not the language when it is
+// not (the tree is then the one recovery makes of it), and the brackets it
+// left unpaired (`gaps`); an error when even recovery gives up. One
+// numbering of the tokens serves every pass. The three come back as a tuple
+// rather than a record, so that a reader takes the tree out without a copy.
+// Every grammar reads a bracket only as one of a pair, so a file whose
+// brackets do not balance is not the language: it is not read strictly,
+// and why it fails is the bracket the pairing leaves unpaired. A strict read
+// of such a file would fail only after reading everything up to where the
+// pairing gave out, which for a `}` gone from a function is the end of the
+// file, and would say only that the file ended.
+fn read(c: Compiled, source: Bytes, toks: List[tree.Token]) -> Result[(Parsed, Option[Failure], List[Int]), Failure] = {
+  let input = TokenInput { tokens: toks }
+  let numbered = number_tokens(c, source, input)
+  if not numbered.balanced then {
+    let paired = pair_brackets(numbered.pairs, line_leads(source, input.tokens))
+    let gaps = unpaired_brackets(paired)
+    let failure = bracket_failure(source, input.tokens, paired, gaps)
+    match recovered_from(c, input.tokens, paired) {
+      some(p) => ok((p, some(failure), gaps)),
+      none => err(failure),
     }
-    ok(Parsed { root: match list.pop(rev) { some(n) => n, none => tree.node(kind_at(c, c.start), [], 0, list.len(input.tokens)) }, toks: input.tokens, names: c.names })
   } else {
-    var again: List[tree.Node] = []
-    var wanted: List[Int] = []
-    var far2: List[Int] = far_cell()
-    let d = parse_rule(c, numbered.pairs, again, wanted, far2, fresh(true), c.start, 0)
-    err(failure_at(c, source, input.tokens, far_of(far2), wanted))
+    // the strict read inline: the grammar, source and tokens stay this
+    // function's, so neither way on copies them
+    var out: List[tree.Node] = []
+    var exp: List[Int] = []
+    var far: Cell = far_cell()
+    let o = parse_rule(c, numbered.pairs, out, exp, far, fresh(false), c.start, 0)
+    if o.ok then ok((Parsed { root: root_of(c, out, list.len(input.tokens)), toks: input.tokens, names: c.names }, none, []))
+    else {
+      let f = logged_failure(c, source, input.tokens, numbered.pairs)
+      match recovered_tree(c, source, input.tokens, numbered.pairs, true) {
+        ok(p) => ok((p, some(f), [])),
+        err(_) => err(f),
+      }
+    }
   }
 }
 
@@ -1912,14 +2836,14 @@ fn item_op(c: Compiled) -> Int = {
   found
 }
 
-fn number(c: Compiled, source: Bytes, toks: List[tree.Token]) -> List[Int] = number_tokens(c, source, TokenInput { tokens: toks }).pairs
+fn number(c: Compiled, source: Bytes, toks: List[tree.Token]) -> List[Int] = plain_numbers(c, source, TokenInput { tokens: toks })
 
 // One item from `pos`: its node and where it ended, or none where the item
 // rule does not match there.
 fn parse_item(c: Compiled, site: Int, num: List[Int], pos: Int) -> Option[(tree.Node, Int)] = {
   var out: List[tree.Node] = []
   var exp: List[Int] = []
-  var far: List[Int] = far_cell()
+  var far: Cell = far_cell()
   let o = parse_rule(c, num, out, exp, far, fresh(false), body_of(c, site), pos)
   if o.ok and list.len(out) == 1 then { stamp(out, 0, site); match list.pop(out) { some(n) => some((n, o.pos)), none => none } } else none
 }
@@ -1928,7 +2852,7 @@ fn parse_item(c: Compiled, site: Int, num: List[Int], pos: Int) -> Option[(tree.
 fn explain_item(c: Compiled, site: Int, source: Bytes, toks: List[tree.Token], num: List[Int], pos: Int) -> String = {
   var out: List[tree.Node] = []
   var exp: List[Int] = []
-  var far: List[Int] = far_cell()
+  var far: Cell = far_cell()
   let _ = parse_rule(c, num, out, exp, far, fresh(true), body_of(c, site), pos)
   format_failure(failure_at(c, source, toks, far_of(far), exp))
 }
@@ -2093,6 +3017,67 @@ test "a closer the file never gets to is taken as there when recovering" {
   }
 }
 
+test "a skip stops at the closer of its own list even past a bracket the item left open" {
+  // `1 (` lost its `)` inside the first block: the block's `}` must end the
+  // skip, not stand for the `(`, or the resume point is found in the second
+  // block and the first swallows it
+  let g = grammar("file", [
+    ("file", wrap("file", rep(recover_all(r("block"))))),
+    ("block", wrap("block", seq([lit("{"), rep(recover(seq([r("item"), lit(";")]))), lit("}")]))),
+    ("item", wrap("item", alt([seq([tok("integer"), lit("("), tok("integer"), lit(")")]), tok("integer")]))),
+  ])
+  let c = compile(g)
+  let spellings = ["{", "1", "(", ";", "}", "{", "4", ";", "}", ""]
+  let source = src_of(spellings)
+  let toks = toks_of(spellings)
+  match parse_recovering(c, source, toks) {
+    err(_) => assert(false),
+    ok(p) => assert_eq(tree.sexp(p.root, p.names), "(file (block (ERROR)) (block (item (integer))))"),
+  }
+}
+
+test "a closer that pairs with nothing, or inside the list, is one error token and the list reads on" {
+  // `)` with no `(` open: the block's list must not end there
+  let g = grammar("file", [
+    ("file", wrap("file", rep(recover_all(r("block"))))),
+    ("block", wrap("block", seq([lit("{"), rep(recover(seq([r("item"), lit(";")]))), lit("}")]))),
+    ("item", wrap("item", alt([seq([tok("integer"), lit("("), tok("integer"), lit(")")]), tok("integer")]))),
+  ])
+  let c = compile(g)
+  let stray = ["{", "1", ";", ")", "2", ";", "}", ""]
+  match parse_recovering(c, src_of(stray), toks_of(stray)) {
+    err(_) => assert(false),
+    ok(p) => assert_eq(tree.sexp(p.root, p.names), "(file (block (item (integer)) (ERROR) (item (integer))))"),
+  }
+  // `1 ( ;` lost its `2` and `)`: the `(` goes under the ERROR node, and the
+  // `)` that pairs with it, two items on, is an error token too
+  let inside = ["{", "1", "(", ";", "2", ";", ")", "3", ";", "}", ""]
+  match parse_recovering(c, src_of(inside), toks_of(inside)) {
+    err(_) => assert(false),
+    ok(p) => assert_eq(tree.sexp(p.root, p.names), "(file (block (ERROR) (item (integer)) (ERROR) (item (integer))))"),
+  }
+}
+
+test "a closer the file lacks is taken as there where a closer of another kind pairs outward" {
+  // `1 ( 2` lost its `)`; the block's `}` is next, so the `)` is taken as
+  // there before it, and nothing goes under an ERROR node
+  let g = grammar("file", [
+    ("file", wrap("file", rep(recover_all(r("block"))))),
+    ("block", wrap("block", seq([lit("{"), rep(recover(seq([r("item"), lit(";")]))), lit("}")]))),
+    ("item", wrap("item", alt([seq([tok("integer"), lit("("), tok("integer"), lit(")")]), tok("integer")]))),
+  ])
+  let c = compile(g)
+  let spellings = ["{", "1", "(", "2", ";", "}", ""]
+  match parse_with(c, src_of(spellings), toks_of(spellings)) { ok(_) => assert(false), err(_) => () }
+  match parse_recovering(c, src_of(spellings), toks_of(spellings)) {
+    err(_) => assert(false),
+    ok(p) => {
+      assert_eq(tree.sexp(p.root, p.names), "(file (block (item (integer) (integer))))")
+      assert_eq(error_nodes(p.root, error_kind(c)), 0)
+    },
+  }
+}
+
 test "a closer the file lacks is taken as there where the item failed farthest" {
   // `( <integer> )` items, one of which lost its `)`: the item is read with
   // a `)` taken as there at the `;`, and nothing is given up
@@ -2126,6 +3111,67 @@ test "a closer the file lacks is taken as there before the body that follows" {
   match parse_recovering(c, src_of(spellings), toks_of(spellings)) {
     err(_) => assert(false),
     ok(p) => assert_eq(tree.sexp(p.root, p.names), "(file (item (integer) (block (integer))) (item (integer) (block)))"),
+  }
+}
+
+// A test's lines as a lexer would give them: each line indented so deep,
+// its spellings one space apart
+fn indented(lines: List[(Int, List[String])]) -> (Bytes, List[tree.Token]) = {
+  var text = ""
+  var toks: List[tree.Token] = []
+  var line = 1
+  for (depth, words) in lines {
+    let line_start = string.len(text)
+    text = text + string.repeat(" ", depth)
+    var first = true
+    for w in words {
+      if first then first = false else text = text + " "
+      let start = string.len(text)
+      list.push(toks, tree.Token { kind: if string.is_digit(w) then tree.T_INTEGER else tree.T_PUNCT, start: start, end: start + string.len(w), line: line, col: start - line_start + 1 })
+      text = text + w
+    }
+    text = text + "\n"
+    line = line + 1
+  }
+  list.push(toks, tree.Token { kind: tree.T_EOF, start: string.len(text), end: string.len(text), line: line, col: 1 })
+  (bytes.from_string(text), toks)
+}
+
+fn nested_blocks() -> Grammar = grammar("file", [
+  ("file", wrap("file", rep(recover_all(r("block"))))),
+  ("block", wrap("block", seq([lit("{"), rep(recover(r("stmt"))), lit("}")]))),
+  ("stmt", alt([r("block"), wrap("item", seq([tok("integer"), lit(";")]))])),
+])
+
+test "a closer that begins its line pairs with the bracket indented as it is" {
+  // the inner block lost its `}`: the `}` under the outer `{` is the outer
+  // one's, and the inner block ends before the line indented as it is
+  let (source, toks) = indented([(0, ["{"]), (2, ["{"]), (4, ["1", ";"]), (2, ["2", ";"]), (0, ["}"]), (0, ["{"]), (2, ["3", ";"]), (0, ["}"])])
+  let c = compile(nested_blocks())
+  match parse_recovering(c, source, toks) {
+    err(_) => assert(false),
+    ok(p) => {
+      assert_eq(tree.sexp(p.root, p.names), "(file (block (block (item (integer))) (item (integer))) (block (item (integer))))")
+      assert_eq(error_nodes(p.root, error_kind(c)), 0)
+    },
+  }
+}
+
+test "a read of a file whose brackets do not balance names the one that lost its closer" {
+  let (source, toks) = indented([(0, ["{"]), (2, ["{"]), (4, ["1", ";"]), (2, ["2", ";"]), (0, ["}"])])
+  match read(compile(nested_blocks()), source, toks) {
+    err(_) => assert(false),
+    ok((_, failure, gaps)) => {
+      assert_eq(gaps, [1])
+      match failure {
+        none => assert(false),
+        some(f) => {
+          assert_eq(f.line, 2)
+          assert_eq(f.col, 3)
+          assert_eq(format_failure(f), "2:3: `{` is never closed")
+        },
+      }
+    },
   }
 }
 
