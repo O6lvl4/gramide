@@ -415,9 +415,30 @@ fn piece_last_end(u: Item, k: Int, at: Int) -> Int = match list.get(u.pieces, k)
 }
 fn kid_last_end(u: Item, k: Int, at: Int) -> Int = match list.get(u.kids, k) { some(x) => as_is_int(last_token_end(x, at)), none => at }
 fn as_is_int(n: Int) -> Int = n
-// The unit's own nodes whose text the edit changed, named from `next`;
-// the next number comes back.
-fn renew_holding(mut u: Item, base: Pos, edit: Edit, next: Int) -> Int = {
+// The own nodes touched in the old text, in preorder. Removing the first
+// or last child can shrink a parent's span clear of the edit, so looking
+// only at its new span would incorrectly keep that parent's old id.
+fn changes_before(u: Item, base: Pos, edit: Edit) -> List[Bool] = {
+  var starts: List[Int] = []
+  var ends: List[Int] = []
+  var slots: List[Int] = []
+  let _ = own_places(u, base, starts, ends, slots)
+  list.push(starts, base.byte + u.size)
+  var changed: List[Bool] = list.with_capacity(list.len(u.node_ids))
+  let _ = changes_walk(u.node, u, starts, ends, slots, Edit { ...edit, new_end: edit.old_end }, changed)
+  changed
+}
+fn changes_walk(n: tree.Node, u: Item, starts: List[Int], ends: List[Int], slots: List[Int], edit: Edit, mut out: List[Bool]) -> Unit = {
+  if n.kind == PLACEHOLDER then () else {
+    list.push(out, own_changed(n, u, starts, ends, slots, edit))
+    for m in n.kids { let _ = changes_walk(m, u, starts, ends, slots, edit, out) }
+  }
+  ()
+}
+// The unit's own nodes whose old or new text the edit changed, named from
+// `next`; the next number comes back. Replacing children leaves the own
+// nodes in the same preorder, even when it changes their token indices.
+fn renew_holding(mut u: Item, base: Pos, edit: Edit, before: List[Bool], next: Int) -> Int = {
   // one place per own token and per child, and one past the last
   let places = u.toks - kids_toks(u) + list.len(u.kids) + 1
   var starts: List[Int] = list.with_capacity(places)
@@ -427,17 +448,17 @@ fn renew_holding(mut u: Item, base: Pos, edit: Edit, next: Int) -> Int = {
   var ids: List[Int] = list.with_capacity(list.len(u.node_ids))
   // past the last place: where the next token starts, the unit's end
   list.push(starts, base.byte + u.size)
-  let (_, after_all) = renew_walk(u.node, u, starts, ends, slots, edit, 0, next, ids)
+  let (_, after_all) = renew_walk(u.node, u, starts, ends, slots, edit, before, 0, next, ids)
   u.node_ids = ids
   after_all
 }
-fn renew_walk(n: tree.Node, u: Item, starts: List[Int], ends: List[Int], slots: List[Int], edit: Edit, k: Int, next: Int, mut out: List[Int]) -> (Int, Int) = {
+fn renew_walk(n: tree.Node, u: Item, starts: List[Int], ends: List[Int], slots: List[Int], edit: Edit, before: List[Bool], k: Int, next: Int, mut out: List[Int]) -> (Int, Int) = {
   if n.kind == PLACEHOLDER then (k, next)
   else {
-    let changed = own_changed(n, u, starts, ends, slots, edit)
+    let changed = (list.get(before, k) ?? false) or own_changed(n, u, starts, ends, slots, edit)
     list.push(out, if changed then next else list.get(u.node_ids, k) ?? next)
     var at = (k + 1, if changed then next + 1 else next)
-    for m in n.kids { at = renew_walk(m, u, starts, ends, slots, edit, at.0, at.1, out) }
+    for m in n.kids { at = renew_walk(m, u, starts, ends, slots, edit, before, at.0, at.1, out) }
     at
   }
 }
@@ -803,6 +824,34 @@ fn read_items(mut c: parser.Compiled, site: Int, first_stamp: Int, rest_stamp: I
   }
   (nodes, pos, fine)
 }
+// A sibling window may replace children, but cannot re-read parent-owned
+// tokens between them. Removing such a separator also changes the parent's
+// token space, which the child-only splice cannot reconstruct safely.
+fn window_owns_tokens(u: Item, i: Int, j: Int) -> Bool = {
+  var k = i + 1
+  var found = false
+  while not found and k <= j { found = piece_count(u, k) > 0; k = k + 1 }
+  found
+}
+// The first/last non-layout token of a parent's piece, as a grammar atom.
+// Stop at the nearest text token even when it spells no grammar literal.
+fn piece_edge_atom(u: Item, at: Int, last: Bool) -> Int = match list.get(u.pieces, at) {
+  some(p) => {
+    var k = if last then list.len(p.toks) - 1 else 0
+    var atom = -1
+    var found = false
+    while not found and k >= 0 and k < list.len(p.toks) {
+      match list.get(p.toks, k) { some(t) => if not is_layout(t) then { atom = list.get(p.atoms, k) ?? -1; found = true } else (), none => () }
+      k = k + (if last then -1 else 1)
+    }
+    atom
+  },
+  none => -1,
+}
+fn window_beside_comma(u: Item, i: Int, j: Int, c: parser.Compiled) -> Bool = {
+  let comma = parser.atom_at(c, bytes.from_string(","), 0, 1)
+  comma >= 0 and (piece_edge_atom(u, i, true) == comma or piece_edge_atom(u, j + 1, false) == comma)
+}
 // Re-read children `i..j` of `u` from `source`, whose bytes for them now
 // run from `base.byte` to `new_end`; `next` is the byte where the token
 // after them starts, with its kind and length.
@@ -816,6 +865,14 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   let stop = if at_eof then bytes.len(source) else new_end + head_len
   guard u.child_site >= 0 else NO_SITE
   guard not has_kid_kind(u, parser.error_kind(c)) else ERROR_NEAR
+  // Reading a child's rule cannot validate a changed parent prelude (an
+  // opening delimiter or package clause). All its old tokens must remain.
+  guard not from_start or skip == piece_count(u, 0) else NO_PARSE
+  guard not window_owns_tokens(u, i, j) else NO_PARSE
+  // The following head is only lookahead, not part of the replaced window.
+  // In particular, changing a closing delimiter to another punctuation
+  // token cannot be accepted just because its kind and length still match.
+  guard edit.start >= base.byte and edit.new_end <= new_end else NO_PARSE
   guard stop <= bytes.len(source) and new_end >= base.byte else { list.push(u.trace, "window out of range: " + int.to_string(base.byte) + ".." + int.to_string(new_end) + "+" + int.to_string(head_len) + " of " + int.to_string(bytes.len(source))); NO_HEAD }
   let slice = bytes.slice(source, base.byte, stop)
   var toks = match lex_in_place(tokenize, source, base.byte, stop) { some(t) => t, none => ([]: List[tree.Token]) }
@@ -859,6 +916,17 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
     list.push(u.trace, "no parse at token " + int.to_string(pos) + " of " + int.to_string(eof_index) + ": " + parser.explain_item(c, bare, slice, toks, num, pos) + " in: " + string.take(bytes.to_string_lossy(slice), 600))
     NO_PARSE
   }
+  // A window at a child's head can acquire leading trivia. Keep those
+  // bytes in the parent's preceding piece, rather than discarding them
+  // when the fresh children move out. Leading tokens would change the
+  // parent's own parse, which this window did not read: fall back before
+  // building anything or consuming ids.
+  let leading_tokens = match list.first(nodes) { some(n) => n.start, none => eof_index }
+  guard leading_tokens == (if from_start then skip else 0) else NO_PARSE
+  // The list's commas belong to its parent, outside the recover bodies.
+  // An empty window would orphan one of them: only a parent/whole parse
+  // can decide whether that edited list is valid.
+  guard not list.is_empty(nodes) or not window_beside_comma(u, i, j, c) else NO_PARSE
   // the token at `eof_index` is where the window ends: the head that follows
   // it, or the file's EOF; either is excluded from the items and gives their end
   // the window as a unit of its own, then its children moved into `u`
@@ -877,7 +945,8 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   // a window from the unit's start read the first piece again (i is 0)
   let leading = if from_start then piece_count(fresh, 0) - piece_count(u, 0) else 0
   u.node = renumber(u.node, i, j, count, old_slot, count - (j - i + 1) + leading)
-  if from_start then { let _ = replace_first_piece(u, fresh) } else ()
+  if from_start then { let _ = replace_first_piece(u, fresh) }
+  else if piece_size(fresh, 0) > 0 then { let _ = append_leading_trivia(u, i, fresh) } else ()
   // the children replaced: an item read again that comes out the same
   // (kind, tokens, size) is the same item and keeps its id, and so do the
   // items inside it
@@ -956,6 +1025,16 @@ fn replace_first_piece(mut u: Item, fresh: Item) -> Unit = {
   list.push(u.pieces, list.first(fresh.pieces) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 })
   while list.len(aside) > 0 { match list.pop(aside) { some(x) => list.push(u.pieces, x), none => () } }
   ()
+}
+// The window starts just after piece k. Its leading piece has no tokens,
+// so appending its measures moves the first child without changing any
+// parent token or node index. The bytes may contain newlines or comments.
+fn append_leading_trivia(mut u: Item, k: Int, fresh: Item) -> Unit = {
+  let piece = list.get(u.pieces, k) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }
+  let size = piece_size(fresh, 0)
+  let lines = piece_lines(fresh, 0)
+  put_piece(u, k, Piece { ...piece, size: piece.size + size, lines: piece.lines + lines,
+    tail: if lines > 0 then piece_tail(fresh, 0) else piece.tail + size })
 }
 fn slot_of(u: Item, k: Int) -> Int = {
   var slot = 0
@@ -1162,9 +1241,13 @@ fn locate(u: Item, base: Pos, bases: List[Pos], edit: Edit) -> (Int, Int, Bool, 
 // An edit read into unit `u`, and then its own nodes that hold the edit
 // named again: their text changed, whichever way the edit was read.
 fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], mut c: parser.Compiled, mut ids: List[Int]) -> Int = {
+  // Insertions cannot remove an old boundary. For deletions/replacements,
+  // remember the old spans before reparse_here changes any pieces or kids.
+  // This read-only snapshot also leaves a failed reparse untouched.
+  let before = if edit.old_end > edit.start then changes_before(u, base, edit) else ([]: List[Bool])
   let status = reparse_here(u, base, source, edit, tokenize, c, ids)
   if status == DONE then {
-    ids = list.set(ids, 1, renew_holding(u, base, edit, list.get(ids, 1) ?? 1))
+    ids = list.set(ids, 1, renew_holding(u, base, edit, before, list.get(ids, 1) ?? 1))
     DONE
   } else status
 }
@@ -1738,4 +1821,337 @@ test "a document read again whole after an edit keeps the ids of the nodes the e
   assert(again.next_node > doc.next_node, "numbering goes on")
   // everything but the statement that took the `;` and what holds it keeps its id
   assert(list.len(list.filter(node_ids(again), (id) => list.contains(node_ids(doc), id))) > 0, "some ids are kept")
+}
+
+// A window's children start at their first tokens, not at the window's
+// first byte. Inserting trivia at a head must preserve the bytes between.
+fn prefix_round_trip(mut c: parser.Compiled, text: String, at: Int, prefix: String, line_tokens: Bool) -> Unit = {
+  let source = bytes.from_string(text)
+  let parsed = if line_tokens then line_whole(c, text) else whole(c, text)
+  assert(list.len(parsed.toks) > 0, "the prefix fixture must parse")
+  var doc = from_parsed(parsed, source, c)
+  let size = bytes.len(bytes.from_string(prefix))
+  let add = Edit { start: at, old_end: at, new_end: at + size }
+  let after = apply(source, add, bytes.from_string(prefix))
+  let before_ids = node_ids(doc)
+  let item_ids = ids_of(doc)
+  let status = reparse_status(doc, after, add, (s, r) => if line_tokens then line_scan(s, r) else scan(s, r), c)
+  assert(status == DONE, "prefix insertion status " + int.to_string(status) + " at " + int.to_string(at) + ": " + list.join(doc.trace, " | "))
+  let full = if line_tokens then line_whole(c, bytes.to_string_lossy(after)) else whole(c, bytes.to_string_lossy(after))
+  let got = materialize(doc)
+  assert(same(got, full), first_difference(got, full))
+  assert_eq(doc.root.size, bytes.len(after))
+  assert_eq(ids_of(doc), item_ids)
+  let added_ids = node_ids(doc)
+  let add_breaks = node_id_breaks(parsed, before_ids, got, added_ids, add)
+  assert(add_breaks == "", add_breaks)
+
+  let remove = Edit { start: at, old_end: at + size, new_end: at }
+  assert(apply(after, remove, bytes.new(0)) == source, "removing the prefix must restore the exact source bytes")
+  let back_status = reparse_status(doc, source, remove, (s, r) => if line_tokens then line_scan(s, r) else scan(s, r), c)
+  assert(back_status == DONE, "prefix deletion status " + int.to_string(back_status) + " at " + int.to_string(at) + ": " + list.join(doc.trace, " | "))
+  let back = materialize(doc)
+  assert(same(back, parsed), first_difference(back, parsed))
+  assert_eq(doc.root.size, bytes.len(source))
+  assert_eq(ids_of(doc), item_ids)
+  let remove_breaks = node_id_breaks(got, added_ids, back, node_ids(doc), remove)
+  assert(remove_breaks == "", remove_breaks)
+  ()
+}
+
+test "trivia inserted at the first file token preserves positions and ids on insertion and deletion" {
+  var c = parser.compile(item_grammar())
+  for prefix in [" ", "\t", "\n ", "\r\n  ", "# prefix\n", "<# prefix #> ", "<# first\r\n second #>\n "] {
+    let _ = prefix_round_trip(c, TEXT, 0, prefix, false)
+  }
+}
+
+test "trivia inserted at nested first-child heads extends their preceding nonempty piece" {
+  var c = parser.compile(item_grammar())
+  for offset in [at("x = 1"), at("p = q"), at("r()")] {
+    for prefix in [" ", "\n ", "\r\n  ", "# prefix\n ", "<# first\n second #> "] {
+      let _ = prefix_round_trip(c, TEXT, offset, prefix, false)
+    }
+  }
+}
+
+test "prefix trivia preserves a nonempty root prelude and its layout tokens" {
+  var c = parser.compile(line_grammar())
+  let doc = from_parsed(line_whole(c, LINES), bytes.from_string(LINES), c)
+  assert(piece_count(doc.root, 0) > 0, "this fixture must have tokens before the first child")
+  for offset in [0, line_at("fn a"), line_at("x = 1")] {
+    for prefix in [" ", "\n ", "\r\n  ", "# prefix\n", "<# first\n second #> "] {
+      let _ = prefix_round_trip(c, LINES, offset, prefix, true)
+    }
+  }
+}
+
+test "an invalid or token-bearing prefix falls back without changing the document or ids" {
+  var c = parser.compile(item_grammar())
+  let source = bytes.from_string(TEXT)
+  let parsed = whole(c, TEXT)
+  // An unterminated block comment is still a strict scanner failure;
+  // an unmatched opener fails the item parse; a separator is not trivia.
+  for prefix in ["<#", "{", ";"] {
+    var doc = from_parsed(parsed, source, c)
+    let before_ids = node_ids(doc)
+    let before_items = ids_of(doc)
+    let next_id = doc.next_id
+    let next_node = doc.next_node
+    let edit = Edit { start: 0, old_end: 0, new_end: bytes.len(bytes.from_string(prefix)) }
+    let after = apply(source, edit, bytes.from_string(prefix))
+    if prefix == "<#" then assert(result.is_err(scan(bytes.to_string_lossy(after), false))) else ()
+    assert(reparse_status(doc, after, edit, (s, r) => scan(s, r), c) != DONE)
+    assert(same(materialize(doc), parsed), first_difference(materialize(doc), parsed))
+    assert_eq(node_ids(doc), before_ids)
+    assert_eq(ids_of(doc), before_items)
+    assert_eq(doc.next_id, next_id)
+    assert_eq(doc.next_node, next_node)
+  }
+}
+
+test "deleting an appended item renews the shrinking root and preserves untouched descendant ids" {
+  var c = parser.compile(item_grammar())
+  // The original root ends before the trailing CRLF, and therefore before
+  // the append/delete point: its new span alone cannot detect the deletion.
+  let text = TEXT + "\r\n"
+  let source = bytes.from_string(text)
+  var doc = from_parsed(whole(c, text), source, c)
+  let descendants = list.drop(node_ids(doc), 1)
+  let offset = bytes.len(source)
+  let suffix = "\nfn appended() { x = 1 }\n"
+  let size = bytes.len(bytes.from_string(suffix))
+  var cycle = 0
+  while cycle < 3 {
+    let (after, add_why) = id_edit(c, doc, source, Edit { start: offset, old_end: offset, new_end: offset + size }, suffix)
+    assert(add_why == "", "append: " + add_why)
+    let root_after_append = list.first(node_ids(doc)) ?? -1
+    let (back, remove_why) = id_edit(c, doc, after, Edit { start: offset, old_end: offset + size, new_end: offset }, "")
+    assert(remove_why == "", "delete appended item: " + remove_why)
+    assert(back == source, "the append/delete cycle restores exact source bytes")
+    assert((list.first(node_ids(doc)) ?? -1) != root_after_append, "the shortened root must have a fresh id")
+    assert_eq(list.drop(node_ids(doc), 1), descendants)
+    assert(list.all(node_ids(doc), (id) => id > 0), "node ids remain positive")
+    cycle = cycle + 1
+  }
+}
+
+test "deleting a prepended item renews a root whose new start is the deletion boundary" {
+  var c = parser.compile(item_grammar())
+  let source = bytes.from_string(TEXT)
+  var doc = from_parsed(whole(c, TEXT), source, c)
+  let descendants = list.drop(node_ids(doc), 1)
+  let prefix = "fn prepended() { }\n"
+  let size = bytes.len(bytes.from_string(prefix))
+  let (after, add_why) = id_edit(c, doc, source, Edit { start: 0, old_end: 0, new_end: size }, prefix)
+  assert(add_why == "", "prepend: " + add_why)
+  let root_after_prepend = list.first(node_ids(doc)) ?? -1
+  let (_, remove_why) = id_edit(c, doc, after, Edit { start: 0, old_end: size, new_end: 0 }, "")
+  assert(remove_why == "", "delete prepended item: " + remove_why)
+  assert((list.first(node_ids(doc)) ?? -1) != root_after_prepend, "the shortened root must have a fresh id")
+  assert_eq(list.drop(node_ids(doc), 1), descendants)
+}
+
+test "deleting the only item gives the empty root a new id" {
+  var c = parser.compile(item_grammar())
+  let text = "fn only() { }"
+  let source = bytes.from_string(text)
+  var doc = from_parsed(whole(c, text), source, c)
+  let old_root = list.first(node_ids(doc)) ?? -1
+  let (_, why) = id_edit(c, doc, source, Edit { start: 0, old_end: bytes.len(source), new_end: 0 }, "")
+  assert(why == "", why)
+  assert((list.first(node_ids(doc)) ?? -1) != old_root, "the empty root must have a fresh id")
+}
+
+test "removing a recovered unmatched opener obeys the same node identity rule" {
+  var c = parser.compile(item_grammar())
+  let text = "{" + TEXT
+  let source = bytes.from_string(text)
+  let toks = scan(text, false)!
+  assert(result.is_err(parser.parse_with(c, source, toks)), "the leading opener must break the strict parse")
+  let parsed = parser.parse_recovering(c, source, toks)!
+  var doc = from_parsed(parsed, source, c)
+  let before_ids = node_ids(doc)
+  let edit = Edit { start: 0, old_end: 1, new_end: 0 }
+  let after = apply(source, edit, bytes.new(0))
+  let full = whole(c, TEXT)
+  let status = reparse_status(doc, after, edit, (s, r) => scan(s, r), c)
+  if status != DONE then {
+    assert(same(materialize(doc), parsed), "a failed reparse must preserve the recovered document")
+    assert_eq(node_ids(doc), before_ids)
+    doc = rebuilt(doc, full, after, c, edit)
+  } else ()
+  assert(same(materialize(doc), full), first_difference(materialize(doc), full))
+  let why = node_id_breaks(parsed, before_ids, materialize(doc), node_ids(doc), edit)
+  assert(why == "", why)
+  assert((list.first(node_ids(doc)) ?? -1) != (list.first(before_ids) ?? -1), "removing the opener changes the root's text")
+}
+
+test "a window from the file start cannot add unparsed separator tokens to its prelude" {
+  for case in [(" " + TEXT, 0, false), (LINES, line_at("fn a") - 1, true)] {
+    var c = parser.compile(if case.2 then line_grammar() else item_grammar())
+    let source = bytes.from_string(case.0)
+    let parsed = if case.2 then line_whole(c, case.0) else whole(c, case.0)
+    var doc = from_parsed(parsed, source, c)
+    let before_ids = node_ids(doc)
+    let before_items = ids_of(doc)
+    let next_id = doc.next_id
+    let next_node = doc.next_node
+    let base = Pos { byte: 0, line: 1, col: 1 }
+    let edit = Edit { start: case.1, old_end: case.1, new_end: case.1 + 1 }
+    assert(locate(doc.root, base, kid_bases(doc.root, base), edit).2, "the fixture must re-read the root prelude")
+    assert_eq(prelude_untouched(doc.root, base, edit), piece_count(doc.root, 0))
+    if case.2 then assert(piece_count(doc.root, 0) > 0, "the second fixture has a nonempty prelude") else ()
+    let after = apply(source, edit, bytes.from_string(";"))
+    let scan_after = if case.2 then line_scan(bytes.to_string_lossy(after), false)! else scan(bytes.to_string_lossy(after), false)!
+    assert(result.is_err(parser.parse_with(c, after, scan_after)), "the extra separator must fail a strict whole parse")
+    let status = reparse_status(doc, after, edit, (s, r) => if case.2 then line_scan(s, r) else scan(s, r), c)
+    assert_eq(status, NO_PARSE)
+    assert(same(materialize(doc), parsed), "the rejected prelude edit must leave the document unchanged")
+    assert_eq(node_ids(doc), before_ids)
+    assert_eq(ids_of(doc), before_items)
+    assert_eq(doc.next_id, next_id)
+    assert_eq(doc.next_node, next_node)
+  }
+}
+
+// A generic comma-separated syntax. Each recover body checks its right
+// delimiter, while the comma itself remains owned by the enclosing node.
+fn comma_scan(source: String, recovering: Bool) -> Result[List[tree.Token], lex.LexError] =
+  lex.tokenize_with(source, lex.Spec { ...spec(), operators: ["[", "]", "{", "}", ",", ":"] }, recovering)
+fn comma_members(item: parser.Rule, close: String) -> parser.Rule = {
+  let bounded = parser.seq([item, parser.ahead(parser.alt([parser.lit(","), parser.lit(close)]))])
+  parser.opt(parser.seq([parser.recover_all(bounded), parser.rep(parser.seq([parser.lit(","), parser.recover_all(bounded)]))]))
+}
+fn comma_grammar() -> parser.Grammar = parser.grammar("document", [
+  ("document", parser.wrap("document", parser.alt([parser.r("array"), parser.r("object")]))),
+  ("array", parser.wrap("array", parser.seq([parser.lit("["), comma_members(parser.wrap("value", parser.tok("integer")), "]"), parser.lit("]")]))),
+  ("object", parser.wrap("object", parser.seq([parser.lit("{"), comma_members(parser.r("pair"), "}"), parser.lit("}")]))),
+  ("pair", parser.wrap("pair", parser.seq([parser.tok("identifier"), parser.lit(":"), parser.wrap("value", parser.tok("integer"))]))),
+])
+fn comma_parse(mut c: parser.Compiled, text: String, recovering: Bool) -> Result[parser.Parsed, String] = {
+  let toks = comma_scan(text, false) |> result.map_err((e) => e.message)!
+  let parsed = if recovering then parser.parse_recovering(c, bytes.from_string(text), toks) else parser.parse_with(c, bytes.from_string(text), toks)
+  parsed |> result.map_err((e) => parser.format_failure(e))
+}
+fn comma_edit_case(text: String, start: Int, old_end: Int, insert: String, valid: Bool, incremental: Bool) -> Result[Unit, String] = {
+  var c = parser.compile(comma_grammar())
+  let source = bytes.from_string(text)
+  let parsed = comma_parse(c, text, false)!
+  var doc = from_parsed(parsed, source, c)
+  let before_ids = node_ids(doc)
+  let before_items = ids_of(doc)
+  let next_id = doc.next_id
+  let next_node = doc.next_node
+  let edit = Edit { start: start, old_end: old_end, new_end: start + bytes.len(bytes.from_string(insert)) }
+  let after = apply(source, edit, bytes.from_string(insert))
+  let strict = comma_parse(c, bytes.to_string_lossy(after), false)
+  assert_eq(result.is_ok(strict), valid)
+  let status = reparse_status(doc, after, edit, (s, r) => comma_scan(s, r), c)
+  assert_eq(status == DONE, incremental)
+  if status != DONE then {
+    assert(same(materialize(doc), parsed), "a rejected comma-list edit must preserve the old document")
+    assert_eq(node_ids(doc), before_ids)
+    assert_eq(ids_of(doc), before_items)
+    assert_eq(doc.next_id, next_id)
+    assert_eq(doc.next_node, next_node)
+  } else ()
+  // Some malformed lists have no recovered whole tree. The strict error
+  // and untouched-document fallback above are still required; when a
+  // whole tree is available, its rebuild must also obey the identity rule.
+  let full = if valid then strict else comma_parse(c, bytes.to_string_lossy(after), true)
+  match full {
+    ok(p) => {
+      if status != DONE then doc = rebuilt(doc, p, after, c, edit) else ()
+      let actual = materialize(doc)
+      assert(same(actual, p), first_difference(actual, p))
+      let ids = node_ids(doc)
+      assert_eq(list.len(ids), node_count(actual.root))
+      assert(distinct(ids) and list.all(ids, (id) => id > 0), "comma-list node ids remain distinct and positive")
+      let why = node_id_breaks(parsed, before_ids, actual, ids, edit)
+      assert(why == "", why)
+    },
+    err(_) => assert(not valid and not incremental and status != DONE, "only a rejected malformed edit may lack a recovered tree"),
+  }
+  ok(())
+}
+
+test "bounded comma-list recover bodies reject adjacent items without a separator" {
+  let _ = comma_edit_case("[1]", 1, 2, "1 2", false, false)!
+  let _ = comma_edit_case("{a:1}", 1, 4, "a:1 b:2", false, false)!
+}
+
+test "deleting a comma-list first or last item cannot orphan a parent-owned comma" {
+  for case in [("[1,2]", 1, 2), ("[1,2]", 3, 4), ("{a:1,b:2}", 1, 4), ("{a:1,b:2}", 5, 8),
+               ("[1, <# gap #> 2]", 1, 2), ("[1, <# gap #> 2]", 14, 15)] {
+    let _ = comma_edit_case(case.0, case.1, case.2, "", false, false)!
+  }
+}
+
+test "deleting a sole comma-list item stays incremental and deleting all items safely rebuilds" {
+  let _ = comma_edit_case("[1]", 1, 2, "", true, true)!
+  let _ = comma_edit_case("{a:1}", 1, 4, "", true, true)!
+  let _ = comma_edit_case("[1,2]", 1, 4, "", true, false)!
+  let _ = comma_edit_case("{a:1,b:2}", 1, 8, "", true, false)!
+  let _ = comma_edit_case("[1,2]", 1, 4, "3", true, false)!
+}
+
+test "a child window cannot delete or replace its parent's opening delimiter" {
+  let _ = comma_edit_case("[1]", 0, 1, "", false, false)!
+  let _ = comma_edit_case("[1]", 0, 1, " ", false, false)!
+  let _ = comma_edit_case("[1]", 0, 1, "{", false, false)!
+  let _ = comma_edit_case("{a:1}", 0, 1, "", false, false)!
+  let _ = comma_edit_case("{a:1}", 0, 1, " ", false, false)!
+}
+
+test "a child window cannot change its parent-owned closing lookahead token" {
+  let _ = comma_edit_case("[1]", 2, 3, ",", false, false)!
+  let _ = comma_edit_case("[1]", 2, 3, "}", false, false)!
+  let _ = comma_edit_case("[1]", 2, 3, "", false, false)!
+  let _ = comma_edit_case("{a:1}", 4, 5, ",", false, false)!
+  let _ = comma_edit_case("{a:1}", 4, 5, "]", false, false)!
+  let _ = comma_edit_case("{a:1}", 4, 5, "", false, false)!
+}
+
+test "valid insertions immediately before the parent-owned lookahead stay inside the window" {
+  for insert in [" ", "\r\n ", "<# boundary #>", "2"] {
+    let _ = comma_edit_case("[1]", 2, 2, insert, true, true)!
+    let _ = comma_edit_case("{a:1}", 4, 4, insert, true, true)!
+  }
+}
+
+test "changing or deleting package prelude tokens requires a parent parse" {
+  for case in [(line_at("package m"), line_at("package m") + 7, "namespace", false),
+               (line_at("package m") + 8, line_at("package m") + 9, "", false),
+               (line_at("package m"), line_at("fn a"), "", true)] {
+    var c = parser.compile(line_grammar())
+    let source = bytes.from_string(LINES)
+    let parsed = line_whole(c, LINES)
+    var doc = from_parsed(parsed, source, c)
+    let before_ids = node_ids(doc)
+    let before_items = ids_of(doc)
+    let next_id = doc.next_id
+    let next_node = doc.next_node
+    let edit = Edit { start: case.0, old_end: case.1, new_end: case.0 + bytes.len(bytes.from_string(case.2)) }
+    let after = apply(source, edit, bytes.from_string(case.2))
+    let toks = line_scan(bytes.to_string_lossy(after), false)!
+    let full = parser.parse_with(c, after, toks)
+    assert_eq(result.is_ok(full), case.3)
+    let status = reparse_status(doc, after, edit, (s, r) => line_scan(s, r), c)
+    assert_eq(status, NO_PARSE)
+    assert(same(materialize(doc), parsed), "a rejected prelude-token edit must preserve the document")
+    assert_eq(node_ids(doc), before_ids)
+    assert_eq(ids_of(doc), before_items)
+    assert_eq(doc.next_id, next_id)
+    assert_eq(doc.next_node, next_node)
+    match full {
+      ok(p) => {
+        doc = rebuilt(doc, p, after, c, edit)
+        assert(same(materialize(doc), p), first_difference(materialize(doc), p))
+        let why = node_id_breaks(parsed, before_ids, materialize(doc), node_ids(doc), edit)
+        assert(why == "", why)
+      },
+      err(_) => (),
+    }
+  }
 }
