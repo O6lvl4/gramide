@@ -1,0 +1,2642 @@
+{
+  "schema_version": 1,
+  "corpus_id": "gramide-duel-20261005-v1",
+  "frozen_at_utc": "2026-10-05T13:26:00Z",
+  "selection_sha256": "271929c49a559b6cbeffa1a575ad381ce1c68024d73286d1c06729d1f1f0028b",
+  "selected_before_any_tested_parser_runs": true,
+  "parser_runs_performed_during_preparation": false,
+  "selection_method": "Purposive roles and file sizes, not parser acceptance; all preselected files retained",
+  "expected_syntax_policy": "Upstream released sources or manually specified syntax probes; no compiler acceptance claimed",
+  "held_out_policy": "Do not tune on heldout files. Preserve partition and report it separately. No known prior-use guarantee outside this task.",
+  "reporting_policy": "Publish full fixed-set acceptance/error counts. Time successes separately; never silently omit a rejection or treat failure as fast success. Separate real, scaling, coverage and malformed results. TSX is an optional separate variant.",
+  "total_files": 70,
+  "totals": {
+    "json": {
+      "files": 23,
+      "bytes": 2000612,
+      "categories": {
+        "real": 9,
+        "generated": 3,
+        "coverage_probe": 6,
+        "malformed": 5
+      },
+      "real_size_bands": {
+        "small": 4,
+        "medium": 2,
+        "large": 3
+      }
+    },
+    "typescript": {
+      "files": 21,
+      "bytes": 384074,
+      "categories": {
+        "real": 8,
+        "generated": 0,
+        "coverage_probe": 9,
+        "malformed": 4
+      },
+      "real_size_bands": {
+        "small": 3,
+        "medium": 2,
+        "large": 3
+      }
+    },
+    "java": {
+      "files": 26,
+      "bytes": 181941,
+      "categories": {
+        "real": 8,
+        "generated": 0,
+        "coverage_probe": 14,
+        "malformed": 4
+      },
+      "real_size_bands": {
+        "small": 3,
+        "medium": 4,
+        "large": 1
+      }
+    }
+  },
+  "licenses": {
+    "gson-APACHE-2.0.txt": {
+      "path": "licenses/gson-APACHE-2.0.txt",
+      "spdx": "Apache-2.0",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "origin_url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/LICENSE"
+    },
+    "typescript-APACHE-2.0.txt": {
+      "path": "licenses/typescript-APACHE-2.0.txt",
+      "spdx": "Apache-2.0",
+      "sha256": "a7d00bfd54525bc694b6e32f64c7ebcf5e6b7ae3657be5cc12767bce74654a47",
+      "origin_url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/LICENSE.txt"
+    },
+    "typescript-ThirdPartyNoticeText.txt": {
+      "path": "licenses/typescript-ThirdPartyNoticeText.txt",
+      "spdx": "LicenseRef-TypeScript-ThirdParty-Notices",
+      "sha256": "1af3c68039c57e539422da82a4faada506ce6d0ea6f90e0b699d02dbcdb7a90c",
+      "origin_url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/ThirdPartyNoticeText.txt"
+    },
+    "GENERATED-MIT.txt": {
+      "path": "licenses/GENERATED-MIT.txt",
+      "spdx": "MIT",
+      "sha256": "dbc5da6f2e9602956fdbb58f5fef4905dfcf4da3680d4d660ae171e1260642df",
+      "origin_url": "original benchmark fixtures; no third-party source copied"
+    },
+    "tree-sitter-json-MIT.txt": {
+      "path": "licenses/tree-sitter-json-MIT.txt",
+      "spdx": "MIT",
+      "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+      "origin_url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/LICENSE"
+    },
+    "tree-sitter-java-MIT.txt": {
+      "path": "licenses/tree-sitter-java-MIT.txt",
+      "spdx": "MIT",
+      "sha256": "52ed137b039cd9c46409bc22e89938af911c95b157feae2d040b51e6084369a7",
+      "origin_url": "https://github.com/tree-sitter/tree-sitter-java/blob/e10607b45ff745f5f876bfa3e94fbcc6b44bdc11/LICENSE"
+    },
+    "tree-sitter-typescript-MIT.txt": {
+      "path": "licenses/tree-sitter-typescript-MIT.txt",
+      "spdx": "MIT",
+      "sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559",
+      "origin_url": "https://github.com/tree-sitter/tree-sitter-typescript/blob/75b3874edb2dc714fb1fd77a32013d0f8699989f/LICENSE"
+    }
+  },
+  "files": [
+    {
+      "id": "java/real/JsonNull.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/real/JsonNull.java",
+      "category": "real",
+      "purpose": "real",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 1640,
+      "lines": 65,
+      "size_band": "small",
+      "sha256": "ac3db4e5688062384391f1af7fc6231960734d32534cbf7c42e4599fa57b4b1d",
+      "features": [
+        "small_value_class",
+        "overrides",
+        "instanceof"
+      ],
+      "origin": {
+        "kind": "official_github_source",
+        "repository": "google/gson",
+        "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+        "source_path": "gson/src/main/java/com/google/gson/JsonNull.java",
+        "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonNull.java",
+        "git_blob_sha1": "1cc78ff10683e1e2614e6e484446236077ab15d3",
+        "upstream_sha256": "ac3db4e5688062384391f1af7fc6231960734d32534cbf7c42e4599fa57b4b1d",
+        "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+      },
+      "license_paths": [
+        "licenses/gson-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/gson-APACHE-2.0.txt",
+      "source_url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonNull.java",
+      "headline_group": "real"
+    },
+    {
+      "id": "java/real/Strictness.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/real/Strictness.java",
+      "category": "real",
+      "purpose": "real",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 985,
+      "lines": 28,
+      "size_band": "small",
+      "sha256": "59addbeaa2a893c1d7d3ab8e58b885c97234ceadb8546841a205283fc7c4427e",
+      "features": [
+        "enum",
+        "documentation_comments"
+      ],
+      "origin": {
+        "kind": "official_github_source",
+        "repository": "google/gson",
+        "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+        "source_path": "gson/src/main/java/com/google/gson/Strictness.java",
+        "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/Strictness.java",
+        "git_blob_sha1": "b207cf508c89ea569cac0bac18486902b252edd1",
+        "upstream_sha256": "59addbeaa2a893c1d7d3ab8e58b885c97234ceadb8546841a205283fc7c4427e",
+        "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+      },
+      "license_paths": [
+        "licenses/gson-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/gson-APACHE-2.0.txt",
+      "source_url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/Strictness.java",
+      "headline_group": "real"
+    },
+    {
+      "id": "java/real/ExclusionStrategy.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/real/ExclusionStrategy.java",
+      "category": "real",
+      "purpose": "real",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 4056,
+      "lines": 111,
+      "size_band": "small",
+      "sha256": "7ca438eb594cf82356fa60ae93e12a716a05fd313e9b62b53535b49b4fb46139",
+      "features": [
+        "public_interface",
+        "wildcard_generic"
+      ],
+      "origin": {
+        "kind": "official_github_source",
+        "repository": "google/gson",
+        "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+        "source_path": "gson/src/main/java/com/google/gson/ExclusionStrategy.java",
+        "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/ExclusionStrategy.java",
+        "git_blob_sha1": "4f5d36b28d7bb3a5d8d58a917f0d6f53bcc14886",
+        "upstream_sha256": "7ca438eb594cf82356fa60ae93e12a716a05fd313e9b62b53535b49b4fb46139",
+        "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+      },
+      "license_paths": [
+        "licenses/gson-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/gson-APACHE-2.0.txt",
+      "source_url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/ExclusionStrategy.java",
+      "headline_group": "real"
+    },
+    {
+      "id": "java/real/JsonParser.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/real/JsonParser.java",
+      "category": "real",
+      "purpose": "real",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 6737,
+      "lines": 182,
+      "size_band": "medium",
+      "sha256": "43dbf42d456b5174bc3477457789b60de133d179abefd6fe64077de968fbed30",
+      "features": [
+        "static_methods",
+        "try_catch",
+        "throws"
+      ],
+      "origin": {
+        "kind": "official_github_source",
+        "repository": "google/gson",
+        "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+        "source_path": "gson/src/main/java/com/google/gson/JsonParser.java",
+        "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonParser.java",
+        "git_blob_sha1": "9daf004265350f7328692ae9a0cdc7df72e5bbbc",
+        "upstream_sha256": "43dbf42d456b5174bc3477457789b60de133d179abefd6fe64077de968fbed30",
+        "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+      },
+      "license_paths": [
+        "licenses/gson-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/gson-APACHE-2.0.txt",
+      "source_url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonParser.java",
+      "headline_group": "real"
+    },
+    {
+      "id": "java/real/JsonElement.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/real/JsonElement.java",
+      "category": "real",
+      "purpose": "real",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 16156,
+      "lines": 436,
+      "size_band": "medium",
+      "sha256": "3f6b9566fbe590ed9d83b75acd83ce2af25a7889340f7b4ce7eb964efc5b6981",
+      "features": [
+        "abstract_class",
+        "annotations",
+        "method_calls"
+      ],
+      "origin": {
+        "kind": "official_github_source",
+        "repository": "google/gson",
+        "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+        "source_path": "gson/src/main/java/com/google/gson/JsonElement.java",
+        "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonElement.java",
+        "git_blob_sha1": "b7d135b97829189b748d8d34d69260edc25cb72c",
+        "upstream_sha256": "3f6b9566fbe590ed9d83b75acd83ce2af25a7889340f7b4ce7eb964efc5b6981",
+        "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+      },
+      "license_paths": [
+        "licenses/gson-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/gson-APACHE-2.0.txt",
+      "source_url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonElement.java",
+      "headline_group": "real"
+    },
+    {
+      "id": "java/real/JsonPrimitive.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/real/JsonPrimitive.java",
+      "category": "real",
+      "purpose": "real",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 10367,
+      "lines": 328,
+      "size_band": "medium",
+      "sha256": "c6adf7a7837f6173c09fd5ff1c94434d07617794c7c1c3193431f3a8bc95da87",
+      "features": [
+        "numeric_literals",
+        "casts",
+        "boolean_expressions"
+      ],
+      "origin": {
+        "kind": "official_github_source",
+        "repository": "google/gson",
+        "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+        "source_path": "gson/src/main/java/com/google/gson/JsonPrimitive.java",
+        "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonPrimitive.java",
+        "git_blob_sha1": "88f4466fc8c588fc90551ed26e889ab6e4bce23e",
+        "upstream_sha256": "c6adf7a7837f6173c09fd5ff1c94434d07617794c7c1c3193431f3a8bc95da87",
+        "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+      },
+      "license_paths": [
+        "licenses/gson-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/gson-APACHE-2.0.txt",
+      "source_url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonPrimitive.java",
+      "headline_group": "real"
+    },
+    {
+      "id": "java/real/LinkedTreeMap.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/real/LinkedTreeMap.java",
+      "category": "real",
+      "purpose": "real",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 19692,
+      "lines": 680,
+      "size_band": "medium",
+      "sha256": "c14c58d402eac0e3114dfc00cebc44ae22e6f886918fe5b3eea8b7d62a61b374",
+      "features": [
+        "nested_classes",
+        "generics",
+        "loops",
+        "collections"
+      ],
+      "origin": {
+        "kind": "official_github_source",
+        "repository": "google/gson",
+        "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+        "source_path": "gson/src/main/java/com/google/gson/internal/LinkedTreeMap.java",
+        "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/internal/LinkedTreeMap.java",
+        "git_blob_sha1": "099dd573c0c9de696d03e3ffbc3faf1681f56222",
+        "upstream_sha256": "c14c58d402eac0e3114dfc00cebc44ae22e6f886918fe5b3eea8b7d62a61b374",
+        "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+      },
+      "license_paths": [
+        "licenses/gson-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/gson-APACHE-2.0.txt",
+      "source_url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/internal/LinkedTreeMap.java",
+      "headline_group": "real"
+    },
+    {
+      "id": "java/real/JsonReader.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/real/JsonReader.java",
+      "category": "real",
+      "purpose": "real",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 59285,
+      "lines": 1820,
+      "size_band": "large",
+      "sha256": "ab075fdb77b370616c257d40d528fc15053ec52f1438cb3cacdbaa94c0beb2d0",
+      "features": [
+        "large_implementation",
+        "switch_statements",
+        "character_escapes"
+      ],
+      "origin": {
+        "kind": "official_github_source",
+        "repository": "google/gson",
+        "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+        "source_path": "gson/src/main/java/com/google/gson/stream/JsonReader.java",
+        "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/stream/JsonReader.java",
+        "git_blob_sha1": "d2846f6b32271d83f961aaeff461cf39fb7a8f05",
+        "upstream_sha256": "ab075fdb77b370616c257d40d528fc15053ec52f1438cb3cacdbaa94c0beb2d0",
+        "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+      },
+      "license_paths": [
+        "licenses/gson-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/gson-APACHE-2.0.txt",
+      "source_url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/stream/JsonReader.java",
+      "headline_group": "real"
+    },
+    {
+      "id": "typescript/real/corePublic.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/real/corePublic.ts",
+      "category": "real",
+      "purpose": "real",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 1318,
+      "lines": 47,
+      "size_band": "small",
+      "sha256": "a7b165ec7979470a90bd157c4a8e49da2ac6fa753f1f56ce1b2429d2667c4e04",
+      "features": [
+        "interfaces",
+        "generic_types",
+        "const_enum"
+      ],
+      "origin": {
+        "kind": "official_github_source",
+        "repository": "microsoft/TypeScript",
+        "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+        "source_path": "src/compiler/corePublic.ts",
+        "url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/corePublic.ts",
+        "git_blob_sha1": "23888726d280e8986bcf6a7e9d9e6416469ec5b9",
+        "upstream_sha256": "a7b165ec7979470a90bd157c4a8e49da2ac6fa753f1f56ce1b2429d2667c4e04",
+        "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+      },
+      "license_paths": [
+        "licenses/typescript-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/typescript-APACHE-2.0.txt",
+      "source_url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/corePublic.ts",
+      "headline_group": "real"
+    },
+    {
+      "id": "typescript/real/performance.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/real/performance.ts",
+      "category": "real",
+      "purpose": "real",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 6146,
+      "lines": 210,
+      "size_band": "medium",
+      "sha256": "b12e3cdedb651fe1d94fceae1bb236c2745530ba7fe0c9dc996d61ba22b6c473",
+      "features": [
+        "runtime_implementation",
+        "optional_chaining",
+        "nullish_coalescing"
+      ],
+      "origin": {
+        "kind": "official_github_source",
+        "repository": "microsoft/TypeScript",
+        "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+        "source_path": "src/compiler/performance.ts",
+        "url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/performance.ts",
+        "git_blob_sha1": "e176474b37ba836093dbbaac7f0271d5db5f0aa0",
+        "upstream_sha256": "b12e3cdedb651fe1d94fceae1bb236c2745530ba7fe0c9dc996d61ba22b6c473",
+        "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+      },
+      "license_paths": [
+        "licenses/typescript-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/typescript-APACHE-2.0.txt",
+      "source_url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/performance.ts",
+      "headline_group": "real"
+    },
+    {
+      "id": "typescript/real/watchUtilities.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/real/watchUtilities.ts",
+      "category": "real",
+      "purpose": "real",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 34758,
+      "lines": 847,
+      "size_band": "large",
+      "sha256": "0a4919e1976ea0683ea06137ec02c97fe5ad44ca8d0bc709f69eb0230b7a5487",
+      "features": [
+        "runtime_implementation",
+        "callbacks",
+        "generics"
+      ],
+      "origin": {
+        "kind": "official_github_source",
+        "repository": "microsoft/TypeScript",
+        "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+        "source_path": "src/compiler/watchUtilities.ts",
+        "url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/watchUtilities.ts",
+        "git_blob_sha1": "82c9dbf32e28ca6b501df211cf0640d2777b6daf",
+        "upstream_sha256": "0a4919e1976ea0683ea06137ec02c97fe5ad44ca8d0bc709f69eb0230b7a5487",
+        "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+      },
+      "license_paths": [
+        "licenses/typescript-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/typescript-APACHE-2.0.txt",
+      "source_url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/watchUtilities.ts",
+      "headline_group": "real"
+    },
+    {
+      "id": "typescript/real/core.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/real/core.ts",
+      "category": "real",
+      "purpose": "real",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 92353,
+      "lines": 2593,
+      "size_band": "large",
+      "sha256": "1512daf31972388d2c43d07b96ee202f659ba8e74e356b8f01d1f6e92192e92c",
+      "features": [
+        "large_runtime_implementation",
+        "overloads",
+        "type_predicates"
+      ],
+      "origin": {
+        "kind": "official_github_source",
+        "repository": "microsoft/TypeScript",
+        "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+        "source_path": "src/compiler/core.ts",
+        "url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/core.ts",
+        "git_blob_sha1": "ef83fefd533e037dde5a3818450f8f32a9138bea",
+        "upstream_sha256": "1512daf31972388d2c43d07b96ee202f659ba8e74e356b8f01d1f6e92192e92c",
+        "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+      },
+      "license_paths": [
+        "licenses/typescript-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/typescript-APACHE-2.0.txt",
+      "source_url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/core.ts",
+      "headline_group": "real"
+    },
+    {
+      "id": "typescript/real/lib__lib.es2015.symbol.d.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/real/lib__lib.es2015.symbol.d.ts",
+      "category": "real",
+      "purpose": "real",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 1649,
+      "lines": 46,
+      "size_band": "small",
+      "sha256": "4ff2a353abf8a80ee399af572debb8faab2d33ad38c4b4474cff7f26e7653b8d",
+      "features": [
+        "declarations",
+        "symbol",
+        "small_standard_library"
+      ],
+      "origin": {
+        "kind": "installed_official_npm_package",
+        "package": "typescript",
+        "version": "5.9.3",
+        "source_path": "lib/lib.es2015.symbol.d.ts",
+        "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+        "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+        "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+        "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+        "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+        "upstream_sha256": "4ff2a353abf8a80ee399af572debb8faab2d33ad38c4b4474cff7f26e7653b8d"
+      },
+      "license_paths": [
+        "licenses/typescript-APACHE-2.0.txt",
+        "licenses/typescript-ThirdPartyNoticeText.txt"
+      ],
+      "license_path": "licenses/typescript-APACHE-2.0.txt",
+      "source_url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "headline_group": "real"
+    },
+    {
+      "id": "typescript/real/lib__lib.es2021.promise.d.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/real/lib__lib.es2021.promise.d.ts",
+      "category": "real",
+      "purpose": "real",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 2262,
+      "lines": 48,
+      "size_band": "small",
+      "sha256": "af3dd424cf267428f30ccfc376f47a2c0114546b55c44d8c0f1d57d841e28d74",
+      "features": [
+        "declarations",
+        "promise",
+        "mapped_conditional_types"
+      ],
+      "origin": {
+        "kind": "installed_official_npm_package",
+        "package": "typescript",
+        "version": "5.9.3",
+        "source_path": "lib/lib.es2021.promise.d.ts",
+        "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+        "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+        "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+        "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+        "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+        "upstream_sha256": "af3dd424cf267428f30ccfc376f47a2c0114546b55c44d8c0f1d57d841e28d74"
+      },
+      "license_paths": [
+        "licenses/typescript-APACHE-2.0.txt",
+        "licenses/typescript-ThirdPartyNoticeText.txt"
+      ],
+      "license_path": "licenses/typescript-APACHE-2.0.txt",
+      "source_url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "headline_group": "real"
+    },
+    {
+      "id": "typescript/real/lib__lib.es2015.iterable.d.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/real/lib__lib.es2015.iterable.d.ts",
+      "category": "real",
+      "purpose": "real",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 18200,
+      "lines": 605,
+      "size_band": "medium",
+      "sha256": "0559b1f683ac7505ae451f9a96ce4c3c92bdc71411651ca6ddb0e88baaaad6a3",
+      "features": [
+        "declarations",
+        "iterators",
+        "computed_properties"
+      ],
+      "origin": {
+        "kind": "installed_official_npm_package",
+        "package": "typescript",
+        "version": "5.9.3",
+        "source_path": "lib/lib.es2015.iterable.d.ts",
+        "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+        "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+        "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+        "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+        "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+        "upstream_sha256": "0559b1f683ac7505ae451f9a96ce4c3c92bdc71411651ca6ddb0e88baaaad6a3"
+      },
+      "license_paths": [
+        "licenses/typescript-APACHE-2.0.txt",
+        "licenses/typescript-ThirdPartyNoticeText.txt"
+      ],
+      "license_path": "licenses/typescript-APACHE-2.0.txt",
+      "source_url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "headline_group": "real"
+    },
+    {
+      "id": "typescript/real/lib__lib.es5.d.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/real/lib__lib.es5.d.ts",
+      "category": "real",
+      "purpose": "real",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 218439,
+      "lines": 4601,
+      "size_band": "large",
+      "sha256": "c430d44666289dae81f30fa7b2edebf186ecc91a2d4c71266ea6ae76388792e1",
+      "features": [
+        "large_declarations",
+        "overloads",
+        "generic_interfaces"
+      ],
+      "origin": {
+        "kind": "installed_official_npm_package",
+        "package": "typescript",
+        "version": "5.9.3",
+        "source_path": "lib/lib.es5.d.ts",
+        "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+        "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+        "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+        "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+        "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+        "upstream_sha256": "c430d44666289dae81f30fa7b2edebf186ecc91a2d4c71266ea6ae76388792e1"
+      },
+      "license_paths": [
+        "licenses/typescript-APACHE-2.0.txt",
+        "licenses/typescript-ThirdPartyNoticeText.txt"
+      ],
+      "license_path": "licenses/typescript-APACHE-2.0.txt",
+      "source_url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "headline_group": "real"
+    },
+    {
+      "id": "json/real/tree-sitter-json__tree-sitter.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/real/tree-sitter-json__tree-sitter.json",
+      "category": "real",
+      "purpose": "real",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 676,
+      "lines": 36,
+      "size_band": "small",
+      "sha256": "30d71de6bbd5c46237ff53746661b97ac31b426b263cf9baeb65e6d01f9f361d",
+      "features": [
+        "small_config",
+        "objects",
+        "arrays"
+      ],
+      "origin": {
+        "kind": "official_git_source",
+        "repository": "tree-sitter/tree-sitter-json",
+        "revision": "254c42a6476413b776221e03982ac8ae159eeb72",
+        "source_path": "tree-sitter.json",
+        "url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/tree-sitter.json",
+        "git_blob_sha1": "9d033942c22160b8173cc2e7c1a10ec2235faf0d",
+        "upstream_sha256": "30d71de6bbd5c46237ff53746661b97ac31b426b263cf9baeb65e6d01f9f361d"
+      },
+      "license_paths": [
+        "licenses/tree-sitter-json-MIT.txt"
+      ],
+      "license_path": "licenses/tree-sitter-json-MIT.txt",
+      "source_url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/tree-sitter.json",
+      "headline_group": "real"
+    },
+    {
+      "id": "json/real/tree-sitter-json__package.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/real/tree-sitter-json__package.json",
+      "category": "real",
+      "purpose": "real",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 1259,
+      "lines": 59,
+      "size_band": "small",
+      "sha256": "843df6f8d6a40ab7f12b91b5e688a1a603e65c27f797671240ecf87e1af14644",
+      "features": [
+        "package_manifest",
+        "strings",
+        "arrays"
+      ],
+      "origin": {
+        "kind": "official_git_source",
+        "repository": "tree-sitter/tree-sitter-json",
+        "revision": "254c42a6476413b776221e03982ac8ae159eeb72",
+        "source_path": "package.json",
+        "url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/package.json",
+        "git_blob_sha1": "2a04fd13c969944e8b2eb687b3405a527c6b2a49",
+        "upstream_sha256": "843df6f8d6a40ab7f12b91b5e688a1a603e65c27f797671240ecf87e1af14644"
+      },
+      "license_paths": [
+        "licenses/tree-sitter-json-MIT.txt"
+      ],
+      "license_path": "licenses/tree-sitter-json-MIT.txt",
+      "source_url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/package.json",
+      "headline_group": "real"
+    },
+    {
+      "id": "json/real/tree-sitter-json__src__node-types.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/real/tree-sitter-json__src__node-types.json",
+      "category": "real",
+      "purpose": "real",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 2698,
+      "lines": 183,
+      "size_band": "small",
+      "sha256": "620b6f5d38676a97526e9d128972d4b156ddbdf6e130cd7e6b9c35e6823e943f",
+      "features": [
+        "schema_like_metadata",
+        "object_array",
+        "booleans"
+      ],
+      "origin": {
+        "kind": "official_git_source",
+        "repository": "tree-sitter/tree-sitter-json",
+        "revision": "254c42a6476413b776221e03982ac8ae159eeb72",
+        "source_path": "src/node-types.json",
+        "url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/src/node-types.json",
+        "git_blob_sha1": "dfd06ea1cc84f78d56b31bfc5fc7f8620888785d",
+        "upstream_sha256": "620b6f5d38676a97526e9d128972d4b156ddbdf6e130cd7e6b9c35e6823e943f"
+      },
+      "license_paths": [
+        "licenses/tree-sitter-json-MIT.txt"
+      ],
+      "license_path": "licenses/tree-sitter-json-MIT.txt",
+      "source_url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/src/node-types.json",
+      "headline_group": "real"
+    },
+    {
+      "id": "json/real/tree-sitter-json__src__grammar.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/real/tree-sitter-json__src__grammar.json",
+      "category": "real",
+      "purpose": "real",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 13683,
+      "lines": 548,
+      "size_band": "medium",
+      "sha256": "705e5eb30aed769698ec0ffd5d9e73e1ee0edd174f7de0dc2e6bfa62d459dceb",
+      "features": [
+        "grammar_data",
+        "nested_objects"
+      ],
+      "origin": {
+        "kind": "official_git_source",
+        "repository": "tree-sitter/tree-sitter-json",
+        "revision": "254c42a6476413b776221e03982ac8ae159eeb72",
+        "source_path": "src/grammar.json",
+        "url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/src/grammar.json",
+        "git_blob_sha1": "626e88d5151410a105530e32588387e21db8783c",
+        "upstream_sha256": "705e5eb30aed769698ec0ffd5d9e73e1ee0edd174f7de0dc2e6bfa62d459dceb"
+      },
+      "license_paths": [
+        "licenses/tree-sitter-json-MIT.txt"
+      ],
+      "license_path": "licenses/tree-sitter-json-MIT.txt",
+      "source_url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/src/grammar.json",
+      "headline_group": "real"
+    },
+    {
+      "id": "json/real/tree-sitter-java__src__node-types.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/real/tree-sitter-java__src__node-types.json",
+      "category": "real",
+      "purpose": "real",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 81249,
+      "lines": 4586,
+      "size_band": "large",
+      "sha256": "19c46facc653381c337ff6cad75dd8b052524179a366c80825d6d0010520eef2",
+      "features": [
+        "larger_schema_like_metadata",
+        "object_array"
+      ],
+      "origin": {
+        "kind": "official_git_source",
+        "repository": "tree-sitter/tree-sitter-java",
+        "revision": "e10607b45ff745f5f876bfa3e94fbcc6b44bdc11",
+        "source_path": "src/node-types.json",
+        "url": "https://github.com/tree-sitter/tree-sitter-java/blob/e10607b45ff745f5f876bfa3e94fbcc6b44bdc11/src/node-types.json",
+        "git_blob_sha1": "faaf4eeff8ab93cc43e6fb822e83341b01aff3a1",
+        "upstream_sha256": "19c46facc653381c337ff6cad75dd8b052524179a366c80825d6d0010520eef2"
+      },
+      "license_paths": [
+        "licenses/tree-sitter-java-MIT.txt"
+      ],
+      "license_path": "licenses/tree-sitter-java-MIT.txt",
+      "source_url": "https://github.com/tree-sitter/tree-sitter-java/blob/e10607b45ff745f5f876bfa3e94fbcc6b44bdc11/src/node-types.json",
+      "headline_group": "real"
+    },
+    {
+      "id": "json/real/tree-sitter-typescript__typescript__src__grammar.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/real/tree-sitter-typescript__typescript__src__grammar.json",
+      "category": "real",
+      "purpose": "real",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 281518,
+      "lines": 11970,
+      "size_band": "large",
+      "sha256": "99dc4b95424dff47c89acb50d5d3f25b081b07eaff43994b7881dccd4186b214",
+      "features": [
+        "large_grammar_data",
+        "deep_objects",
+        "escaped_regex_strings"
+      ],
+      "origin": {
+        "kind": "official_git_source",
+        "repository": "tree-sitter/tree-sitter-typescript",
+        "revision": "75b3874edb2dc714fb1fd77a32013d0f8699989f",
+        "source_path": "typescript/src/grammar.json",
+        "url": "https://github.com/tree-sitter/tree-sitter-typescript/blob/75b3874edb2dc714fb1fd77a32013d0f8699989f/typescript/src/grammar.json",
+        "git_blob_sha1": "3ac060d9898d3b0a449c2114d2f2a3da3f639ffc",
+        "upstream_sha256": "99dc4b95424dff47c89acb50d5d3f25b081b07eaff43994b7881dccd4186b214"
+      },
+      "license_paths": [
+        "licenses/tree-sitter-typescript-MIT.txt"
+      ],
+      "license_path": "licenses/tree-sitter-typescript-MIT.txt",
+      "source_url": "https://github.com/tree-sitter/tree-sitter-typescript/blob/75b3874edb2dc714fb1fd77a32013d0f8699989f/typescript/src/grammar.json",
+      "headline_group": "real"
+    },
+    {
+      "id": "json/real/package.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/real/package.json",
+      "category": "real",
+      "purpose": "real",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 3620,
+      "lines": 120,
+      "size_band": "small",
+      "sha256": "822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6",
+      "features": [
+        "package_manifest",
+        "arrays",
+        "nested_objects"
+      ],
+      "origin": {
+        "kind": "installed_official_npm_package",
+        "package": "typescript",
+        "version": "5.9.3",
+        "source_path": "package.json",
+        "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+        "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+        "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+        "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+        "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+        "upstream_sha256": "822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6"
+      },
+      "license_paths": [
+        "licenses/typescript-APACHE-2.0.txt",
+        "licenses/typescript-ThirdPartyNoticeText.txt"
+      ],
+      "license_path": "licenses/typescript-APACHE-2.0.txt",
+      "source_url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "headline_group": "real"
+    },
+    {
+      "id": "json/real/lib__typesMap.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/real/lib__typesMap.json",
+      "category": "real",
+      "purpose": "real",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 16788,
+      "lines": 497,
+      "size_band": "medium",
+      "sha256": "4143fb8b1c5d4421dfa19a4b80ddf2da375fc0835a349c3b18519fda5955e1d9",
+      "features": [
+        "mapping_data",
+        "escaped_regex_strings"
+      ],
+      "origin": {
+        "kind": "installed_official_npm_package",
+        "package": "typescript",
+        "version": "5.9.3",
+        "source_path": "lib/typesMap.json",
+        "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+        "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+        "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+        "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+        "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+        "upstream_sha256": "4143fb8b1c5d4421dfa19a4b80ddf2da375fc0835a349c3b18519fda5955e1d9"
+      },
+      "license_paths": [
+        "licenses/typescript-APACHE-2.0.txt",
+        "licenses/typescript-ThirdPartyNoticeText.txt"
+      ],
+      "license_path": "licenses/typescript-APACHE-2.0.txt",
+      "source_url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "headline_group": "real"
+    },
+    {
+      "id": "json/real/lib__ja__diagnosticMessages.generated.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/real/lib__ja__diagnosticMessages.generated.json",
+      "category": "real",
+      "purpose": "real",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 381398,
+      "lines": 2122,
+      "size_band": "large",
+      "sha256": "ae1a2d439bfb60b9fa32408bde0e9ec39840a33d621014fcb5b2fb4e69a606de",
+      "features": [
+        "large_message_catalog",
+        "utf8_japanese",
+        "long_strings"
+      ],
+      "origin": {
+        "kind": "installed_official_npm_package",
+        "package": "typescript",
+        "version": "5.9.3",
+        "source_path": "lib/ja/diagnosticMessages.generated.json",
+        "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+        "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+        "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+        "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+        "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+        "upstream_sha256": "ae1a2d439bfb60b9fa32408bde0e9ec39840a33d621014fcb5b2fb4e69a606de"
+      },
+      "license_paths": [
+        "licenses/typescript-APACHE-2.0.txt",
+        "licenses/typescript-ThirdPartyNoticeText.txt"
+      ],
+      "license_path": "licenses/typescript-APACHE-2.0.txt",
+      "source_url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "headline_group": "real"
+    },
+    {
+      "id": "json/scaling/rows-00008.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/scaling/rows-00008.json",
+      "category": "generated",
+      "purpose": "scaling",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 1106,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "9e136ab4a9423348541375d23d56d4678beaef09725283b0a3acb1806e23b8d1",
+      "features": [
+        "repeated_objects",
+        "utf8",
+        "escapes",
+        "numbers",
+        "booleans",
+        "null"
+      ],
+      "origin": {
+        "kind": "deterministic_generated_scaling",
+        "generator": "corpus_prepare.py",
+        "row_count": 8
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_scaling"
+    },
+    {
+      "id": "json/scaling/rows-00512.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/scaling/rows-00512.json",
+      "category": "generated",
+      "purpose": "scaling",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 70658,
+      "lines": 1,
+      "size_band": "large",
+      "sha256": "6bbcca5ee474e83dfded46a9eae9510863d43a93e38d5e84a96c0d69e2160ad1",
+      "features": [
+        "repeated_objects",
+        "utf8",
+        "escapes",
+        "numbers",
+        "booleans",
+        "null"
+      ],
+      "origin": {
+        "kind": "deterministic_generated_scaling",
+        "generator": "corpus_prepare.py",
+        "row_count": 512
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_scaling"
+    },
+    {
+      "id": "json/scaling/rows-08192.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/scaling/rows-08192.json",
+      "category": "generated",
+      "purpose": "scaling",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 1130498,
+      "lines": 1,
+      "size_band": "large",
+      "sha256": "c9acdba9f0cdab4bcac01b835afeef230d9c75e5445ff7f2a68fed670012719d",
+      "features": [
+        "repeated_objects",
+        "utf8",
+        "escapes",
+        "numbers",
+        "booleans",
+        "null"
+      ],
+      "origin": {
+        "kind": "deterministic_generated_scaling",
+        "generator": "corpus_prepare.py",
+        "row_count": 8192
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_scaling"
+    },
+    {
+      "id": "json/coverage/scalar-string.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/coverage/scalar-string.json",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 14,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "2bcd8ea9ef0a446d7d5efcad6d489ee9ae651554fb63afeb9ddb840ce29a10d1",
+      "features": [
+        "scalar_root"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage"
+    },
+    {
+      "id": "json/coverage/numbers.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/coverage/numbers.json",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 69,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "147507e035586911a99f8be8b45b522133cabb42b4cf5eeae916749c074572eb",
+      "features": [
+        "number_lexical_edges",
+        "syntax_not_numeric_range"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage"
+    },
+    {
+      "id": "json/coverage/escapes.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/coverage/escapes.json",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 69,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "f54e28a1cb5cac1110357d0c353eb2ce2f1840c8f9b16e30045fa0ce52a7ee49",
+      "features": [
+        "all_json_escape_forms",
+        "escaped_surrogate_grammar"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage"
+    },
+    {
+      "id": "json/coverage/duplicate-names.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/coverage/duplicate-names.json",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 14,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "70f09e61d50f608b090093a666c8f5995ed46fd99d0a96e33169bfa3a616b451",
+      "features": [
+        "duplicate_keys_allowed_by_syntax"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage"
+    },
+    {
+      "id": "json/coverage/unicode.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/coverage/unicode.json",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 65,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "6a1d6fd8b566c687795fc91b7d09ec4ef83b5630bfd3dd7bc892ef03ff7c2cef",
+      "features": [
+        "utf8_multibyte",
+        "nonascii_keys"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage"
+    },
+    {
+      "id": "json/coverage/nested-128.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/coverage/nested-128.json",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 258,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "c2eba8bfb879e5c1079b88c7daebec8ddbb294ef4f2c4472c501f2a8802f7ba6",
+      "features": [
+        "nesting_depth_128"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage"
+    },
+    {
+      "id": "java/coverage/CoreDeclarations.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/CoreDeclarations.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 388,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "32f33306ee72134733bdb3e931b546919efb4e32e082d30869cd56154de72d67",
+      "features": [
+        "core_types",
+        "generics",
+        "record",
+        "enum"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 17,
+      "declared_gramide_limit": false,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se17/html/index.html"
+    },
+    {
+      "id": "java/coverage/CoreStatements.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/CoreStatements.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 415,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "aae1155a883358342602ddbecbaf2b471ca288006014bc37961a31961e325f30",
+      "features": [
+        "loops",
+        "try_resources",
+        "lambda"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 8,
+      "declared_gramide_limit": false,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se8/html/index.html"
+    },
+    {
+      "id": "java/coverage/TextBlocksUnicode.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/TextBlocksUnicode.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 123,
+      "lines": 4,
+      "size_band": "small",
+      "sha256": "0155735fbac68a0f5b61d47298772ba8da482fe793d72eb5923f1c217a8968f6",
+      "features": [
+        "text_block",
+        "utf8_identifier",
+        "hex_float",
+        "binary_literal"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 15,
+      "declared_gramide_limit": false,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se15/html/index.html"
+    },
+    {
+      "id": "java/coverage/module-info.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/module-info.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 70,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "b550d295faf2d417a6748595f0a6cee0fc889478fbfd5686c37b625173d2ef64",
+      "features": [
+        "module_declaration"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 9,
+      "declared_gramide_limit": true,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se9/html/index.html"
+    },
+    {
+      "id": "java/coverage/SwitchExpression.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/SwitchExpression.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 121,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "a5389fe11b334b5c7d7be11442172f2fb83bbcac918a4f5b06c111c8fcf543f6",
+      "features": [
+        "switch_expression",
+        "arrow_case",
+        "yield"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 14,
+      "declared_gramide_limit": true,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se14/html/index.html"
+    },
+    {
+      "id": "java/coverage/RecordPattern.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/RecordPattern.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 158,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "1e00e3f7433b695394d1bd27b375fdab838b23ca6d2580cb9b1672533fd90a75",
+      "features": [
+        "record_pattern",
+        "switch_pattern"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 21,
+      "declared_gramide_limit": true,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se21/html/index.html"
+    },
+    {
+      "id": "java/coverage/TypeUse.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/TypeUse.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 151,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "3d520a7c6722bff9cb5ea776451ff76e4bbb5c244dda1b96410e52d1c24844c7",
+      "features": [
+        "type_use_annotation"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 8,
+      "declared_gramide_limit": true,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se8/html/index.html"
+    },
+    {
+      "id": "java/coverage/Receiver.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/Receiver.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 49,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "dc9dcb0f7b016a88797ed6633c9841730861916cc49728b15a62f9997a2a8c52",
+      "features": [
+        "receiver_parameter"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 8,
+      "declared_gramide_limit": true,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se8/html/index.html"
+    },
+    {
+      "id": "java/coverage/NonSealed.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/NonSealed.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 85,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "7132b5affa9eaface3fcf11b7f6ba20ca0b95ef00c38c590ae0ef4292eeb3bbf",
+      "features": [
+        "sealed",
+        "non_sealed"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 17,
+      "declared_gramide_limit": true,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se17/html/index.html"
+    },
+    {
+      "id": "java/coverage/IntersectionCast.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/IntersectionCast.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 106,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "ff8ec01019d5e35a9e5ee3378a51d7d89350d5151b9dee51169e0050feb05915",
+      "features": [
+        "intersection_cast"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 8,
+      "declared_gramide_limit": true,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se8/html/index.html"
+    },
+    {
+      "id": "java/coverage/ClassLiterals.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/ClassLiterals.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 86,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "189422466d3aa72760f890a9b4a127f8b1dca1936f515435a887d39b5a7e2786",
+      "features": [
+        "primitive_class_literal",
+        "array_class_literal"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 5,
+      "declared_gramide_limit": true,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se8/html/index.html"
+    },
+    {
+      "id": "java/coverage/QualifiedInner.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/QualifiedInner.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 157,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "51b2c725d4064615cc5d16fa5ab1e988c53c6eecdb5c416a120ac7972151d656",
+      "features": [
+        "generic_inner_class_creation"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 5,
+      "declared_gramide_limit": true,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se8/html/index.html"
+    },
+    {
+      "id": "java/coverage/UnicodeEscapes.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/UnicodeEscapes.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 46,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "0a0a326fec50ba806ef630b8738627470b4c239838c68e32a59c7a6aa8cdd176",
+      "features": [
+        "unicode_escape_preprocessing"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 5,
+      "declared_gramide_limit": true,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se8/html/index.html"
+    },
+    {
+      "id": "java/coverage/CompactUnit.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/coverage/CompactUnit.java",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 45,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "5bffcb3d604a94530ba6e2022dfec196154139294346aca12e8ed2b34470f4f5",
+      "features": [
+        "compact_compilation_unit",
+        "instance_main"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "minimum_java_release": 25,
+      "declared_gramide_limit": true,
+      "expectation_basis": "Original syntax probe; language specification feature. No javac/compiler oracle has run.",
+      "spec_url": "https://docs.oracle.com/javase/specs/jls/se25/html/index.html"
+    },
+    {
+      "id": "typescript/coverage/types.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/coverage/types.ts",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 163,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "843771ee37f238516cc7287cb594ae2cc6fd6d783cb4f1aa97f93dfbaff82047",
+      "features": [
+        "mapped_types",
+        "conditional_types",
+        "template_literal_types"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "typescript_version": "5.9.3",
+      "validation_scope": "Syntactic parse only; imports need not resolve and type errors are outside scope"
+    },
+    {
+      "id": "typescript/coverage/generics.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/coverage/generics.ts",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 182,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "abe9a8b6f70b2d105cdf8dc032d2ac44b5d87cd8cfd414afbe34161c8d1805f8",
+      "features": [
+        "const_type_parameters",
+        "indexed_access_types",
+        "generic_methods"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "typescript_version": "5.9.3",
+      "validation_scope": "Syntactic parse only; imports need not resolve and type errors are outside scope"
+    },
+    {
+      "id": "typescript/coverage/expressions.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/coverage/expressions.ts",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 212,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "d2e4f0ff0dbc837168daf8bef0b9be4008819e8df4804e221f5bd8f9ed584f06",
+      "features": [
+        "satisfies",
+        "optional_chaining",
+        "nullish_coalescing",
+        "regex",
+        "template_strings"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "typescript_version": "5.9.3",
+      "validation_scope": "Syntactic parse only; imports need not resolve and type errors are outside scope"
+    },
+    {
+      "id": "typescript/coverage/namespace-enum.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/coverage/namespace-enum.ts",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 132,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "3deb2e592f3fa5545b095ea17ce10ab0dcac2dc6c013d47c436a57f50eaf5a62",
+      "features": [
+        "namespace",
+        "enum",
+        "import_alias"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "typescript_version": "5.9.3",
+      "validation_scope": "Syntactic parse only; imports need not resolve and type errors are outside scope"
+    },
+    {
+      "id": "typescript/coverage/class-private.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/coverage/class-private.ts",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 209,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "1221c64f24e236ed4ee0a4931f3b53aac3774b5b8b37caf92cf42cb0231ae781",
+      "features": [
+        "private_fields",
+        "static_block",
+        "parameter_property",
+        "accessor"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "typescript_version": "5.9.3",
+      "validation_scope": "Syntactic parse only; imports need not resolve and type errors are outside scope"
+    },
+    {
+      "id": "typescript/coverage/async-generator.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/coverage/async-generator.ts",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 137,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "272470e546ea976567246f346dbd3ddc76ff216627cef58d83cb5dc63a6e25ba",
+      "features": [
+        "async_generator",
+        "for_await"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "typescript_version": "5.9.3",
+      "validation_scope": "Syntactic parse only; imports need not resolve and type errors are outside scope"
+    },
+    {
+      "id": "typescript/coverage/decorators.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/coverage/decorators.ts",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "development",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 124,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "b810a71234ee5c6bc8867c44298e03552a0cc51ad04745e1945169f3319fa977",
+      "features": [
+        "decorator_syntax"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "typescript_version": "5.9.3",
+      "validation_scope": "Syntactic parse only; imports need not resolve and type errors are outside scope"
+    },
+    {
+      "id": "typescript/coverage/import-attributes.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/coverage/import-attributes.ts",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 112,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "37ce96fdcda0cd4e94995471a12b866b19930fcfa76caf9cb9646b3b9575452b",
+      "features": [
+        "import_attributes",
+        "type_only_export"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_coverage",
+      "typescript_version": "5.9.3",
+      "validation_scope": "Syntactic parse only; imports need not resolve and type errors are outside scope"
+    },
+    {
+      "id": "typescript/coverage/jsx.tsx",
+      "language": "typescript",
+      "grammar_variant": "tsx",
+      "path": "typescript/coverage/jsx.tsx",
+      "category": "coverage_probe",
+      "purpose": "coverage",
+      "split": "heldout",
+      "expected_syntax": "valid",
+      "expected_valid": true,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 151,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "ccc37db27833709621e692d6d237586182840ebeb42fb2ef26d162cb675c8c85",
+      "features": [
+        "tsx",
+        "jsx_elements",
+        "jsx_attributes"
+      ],
+      "origin": {
+        "kind": "original_generated_fixture",
+        "generator": "corpus_prepare.py",
+        "version": 1
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_optional_tsx",
+      "optional_variant": true,
+      "typescript_version": "5.9.3"
+    },
+    {
+      "id": "java/malformed/JsonNull.missing-final-brace.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/malformed/JsonNull.missing-final-brace.java",
+      "category": "malformed",
+      "purpose": "malformed",
+      "split": "development",
+      "expected_syntax": "invalid",
+      "expected_valid": false,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 1639,
+      "lines": 65,
+      "size_band": "small",
+      "sha256": "e830ca5848b8d7883c351542b4068abf41ad4a3ba6fe6ca85cb87d66f1c95294",
+      "features": [
+        "missing-final-brace"
+      ],
+      "origin": {
+        "kind": "controlled_edit",
+        "parent_id": "java/real/JsonNull.java",
+        "parent_sha256": "ac3db4e5688062384391f1af7fc6231960734d32534cbf7c42e4599fa57b4b1d",
+        "upstream": {
+          "kind": "official_github_source",
+          "repository": "google/gson",
+          "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+          "source_path": "gson/src/main/java/com/google/gson/JsonNull.java",
+          "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonNull.java",
+          "git_blob_sha1": "1cc78ff10683e1e2614e6e484446236077ab15d3",
+          "upstream_sha256": "ac3db4e5688062384391f1af7fc6231960734d32534cbf7c42e4599fa57b4b1d",
+          "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+        }
+      },
+      "license_paths": [
+        "licenses/gson-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/gson-APACHE-2.0.txt",
+      "source_url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonNull.java",
+      "headline_group": "separate_malformed",
+      "mutation": {
+        "operation": "missing-final-brace",
+        "byte_offset": 1638,
+        "removed_hex": "7d",
+        "inserted_hex": "",
+        "rationale": "Remove the last required object/type/function closing brace; no other bytes changed"
+      },
+      "validation_scope": "Syntax-only negative control; not a semantic/type-checking claim"
+    },
+    {
+      "id": "java/malformed/JsonReader.missing-final-brace.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/malformed/JsonReader.missing-final-brace.java",
+      "category": "malformed",
+      "purpose": "malformed",
+      "split": "heldout",
+      "expected_syntax": "invalid",
+      "expected_valid": false,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 59284,
+      "lines": 1820,
+      "size_band": "large",
+      "sha256": "ed6bb96bc4974e03cb85538bea761b91ef0d52e62b99930831ab249ff18fda6d",
+      "features": [
+        "missing-final-brace"
+      ],
+      "origin": {
+        "kind": "controlled_edit",
+        "parent_id": "java/real/JsonReader.java",
+        "parent_sha256": "ab075fdb77b370616c257d40d528fc15053ec52f1438cb3cacdbaa94c0beb2d0",
+        "upstream": {
+          "kind": "official_github_source",
+          "repository": "google/gson",
+          "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+          "source_path": "gson/src/main/java/com/google/gson/stream/JsonReader.java",
+          "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/stream/JsonReader.java",
+          "git_blob_sha1": "d2846f6b32271d83f961aaeff461cf39fb7a8f05",
+          "upstream_sha256": "ab075fdb77b370616c257d40d528fc15053ec52f1438cb3cacdbaa94c0beb2d0",
+          "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+        }
+      },
+      "license_paths": [
+        "licenses/gson-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/gson-APACHE-2.0.txt",
+      "source_url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/stream/JsonReader.java",
+      "headline_group": "separate_malformed",
+      "mutation": {
+        "operation": "missing-final-brace",
+        "byte_offset": 59283,
+        "removed_hex": "7d",
+        "inserted_hex": "",
+        "rationale": "Remove the last required object/type/function closing brace; no other bytes changed"
+      },
+      "validation_scope": "Syntax-only negative control; not a semantic/type-checking claim"
+    },
+    {
+      "id": "typescript/malformed/corePublic.missing-final-brace.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/malformed/corePublic.missing-final-brace.ts",
+      "category": "malformed",
+      "purpose": "malformed",
+      "split": "development",
+      "expected_syntax": "invalid",
+      "expected_valid": false,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 1317,
+      "lines": 47,
+      "size_band": "small",
+      "sha256": "bc8e55c8edf147b78e0d3001aef528e5a956f9f2014042c63d3979bf597137ba",
+      "features": [
+        "missing-final-brace"
+      ],
+      "origin": {
+        "kind": "controlled_edit",
+        "parent_id": "typescript/real/corePublic.ts",
+        "parent_sha256": "a7b165ec7979470a90bd157c4a8e49da2ac6fa753f1f56ce1b2429d2667c4e04",
+        "upstream": {
+          "kind": "official_github_source",
+          "repository": "microsoft/TypeScript",
+          "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+          "source_path": "src/compiler/corePublic.ts",
+          "url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/corePublic.ts",
+          "git_blob_sha1": "23888726d280e8986bcf6a7e9d9e6416469ec5b9",
+          "upstream_sha256": "a7b165ec7979470a90bd157c4a8e49da2ac6fa753f1f56ce1b2429d2667c4e04",
+          "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+        }
+      },
+      "license_paths": [
+        "licenses/typescript-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/typescript-APACHE-2.0.txt",
+      "source_url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/corePublic.ts",
+      "headline_group": "separate_malformed",
+      "mutation": {
+        "operation": "missing-final-brace",
+        "byte_offset": 1315,
+        "removed_hex": "7d",
+        "inserted_hex": "",
+        "rationale": "Remove the last required object/type/function closing brace; no other bytes changed"
+      },
+      "validation_scope": "Syntax-only negative control; not a semantic/type-checking claim"
+    },
+    {
+      "id": "typescript/malformed/performance.missing-final-brace.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/malformed/performance.missing-final-brace.ts",
+      "category": "malformed",
+      "purpose": "malformed",
+      "split": "heldout",
+      "expected_syntax": "invalid",
+      "expected_valid": false,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 6145,
+      "lines": 210,
+      "size_band": "medium",
+      "sha256": "12fb04a144406e303e9fe69088c1056d5da0794daa419c46dd5e68a500e8fae4",
+      "features": [
+        "missing-final-brace"
+      ],
+      "origin": {
+        "kind": "controlled_edit",
+        "parent_id": "typescript/real/performance.ts",
+        "parent_sha256": "b12e3cdedb651fe1d94fceae1bb236c2745530ba7fe0c9dc996d61ba22b6c473",
+        "upstream": {
+          "kind": "official_github_source",
+          "repository": "microsoft/TypeScript",
+          "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+          "source_path": "src/compiler/performance.ts",
+          "url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/performance.ts",
+          "git_blob_sha1": "e176474b37ba836093dbbaac7f0271d5db5f0aa0",
+          "upstream_sha256": "b12e3cdedb651fe1d94fceae1bb236c2745530ba7fe0c9dc996d61ba22b6c473",
+          "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+        }
+      },
+      "license_paths": [
+        "licenses/typescript-APACHE-2.0.txt"
+      ],
+      "license_path": "licenses/typescript-APACHE-2.0.txt",
+      "source_url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/performance.ts",
+      "headline_group": "separate_malformed",
+      "mutation": {
+        "operation": "missing-final-brace",
+        "byte_offset": 6143,
+        "removed_hex": "7d",
+        "inserted_hex": "",
+        "rationale": "Remove the last required object/type/function closing brace; no other bytes changed"
+      },
+      "validation_scope": "Syntax-only negative control; not a semantic/type-checking claim"
+    },
+    {
+      "id": "json/malformed/tree-sitter-json__package.missing-final-brace.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/malformed/tree-sitter-json__package.missing-final-brace.json",
+      "category": "malformed",
+      "purpose": "malformed",
+      "split": "heldout",
+      "expected_syntax": "invalid",
+      "expected_valid": false,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 1258,
+      "lines": 59,
+      "size_band": "small",
+      "sha256": "79f0c628cd1e64bb00a8920bd41cb9d49c055c73a3d952832093e118c3f7d5df",
+      "features": [
+        "missing-final-brace"
+      ],
+      "origin": {
+        "kind": "controlled_edit",
+        "parent_id": "json/real/tree-sitter-json__package.json",
+        "parent_sha256": "843df6f8d6a40ab7f12b91b5e688a1a603e65c27f797671240ecf87e1af14644",
+        "upstream": {
+          "kind": "official_git_source",
+          "repository": "tree-sitter/tree-sitter-json",
+          "revision": "254c42a6476413b776221e03982ac8ae159eeb72",
+          "source_path": "package.json",
+          "url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/package.json",
+          "git_blob_sha1": "2a04fd13c969944e8b2eb687b3405a527c6b2a49",
+          "upstream_sha256": "843df6f8d6a40ab7f12b91b5e688a1a603e65c27f797671240ecf87e1af14644"
+        }
+      },
+      "license_paths": [
+        "licenses/tree-sitter-json-MIT.txt"
+      ],
+      "license_path": "licenses/tree-sitter-json-MIT.txt",
+      "source_url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/package.json",
+      "headline_group": "separate_malformed",
+      "mutation": {
+        "operation": "missing-final-brace",
+        "byte_offset": 1257,
+        "removed_hex": "7d",
+        "inserted_hex": "",
+        "rationale": "Remove the last required object/type/function closing brace; no other bytes changed"
+      },
+      "validation_scope": "Syntax-only negative control; not a semantic/type-checking claim"
+    },
+    {
+      "id": "json/malformed/tree-sitter-json__src__grammar.missing-final-brace.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/malformed/tree-sitter-json__src__grammar.missing-final-brace.json",
+      "category": "malformed",
+      "purpose": "malformed",
+      "split": "heldout",
+      "expected_syntax": "invalid",
+      "expected_valid": false,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 13682,
+      "lines": 548,
+      "size_band": "medium",
+      "sha256": "edb4e1290d6c14cdc2ce72a3a7de457bd85f5776c72d82aa44e7e7ed261c5905",
+      "features": [
+        "missing-final-brace"
+      ],
+      "origin": {
+        "kind": "controlled_edit",
+        "parent_id": "json/real/tree-sitter-json__src__grammar.json",
+        "parent_sha256": "705e5eb30aed769698ec0ffd5d9e73e1ee0edd174f7de0dc2e6bfa62d459dceb",
+        "upstream": {
+          "kind": "official_git_source",
+          "repository": "tree-sitter/tree-sitter-json",
+          "revision": "254c42a6476413b776221e03982ac8ae159eeb72",
+          "source_path": "src/grammar.json",
+          "url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/src/grammar.json",
+          "git_blob_sha1": "626e88d5151410a105530e32588387e21db8783c",
+          "upstream_sha256": "705e5eb30aed769698ec0ffd5d9e73e1ee0edd174f7de0dc2e6bfa62d459dceb"
+        }
+      },
+      "license_paths": [
+        "licenses/tree-sitter-json-MIT.txt"
+      ],
+      "license_path": "licenses/tree-sitter-json-MIT.txt",
+      "source_url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/src/grammar.json",
+      "headline_group": "separate_malformed",
+      "mutation": {
+        "operation": "missing-final-brace",
+        "byte_offset": 13681,
+        "removed_hex": "7d",
+        "inserted_hex": "",
+        "rationale": "Remove the last required object/type/function closing brace; no other bytes changed"
+      },
+      "validation_scope": "Syntax-only negative control; not a semantic/type-checking claim"
+    },
+    {
+      "id": "json/malformed/trailing-comma.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/malformed/trailing-comma.json",
+      "category": "malformed",
+      "purpose": "malformed",
+      "split": "development",
+      "expected_syntax": "invalid",
+      "expected_valid": false,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 9,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "bbdc773a1abf3ad27738d5cdfb9d662b1372540a50bb607fe721c29c1bed434f",
+      "features": [
+        "malformed_syntax"
+      ],
+      "origin": {
+        "kind": "original_generated_negative_control",
+        "generator": "corpus_prepare.py"
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_malformed",
+      "mutation": {
+        "rationale": "Trailing object comma is not JSON grammar"
+      },
+      "validation_scope": "Syntax-only negative control, not compiler semantics"
+    },
+    {
+      "id": "json/malformed/leading-zero.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/malformed/leading-zero.json",
+      "category": "malformed",
+      "purpose": "malformed",
+      "split": "development",
+      "expected_syntax": "invalid",
+      "expected_valid": false,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 5,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "0f86e1cd3316b331c99fe18f8f02c533be89b6bfff7a0787ac2c877957971b42",
+      "features": [
+        "malformed_syntax"
+      ],
+      "origin": {
+        "kind": "original_generated_negative_control",
+        "generator": "corpus_prepare.py"
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_malformed",
+      "mutation": {
+        "rationale": "Leading zero with another integer digit is not JSON number grammar"
+      },
+      "validation_scope": "Syntax-only negative control, not compiler semantics"
+    },
+    {
+      "id": "json/malformed/unterminated-string.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "path": "json/malformed/unterminated-string.json",
+      "category": "malformed",
+      "purpose": "malformed",
+      "split": "development",
+      "expected_syntax": "invalid",
+      "expected_valid": false,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 18,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "554c329318cb6141da84dda58485b5b9163f9826e8589498a591c772f36550b8",
+      "features": [
+        "malformed_syntax"
+      ],
+      "origin": {
+        "kind": "original_generated_negative_control",
+        "generator": "corpus_prepare.py"
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_malformed",
+      "mutation": {
+        "rationale": "String has no closing quote"
+      },
+      "validation_scope": "Syntax-only negative control, not compiler semantics"
+    },
+    {
+      "id": "java/malformed/MissingInitializer.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/malformed/MissingInitializer.java",
+      "category": "malformed",
+      "purpose": "malformed",
+      "split": "development",
+      "expected_syntax": "invalid",
+      "expected_valid": false,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 43,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "40c6e8cb77dac5aec5cb42d2a0a7bc690c699890c238ad5dd0dc23c2d797eb40",
+      "features": [
+        "malformed_syntax"
+      ],
+      "origin": {
+        "kind": "original_generated_negative_control",
+        "generator": "corpus_prepare.py"
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_malformed",
+      "mutation": {
+        "rationale": "Required initializer expression is absent"
+      },
+      "validation_scope": "Syntax-only negative control, not compiler semantics"
+    },
+    {
+      "id": "java/malformed/UnterminatedString.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "path": "java/malformed/UnterminatedString.java",
+      "category": "malformed",
+      "purpose": "malformed",
+      "split": "development",
+      "expected_syntax": "invalid",
+      "expected_valid": false,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 57,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "fca25989fc6816755879a432b832621f85438e4ceb71650aa774271057feade1",
+      "features": [
+        "malformed_syntax"
+      ],
+      "origin": {
+        "kind": "original_generated_negative_control",
+        "generator": "corpus_prepare.py"
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_malformed",
+      "mutation": {
+        "rationale": "Ordinary string has no closing quote"
+      },
+      "validation_scope": "Syntax-only negative control, not compiler semantics"
+    },
+    {
+      "id": "typescript/malformed/missing-initializer.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/malformed/missing-initializer.ts",
+      "category": "malformed",
+      "purpose": "malformed",
+      "split": "development",
+      "expected_syntax": "invalid",
+      "expected_valid": false,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 31,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "dd01669ace270ad10ebd2b3112c29b6035a61f02dc2f4db7b0ed0252ece8ca8f",
+      "features": [
+        "malformed_syntax"
+      ],
+      "origin": {
+        "kind": "original_generated_negative_control",
+        "generator": "corpus_prepare.py"
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_malformed",
+      "mutation": {
+        "rationale": "Required initializer expression is absent"
+      },
+      "validation_scope": "Syntax-only negative control, not compiler semantics"
+    },
+    {
+      "id": "typescript/malformed/unterminated-string.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "path": "typescript/malformed/unterminated-string.ts",
+      "category": "malformed",
+      "purpose": "malformed",
+      "split": "development",
+      "expected_syntax": "invalid",
+      "expected_valid": false,
+      "oracle_validation": "not_run_during_preparation",
+      "bytes": 34,
+      "lines": 1,
+      "size_band": "small",
+      "sha256": "2e7b420687bfb2b8183efdcf07fe563a2e3f3c825d3f625c97bd371d3c8730ce",
+      "features": [
+        "malformed_syntax"
+      ],
+      "origin": {
+        "kind": "original_generated_negative_control",
+        "generator": "corpus_prepare.py"
+      },
+      "license_paths": [
+        "licenses/GENERATED-MIT.txt"
+      ],
+      "license_path": "licenses/GENERATED-MIT.txt",
+      "source_url": null,
+      "headline_group": "separate_malformed",
+      "mutation": {
+        "rationale": "String has no closing quote"
+      },
+      "validation_scope": "Syntax-only negative control, not compiler semantics"
+    }
+  ]
+}

@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 compiler="${ALMIDE_BIN:-almide}"
 
+python3 bench/tree-sitter-duel/verify_frozen.py
 "$compiler" test
 ALMIDE_BIN="$compiler" python3 ci/smoke.py
 python3 ci/allocation_profiler.py

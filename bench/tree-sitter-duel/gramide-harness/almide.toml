@@ -1,0 +1,10 @@
+[package]
+name = "gramide_duel"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+gramide = { git = "https://github.com/O6lvl4/gramide", tag = "v0.2.11" }
+gramide_json = { git = "https://github.com/O6lvl4/gramide-json", branch = "main" }
+gramide_java = { git = "https://github.com/O6lvl4/gramide-java", branch = "main" }
+gramide_typescript = { git = "https://github.com/O6lvl4/gramide-typescript", tag = "v0.3.13" }

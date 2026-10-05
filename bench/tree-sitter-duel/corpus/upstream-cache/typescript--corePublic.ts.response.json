@@ -1,0 +1,10 @@
+{
+  "repo": "microsoft/TypeScript",
+  "ref": "c63de15a992d37f0d6cec03ac7631872838602cb",
+  "path": "src/compiler/corePublic.ts",
+  "content": "// WARNING: The script `configurePrerelease.ts` uses a regexp to parse out these values.\r\n// If changing the text in this section, be sure to test `configurePrerelease` too.\r\nexport const versionMajorMinor = \"5.9\";\r\n// The following is baselined as a literal template type without intervention\r\n/** The version of the TypeScript compiler release */\r\nexport const version = \"5.9.3\" as string;\r\n\r\n/**\r\n * Type of objects whose values are all of the same type.\r\n * The `in` and `for-in` operators can *not* be safely used,\r\n * since `Object.prototype` may be modified by outside code.\r\n */\r\nexport interface MapLike<T> {\r\n    [index: string]: T;\r\n}\r\n\r\nexport interface SortedReadonlyArray<T> extends ReadonlyArray<T> {\r\n    \" __sortedArrayBrand\": any;\r\n}\r\n\r\nexport interface SortedArray<T> extends Array<T> {\r\n    \" __sortedArrayBrand\": any;\r\n}\r\n\r\n/**\r\n * Common read methods for ES6 Map/Set.\r\n *\r\n * @internal\r\n */\r\nexport interface ReadonlyCollection<K> {\r\n    readonly size: number;\r\n    has(key: K): boolean;\r\n    keys(): IterableIterator<K>;\r\n}\r\n\r\n/** @internal */\r\nexport type EqualityComparer<T> = (a: T, b: T) => boolean;\r\n\r\n/** @internal */\r\nexport type Comparer<T> = (a: T, b: T) => Comparison;\r\n\r\n/** @internal */\r\nexport const enum Comparison {\r\n    LessThan = -1,\r\n    EqualTo = 0,\r\n    GreaterThan = 1,\r\n}\r\n",
+  "encoding": "utf-8",
+  "sha": "23888726d280e8986bcf6a7e9d9e6416469ec5b9",
+  "display_url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/corePublic.ts",
+  "display_title": "corePublic.ts"
+}

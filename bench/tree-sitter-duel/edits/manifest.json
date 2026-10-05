@@ -1,0 +1,103 @@
+{
+  "files": [
+    {
+      "fixture_id": "java/real/LinkedTreeMap.java",
+      "source_path": "java/real/LinkedTreeMap.java",
+      "source_sha256": "c14c58d402eac0e3114dfc00cebc44ae22e6f886918fe5b3eea8b7d62a61b374",
+      "language": "java",
+      "category": "token_preserving",
+      "script": "java-token_preserving.tsv",
+      "edits": 200,
+      "script_sha256": "5082d79b00d2c725139422d8fb1d149e24caec5367852e451cb94f6b65015e6d",
+      "final_source_sha256": "18103125ca7d51b0ac582e911e7c206d89a58d7c0082c9e57509508a09b5ca5f"
+    },
+    {
+      "fixture_id": "java/real/LinkedTreeMap.java",
+      "source_path": "java/real/LinkedTreeMap.java",
+      "source_sha256": "c14c58d402eac0e3114dfc00cebc44ae22e6f886918fe5b3eea8b7d62a61b374",
+      "language": "java",
+      "category": "valid_structural",
+      "script": "java-valid_structural.tsv",
+      "edits": 80,
+      "script_sha256": "1fb57d8b8863483e1472f7da3d6f22e988d5c4ab19b46d85d51384bda086074a",
+      "final_source_sha256": "c14c58d402eac0e3114dfc00cebc44ae22e6f886918fe5b3eea8b7d62a61b374"
+    },
+    {
+      "fixture_id": "java/real/LinkedTreeMap.java",
+      "source_path": "java/real/LinkedTreeMap.java",
+      "source_sha256": "c14c58d402eac0e3114dfc00cebc44ae22e6f886918fe5b3eea8b7d62a61b374",
+      "language": "java",
+      "category": "temporary_broken",
+      "script": "java-temporary_broken.tsv",
+      "edits": 40,
+      "script_sha256": "f06c9c8a7bc32dc416c29416c940140cf3682ce51613dcbcbd59eadf96982969",
+      "final_source_sha256": "c14c58d402eac0e3114dfc00cebc44ae22e6f886918fe5b3eea8b7d62a61b374"
+    },
+    {
+      "fixture_id": "typescript/real/watchUtilities.ts",
+      "source_path": "typescript/real/watchUtilities.ts",
+      "source_sha256": "0a4919e1976ea0683ea06137ec02c97fe5ad44ca8d0bc709f69eb0230b7a5487",
+      "language": "typescript",
+      "category": "token_preserving",
+      "script": "typescript-token_preserving.tsv",
+      "edits": 200,
+      "script_sha256": "afcb915c1aa53f7133f3fd17b4fd50ed40d2ea26d3cc692059b365fd5b88e120",
+      "final_source_sha256": "f61b6dc926f0d464056c408c7d849a48647b32969427ff48b0c76e0af6cf4ba6"
+    },
+    {
+      "fixture_id": "typescript/real/watchUtilities.ts",
+      "source_path": "typescript/real/watchUtilities.ts",
+      "source_sha256": "0a4919e1976ea0683ea06137ec02c97fe5ad44ca8d0bc709f69eb0230b7a5487",
+      "language": "typescript",
+      "category": "valid_structural",
+      "script": "typescript-valid_structural.tsv",
+      "edits": 80,
+      "script_sha256": "e01fa649e8ed30c70f4ebfa92aa0335b28ca60cdbc2592b2fe551e55a0a3c894",
+      "final_source_sha256": "0a4919e1976ea0683ea06137ec02c97fe5ad44ca8d0bc709f69eb0230b7a5487"
+    },
+    {
+      "fixture_id": "typescript/real/watchUtilities.ts",
+      "source_path": "typescript/real/watchUtilities.ts",
+      "source_sha256": "0a4919e1976ea0683ea06137ec02c97fe5ad44ca8d0bc709f69eb0230b7a5487",
+      "language": "typescript",
+      "category": "temporary_broken",
+      "script": "typescript-temporary_broken.tsv",
+      "edits": 40,
+      "script_sha256": "ce0b835a9b2e913f15ec4c481f5c47c7458c54c9097e410722dfe457b2e21452",
+      "final_source_sha256": "0a4919e1976ea0683ea06137ec02c97fe5ad44ca8d0bc709f69eb0230b7a5487"
+    },
+    {
+      "fixture_id": "json/real/tree-sitter-java__src__node-types.json",
+      "source_path": "json/real/tree-sitter-java__src__node-types.json",
+      "source_sha256": "19c46facc653381c337ff6cad75dd8b052524179a366c80825d6d0010520eef2",
+      "language": "json",
+      "category": "token_preserving",
+      "script": "json-token_preserving.tsv",
+      "edits": 200,
+      "script_sha256": "605c6a92e6c51d441c5332c61f51c1ba78830d9dc4d0cf3fb593870423886957",
+      "final_source_sha256": "da7abdab3c6c96674d33fa9dd0d75c58f750ce5379fbaaf1b5b0b8332a90f984"
+    },
+    {
+      "fixture_id": "json/real/tree-sitter-java__src__node-types.json",
+      "source_path": "json/real/tree-sitter-java__src__node-types.json",
+      "source_sha256": "19c46facc653381c337ff6cad75dd8b052524179a366c80825d6d0010520eef2",
+      "language": "json",
+      "category": "valid_structural",
+      "script": "json-valid_structural.tsv",
+      "edits": 80,
+      "script_sha256": "7b4066c2cc0ee7428fa0601658aa4da97069056f6cfc9f4a9e8f7de69733887c",
+      "final_source_sha256": "19c46facc653381c337ff6cad75dd8b052524179a366c80825d6d0010520eef2"
+    },
+    {
+      "fixture_id": "json/real/tree-sitter-java__src__node-types.json",
+      "source_path": "json/real/tree-sitter-java__src__node-types.json",
+      "source_sha256": "19c46facc653381c337ff6cad75dd8b052524179a366c80825d6d0010520eef2",
+      "language": "json",
+      "category": "temporary_broken",
+      "script": "json-temporary_broken.tsv",
+      "edits": 40,
+      "script_sha256": "04b709ad236da865c8220bb89f2965b8ab21655b58e2d97ab9adc5a890c608f1",
+      "final_source_sha256": "19c46facc653381c337ff6cad75dd8b052524179a366c80825d6d0010520eef2"
+    }
+  ]
+}

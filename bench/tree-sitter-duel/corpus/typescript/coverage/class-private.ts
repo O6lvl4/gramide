@@ -1,0 +1,1 @@
+export class Counter { #value = 0; static { this.name; } constructor(public readonly label: string) {} get value(): number { return this.#value; } add(delta = 1): this { this.#value += delta; return this; } }

@@ -1,0 +1,10 @@
+{
+  "repo": "google/gson",
+  "ref": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+  "path": "gson/src/main/java/com/google/gson/Strictness.java",
+  "content": "package com.google.gson;\n\nimport com.google.gson.stream.JsonReader;\nimport com.google.gson.stream.JsonWriter;\n\n/**\n * Modes that indicate how strictly a JSON {@linkplain JsonReader reader} or {@linkplain JsonWriter\n * writer} follows the syntax laid out in the <a href=\"https://www.ietf.org/rfc/rfc8259.txt\">RFC\n * 8259 JSON specification</a>.\n *\n * <p>You can look at {@link JsonReader#setStrictness(Strictness)} to see how the strictness affects\n * the {@link JsonReader} and you can look at {@link JsonWriter#setStrictness(Strictness)} to see\n * how the strictness affects the {@link JsonWriter}.\n *\n * @see JsonReader#setStrictness(Strictness)\n * @see JsonWriter#setStrictness(Strictness)\n * @since 2.11.0\n */\npublic enum Strictness {\n  /** Allow large deviations from the JSON specification. */\n  LENIENT,\n\n  /** Allow certain small deviations from the JSON specification for legacy reasons. */\n  LEGACY_STRICT,\n\n  /** Strict compliance with the JSON specification. */\n  STRICT\n}\n",
+  "encoding": "utf-8",
+  "sha": "b207cf508c89ea569cac0bac18486902b252edd1",
+  "display_url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/Strictness.java",
+  "display_title": "Strictness.java"
+}

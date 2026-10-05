@@ -1,0 +1,40 @@
+{
+  "selected_before_parser_runs": true,
+  "selection_timestamp_utc": "2026-10-05T13:26:00Z",
+  "basis": "Purposive file-role and size-stratified sample. No candidate parsed; all selected files retained regardless of later acceptance.",
+  "pins": {
+    "typescript": "c63de15a992d37f0d6cec03ac7631872838602cb",
+    "gson": "828a97be0f8d58108b140b77df8dc76b657f4a87"
+  },
+  "java": [
+    "gson/src/main/java/com/google/gson/JsonNull.java",
+    "gson/src/main/java/com/google/gson/Strictness.java",
+    "gson/src/main/java/com/google/gson/ExclusionStrategy.java",
+    "gson/src/main/java/com/google/gson/JsonParser.java",
+    "gson/src/main/java/com/google/gson/JsonElement.java",
+    "gson/src/main/java/com/google/gson/JsonPrimitive.java",
+    "gson/src/main/java/com/google/gson/internal/LinkedTreeMap.java",
+    "gson/src/main/java/com/google/gson/stream/JsonReader.java"
+  ],
+  "typescript": [
+    "src/compiler/performance.ts",
+    "src/compiler/corePublic.ts",
+    "src/compiler/watchUtilities.ts",
+    "src/compiler/core.ts",
+    "lib/lib.es2015.symbol.d.ts",
+    "lib/lib.es2021.promise.d.ts",
+    "lib/lib.es2015.iterable.d.ts",
+    "lib/lib.es5.d.ts"
+  ],
+  "json": [
+    "tree-sitter-json/tree-sitter.json",
+    "tree-sitter-json/package.json",
+    "tree-sitter-json/src/node-types.json",
+    "tree-sitter-json/src/grammar.json",
+    "typescript/package.json",
+    "typescript/lib/typesMap.json",
+    "tree-sitter-java/src/node-types.json",
+    "tree-sitter-typescript/typescript/src/grammar.json",
+    "typescript/lib/ja/diagnosticMessages.generated.json"
+  ]
+}
