@@ -1,0 +1,103 @@
+// A real dependent package: these calls use the original helper signatures.
+import gramide.incremental
+import gramide.parser
+import gramide.tree
+
+fn item(id: Int, kind: Int, kids: List[incremental.Item]) -> incremental.Item = incremental.Item {
+  ...incremental.empty_unit(), id: id, node: tree.node(kind, [], 0, 1),
+  node_ids: [id + 1000], trace: [int.to_string(id)], kids: kids,
+  size: 3, toks: 1,
+}
+
+test "external keep_ids_from appends the supplied children and preserves immutable inputs" {
+  let prefix = item(900, 9, [])
+  let fresh = [
+    item(101, 1, [item(111, 7, []), item(112, 8, []), item(113, 7, [])]),
+    item(102, 3, []), item(103, 1, []),
+  ]
+  let before = [
+    item(10, 1, [item(11, 7, []), item(12, 7, [])]),
+    item(20, 2, []), item(30, 1, []),
+  ]
+  let saved_fresh = fresh
+  let saved_before = before
+  var target = item(1, 0, [prefix])
+  let original = target
+  let _ = incremental.keep_ids_from(target, fresh, before)
+  let first = list.get(fresh, 0)!
+  let child0 = list.get(first.kids, 0)!
+  let child2 = list.get(first.kids, 2)!
+  let last = list.get(fresh, 2)!
+  let children = [
+    incremental.Item { ...child0, id: 11 },
+    list.get(first.kids, 1)!,
+    incremental.Item { ...child2, id: 12 },
+  ]
+  assert_eq(target, incremental.Item { ...original, kids: [
+    prefix, incremental.Item { ...first, id: 10, kids: children },
+    list.get(fresh, 1)!, incremental.Item { ...last, id: 30 },
+  ] })
+  assert_eq(fresh, saved_fresh)
+  assert_eq(before, saved_before)
+}
+
+test "external keep_ids_from preserves append semantics for empty unmatched and repeated calls" {
+  let prefix = item(900, 9, [])
+  let fresh = [item(101, 2, [])]
+  let before = [item(10, 1, [])]
+  var target = item(1, 0, [prefix])
+  let original = target
+  let _ = incremental.keep_ids_from(target, [], before)
+  assert_eq(target, original)
+  // A single mismatched child does not inherit an unrelated old ID.
+  let _ = incremental.keep_ids_from(target, fresh, before)
+  assert_eq(target.kids, [prefix, list.first(fresh)!])
+  let _ = incremental.keep_ids_from(target, fresh, [])
+  assert_eq(target.kids, [prefix, list.first(fresh)!, list.first(fresh)!])
+  assert_eq(fresh, [item(101, 2, [])])
+}
+
+test "external read_items accepts immutable numbers and preserves stamps and failure boundaries" {
+  var compiled = parser.compile(parser.grammar("document", [
+    ("document", parser.wrap("document", parser.rep(parser.recover_all(parser.wrap("value", parser.tok("identifier")))))),
+  ]))
+  let source = bytes.from_string("a b")
+  let toks = [
+    tree.Token { kind: tree.T_IDENTIFIER, start: 0, end: 1, line: 1, col: 1 },
+    tree.Token { kind: tree.T_IDENTIFIER, start: 2, end: 3, line: 1, col: 3 },
+    tree.Token { kind: tree.T_EOF, start: 3, end: 3, line: 1, col: 4 },
+  ]
+  let num = parser.number(compiled, source, toks)
+  let saved_num = num
+  let saved_compiled = compiled
+  let site = parser.item_op(compiled)
+  assert(site >= 0)
+  let first = parser.parse_item(compiled, site, num, 0)!
+  let second = parser.parse_item(compiled, site, num, 1)!
+  let next_node = second.0
+  let result = incremental.read_items(compiled, site, site, site + 1, num, toks, source, 0, 2)
+  assert_eq(result, ([first.0, tree.Node { ...next_node, field: 0 - 2 - (site + 1) }], 2, true))
+  assert_eq(incremental.read_items(compiled, site, site, site, num, toks, source, 2, 2), ([], 2, true))
+  // A request to read the EOF as an item fails without inventing a node.
+  assert_eq(incremental.read_items(compiled, site, site, site, num, toks, source, 2, 3), ([], 2, false))
+  assert_eq(num, saved_num)
+  assert_eq(compiled, saved_compiled)
+}
+
+test "external window_beside_comma accepts and preserves an immutable compiled grammar" {
+  let compiled = parser.compile(parser.grammar("document", [("document", parser.lit(","))]))
+  let saved = compiled
+  let comma = parser.atom_at(compiled, bytes.from_string(","), 0, 1)
+  assert(comma >= 0)
+  let token = tree.Token { kind: tree.T_PUNCT, start: 0, end: 1, line: 1, col: 1 }
+  let comma_piece = incremental.Piece { toks: [token], atoms: [comma], size: 1, lines: 0, tail: 1 }
+  let empty_piece = incremental.Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }
+  let child = item(10, 1, [])
+  let left = incremental.Item { ...incremental.empty_unit(), kids: [child], pieces: [comma_piece, empty_piece] }
+  let right = incremental.Item { ...left, pieces: [empty_piece, comma_piece] }
+  let neither = incremental.Item { ...left, pieces: [empty_piece, empty_piece] }
+  assert(incremental.window_beside_comma(left, 0, 0, compiled))
+  assert(incremental.window_beside_comma(right, 0, 0, compiled))
+  assert(not incremental.window_beside_comma(neither, 0, 0, compiled))
+  assert_eq(compiled, saved)
+}

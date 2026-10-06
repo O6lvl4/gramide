@@ -777,23 +777,29 @@ fn spread_buckets(pairs: List[Int]) -> List[Int] = {
 }
 
 fn from_tables(t: Tables) -> Compiled = {
-  var ops: List[Op] = list.with_capacity(list.len(t.ops) / 3)
+  // Own the fields separately so the native backend moves the stored
+  // vectors into Compiled instead of copying them out of the record.
+  // The block keeps t owned; a bare t here is inferred as a borrow.
+  let { ops, blob, kids, start, extra, spelling, spelling_start, spelling_end,
+    bucket_at, bucket_next, lit_mask, head_kinds, head_mask,
+    head_start, head_len, head_run, kind_of } = { t }
+  var decoded: List[Op] = list.with_capacity(list.len(ops) / 3)
   var i = 0
-  while i + 2 < list.len(t.ops) {
-    list.push(ops, Op {
-      kind: match list.get(t.ops, i) { some(v) => v, none => K_EPS },
-      a: match list.get(t.ops, i + 1) { some(v) => v, none => 0 },
-      b: match list.get(t.ops, i + 2) { some(v) => v, none => 0 },
+  while i + 2 < list.len(ops) {
+    list.push(decoded, Op {
+      kind: match list.get(ops, i) { some(v) => v, none => K_EPS },
+      a: match list.get(ops, i + 1) { some(v) => v, none => 0 },
+      b: match list.get(ops, i + 2) { some(v) => v, none => 0 },
     })
     i = i + 3
   }
-  Compiled { ops: ops, kids: t.kids, start: t.start,
-    spelling: t.spelling, spelling_start: t.spelling_start, spelling_end: t.spelling_end,
-    bucket: spread_buckets(t.bucket_at), bucket_next: t.bucket_next,
-    lit_mask: t.lit_mask, head_kinds: t.head_kinds, head_mask: t.head_mask,
-    head_start: t.head_start, head_len: t.head_len, head_run: t.head_run,
-    kind_of: t.kind_of, extra: t.extra,
-    names: nametable.names_in(bytes.from_string(t.blob)) }
+  Compiled { ops: decoded, kids: kids, start: start,
+    spelling: spelling, spelling_start: spelling_start, spelling_end: spelling_end,
+    bucket: spread_buckets(bucket_at), bucket_next: bucket_next,
+    lit_mask: lit_mask, head_kinds: head_kinds, head_mask: head_mask,
+    head_start: head_start, head_len: head_len, head_run: head_run,
+    kind_of: kind_of, extra: extra,
+    names: nametable.names_in(bytes.from_string(blob)) }
 }
 
 // The same arena, flattened, so a generator can write it down.
@@ -2950,6 +2956,11 @@ fn toks_of(texts: List[String]) -> List[tree.Token] = {
     i = i + string.len(t)
   }
   out
+}
+
+test "table loading preserves every compiled field" {
+  let c = compile(arith())
+  assert_eq(from_tables(to_tables(c)), c)
 }
 
 test "left fold builds ((1 + 2) - 3) and precedence nests * under +" {
