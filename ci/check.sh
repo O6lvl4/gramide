@@ -8,6 +8,8 @@ python3 bench/tree-sitter-duel/verify_frozen.py
 "$compiler" test ci/duel_all_tests.almd
 # Compile the original helper signatures from a separate dependent package.
 (cd ci/compat-client && "$compiler" test src/main.almd)
+# Release-mode v2 loading must fail closed; v1 rendering stays byte-exact.
+ALMIDE_BIN="$compiler" python3 ci/paired_tables.py
 ALMIDE_BIN="$compiler" python3 ci/smoke.py
 python3 ci/allocation_profiler.py
 
