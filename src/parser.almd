@@ -2544,6 +2544,15 @@ fn swallowed_at(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: 
     a.ok
   }
 
+// One read-on trial keeps its before count beside the recovery it measures.
+// `q` is the actual item position; the caller owns advance and rollback.
+fn read_on_error_at(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, tmode: Int, id: Int, op: Op, q: Int, mark: Int) -> (Out, Int) = {
+  let before = errors_made(far)
+  let r = recover_here(c, num, out, exp, far, tmode, id, op, q)
+  let loses = if r.ok and r.pos > q and errors_made(far) != before then error_tokens(c.extra + X_ERROR, out, mark) else 0
+  (r, loses)
+}
+
 // What the items after a skip's resumed one put under ERROR, read on
 // without a tree up to `to`, where the closed read ended: the closed read's
 // ERROR tokens past the resume point are the same tokens the skip reads on
@@ -2558,16 +2567,27 @@ fn read_on_errors(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp
     var going = true
     while going and q < to {
       let mark = list.len(out)
-      let before = errors_made(far)
-      let r = recover_here(c, num, out, exp, far, tmode, id, op, q)
+      let (r, loses) = read_on_error_at(c, num, out, exp, far, tmode, id, op, q, mark)
       if r.ok and r.pos > q then {
-        if errors_made(far) != before then total = total + error_tokens(c.extra + X_ERROR, out, mark) else ()
+        total = total + loses
         q = r.pos
       } else going = false
       rollback(out, mark)
     }
     total
   }
+
+// One skip trial reads the current outer and reached positions around its
+// parse. Keep these dependent state operations together outside the q loop.
+fn skip_trial_at(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: List[Int], mut far: Cell, tmode: Int, body: Int, q: Int, mark: Int) -> (Out, Int) = {
+  let outer = far_of(far)
+  set_far(far, q)
+  let a = parse_rule(c, num, out, exp, far, tmode, body, q)
+  let reached = far_of(far)
+  if reached < outer then set_far(far, outer) else ()
+  rollback(out, mark)
+  (a, reached)
+}
 
 // The skip worked out without a tree: where the rule reads again, what head
 // of the failed item is readable on its own, and how many tokens skipping
@@ -2587,12 +2607,7 @@ fn skip_plan(c: Compiled, num: List[Int], mut out: List[tree.Node], mut exp: Lis
   var long_tries = 0
   var farthest = pos
   while resume < 0 and q < limit {
-    let outer = far_of(far)
-    set_far(far, q)
-    let a = parse_rule(c, num, out, exp, far, tmode, op.a, q)
-    let reached = far_of(far)
-    if reached < outer then set_far(far, outer) else ()
-    rollback(out, mark)
+    let (a, reached) = skip_trial_at(c, num, out, exp, far, tmode, op.a, q, mark)
     if a.ok then { resume = q; resumed_to = a.pos }
     else {
       if reached - q > LONG_TRY then { long_tries = long_tries + 1; farthest = int.max(farthest, reached) } else ()
@@ -3831,4 +3846,270 @@ test "paired wrapper supports every real punctuation pair" {
     assert(not paired_head_span(nested, 0, 4))
     assert(paired_head_span(nested, 1, 4))
   }
+}
+
+// Local test utilities use only APIs already present on main. They do not
+// add paired-head compilation, validation or parsing behavior.
+fn recovery_trial_test_op(c: Compiled, id: Int) -> Op = list.get(c.ops, id) ?? Op { kind: 0 - 1, a: 0 - 1, b: 0 - 1 }
+fn recovery_trial_test_numbers(c: Compiled, xs: List[String]) -> List[Int] = pair_brackets(number(c, src_of(xs), toks_of(xs)), [])
+
+// These state witnesses use literal positions and sequential assertions, not
+// another trial loop as their oracle. A generated-code review must retain that
+// order before running them with the pinned compiler.
+test "skip trials restore the outer far and retain a later farther failure" {
+  let c = compile(grammar("root", [("root", recover_all(seq([tok("integer"), lit(";")])))]))
+  let op = recovery_trial_test_op(c, item_op(c))
+  let nums = recovery_trial_test_numbers(c, ["!", "1", "!", "2", "!", "3", ";", ""])
+  let prefix = [tree.leaf(17, 0), tree.leaf(18, 1)]
+  var out = prefix
+  var exp: List[Int] = []
+  let initial = far_cell()
+  var far = Cell { ...initial, far: 3 }
+  // At q=1 the rule fails at 2, below the incoming far=3.
+  assert_eq(skip_trial_at(c, nums, out, exp, far, fresh(false), op.a, 1, 2), (bad(1), 2))
+  assert_eq(far, Cell { ...initial, far: 3 })
+  assert_eq(out, prefix)
+  // At q=3 it fails at 4, which must replace the prior far=3.
+  assert_eq(skip_trial_at(c, nums, out, exp, far, fresh(false), op.a, 3, 2), (bad(3), 4))
+  assert_eq(far, Cell { ...initial, far: 4 })
+  assert_eq(out, prefix)
+  // A successful build appends a leaf, then the trial rolls it back exactly.
+  assert_eq(skip_trial_at(c, nums, out, exp, far, fresh(false), op.a, 5, 2), (good(7), 5))
+  assert_eq(far, Cell { ...initial, far: 5 })
+  assert_eq(out, prefix)
+  assert_eq(exp, [])
+}
+
+test "skip plan retains failure order then resumes with its output rolled back" {
+  let c = compile(grammar("root", [("root", recover_all(seq([tok("integer"), lit(";")])))]))
+  let op = recovery_trial_test_op(c, item_op(c))
+  let nums = recovery_trial_test_numbers(c, ["!", "1", "!", "2", "!", "3", ";", ""])
+  let prefix = [tree.leaf(17, 0), tree.leaf(18, 1)]
+  var out = prefix
+  var exp: List[Int] = []
+  var far = far_cell()
+  set_far(far, 3)
+  var plan: List[Int] = [99]
+  assert_eq(skip_plan(c, nums, out, exp, far, recovering(), op, 0, plan), 5)
+  assert_eq(plan, [0, 0, 5, 5, 7, 7])
+  assert_eq(far.far, 5)
+  assert_eq(far.errors, 0)
+  assert_eq(out, prefix)
+  assert_eq(exp, [])
+}
+
+test "skip plan jumps after exactly 32 trials farther than 64 tokens" {
+  // The inner recover site logs each strict trial independently of the skip
+  // planner. q=1..32 each fail at 100; trial 32 triggers the jump to 100.
+  let c = compile(grammar("root", [("root", recover_all(recover_all(alt([
+    seq([rep1(tok("integer")), lit("!")]), lit("go"),
+  ]))))]))
+  let start = recovery_trial_test_op(c, c.start)
+  let op = recovery_trial_test_op(c, kid_at(c, start.a))
+  assert_eq(op.kind, K_RECOVER_ALL)
+  assert_eq(recovery_trial_test_op(c, op.a).kind, K_RECOVER_ALL)
+  let logged = op.a
+  let xs = ["?"] + list.map(list.range(0, 99), (_) => "1") + ["go", ""]
+  let nums = recovery_trial_test_numbers(c, xs)
+  let prefix = [tree.leaf(17, 0)]
+  var out = prefix
+  var exp: List[Int] = []
+  var far = far_cell()
+  var plan: List[Int] = []
+  assert_eq(skip_plan(c, nums, out, exp, far, M_LOG, op, 0, plan), 100)
+  assert_eq(plan, [0, 0, 100, 100, 101, 101])
+  assert_eq(list.len(exp), 132)
+  assert_eq(list.slice(exp, 0, 4), [logged, 1, 0 - 1, 100])
+  assert_eq(list.slice(exp, 120, 124), [logged, 31, 0 - 1, 100])
+  assert_eq(list.slice(exp, 124, 128), [logged, 32, 0 - 1, 100])
+  assert_eq(list.slice(exp, 128, 132), [logged, 100, 101, 100])
+  assert_eq(far.far, 100)
+  assert_eq(out, prefix)
+}
+
+test "skip plan does not count a trial reaching exactly 64 tokens" {
+  // At q=32 the reach is exactly 64: only 31 long trials have accumulated,
+  // so q=33..95 must still run before the successful q=96 trial.
+  let c = compile(grammar("root", [("root", recover_all(recover_all(alt([
+    seq([rep1(tok("integer")), lit("!")]), lit("go"),
+  ]))))]))
+  let start = recovery_trial_test_op(c, c.start)
+  let op = recovery_trial_test_op(c, kid_at(c, start.a))
+  assert_eq(op.kind, K_RECOVER_ALL)
+  assert_eq(recovery_trial_test_op(c, op.a).kind, K_RECOVER_ALL)
+  let logged = op.a
+  let xs = ["?"] + list.map(list.range(0, 95), (_) => "1") + ["go", ""]
+  let nums = recovery_trial_test_numbers(c, xs)
+  var out = [tree.leaf(17, 0)]
+  var exp: List[Int] = []
+  var far = far_cell()
+  var plan: List[Int] = []
+  assert_eq(skip_plan(c, nums, out, exp, far, M_LOG, op, 0, plan), 96)
+  assert_eq(plan, [0, 0, 96, 96, 97, 97])
+  assert_eq(list.len(exp), 384)
+  assert_eq(list.slice(exp, 120, 124), [logged, 31, 0 - 1, 96])
+  assert_eq(list.slice(exp, 124, 128), [logged, 32, 0 - 1, 96])
+  assert_eq(list.slice(exp, 128, 132), [logged, 33, 0 - 1, 96])
+  assert_eq(list.slice(exp, 376, 380), [logged, 95, 0 - 1, 96])
+  assert_eq(list.slice(exp, 380, 384), [logged, 96, 97, 96])
+  assert_eq(far.far, 96)
+  assert_eq(out, [tree.leaf(17, 0)])
+}
+
+test "read on trials measure current errors from a nonzero counter" {
+  let c = compile(grammar("root", [("root", recover_all(tok("integer")))]))
+  let id = item_op(c)
+  let op = recovery_trial_test_op(c, id)
+  let nums = recovery_trial_test_numbers(c, ["!", "?", "1", "2", "]", ""])
+  let prefix = [tree.leaf(17, 0), tree.leaf(18, 1)]
+  var out = prefix
+  var exp: List[Int] = []
+  let initial = far_cell()
+  var far = Cell { ...initial, errors: 7 }
+  set_list(far, 0, id, 1)
+  // One ERROR covers two skipped tokens, followed by the resumed integer.
+  assert_eq(read_on_error_at(c, nums, out, exp, far, M_RECOVER, id, op, 0, 2), (good(3), 2))
+  assert_eq(far.errors, 8)
+  assert_eq(list.len(out), 3)
+  let skipped_error = list.get(out, 2)!
+  assert_eq(skipped_error.start, 0)
+  assert_eq(skipped_error.end, 2)
+  rollback(out, 2)
+  assert_eq(out, prefix)
+  // This successful item makes no ERROR: the trial's delta and loss are zero.
+  assert_eq(read_on_error_at(c, nums, out, exp, far, M_RECOVER, id, op, 3, 2), (good(4), 0))
+  assert_eq(far.errors, 8)
+  rollback(out, 2)
+  assert_eq(out, prefix)
+  // The unmatched closer is one error token, using the existing closer path.
+  assert_eq(read_on_error_at(c, nums, out, exp, far, M_RECOVER, id, op, 4, 2), (good(5), 1))
+  assert_eq(far.errors, 9)
+  assert_eq(list.len(out), 3)
+  let closer_error = list.get(out, 2)!
+  assert_eq(closer_error.start, 4)
+  assert_eq(closer_error.end, 5)
+  rollback(out, 2)
+  assert_eq(out, prefix)
+  assert_eq(exp, [])
+
+  // The loop's expected total is the literal 2+0+1, from a separate fresh
+  // state. It is not computed by another loop over the same helpers.
+  var loop_out = prefix
+  var loop_exp: List[Int] = []
+  var loop_far = Cell { ...initial, errors: 7 }
+  set_list(loop_far, 0, id, 1)
+  assert_eq(read_on_errors(c, nums, loop_out, loop_exp, loop_far, recovering(), id, op, 0, 5), 3)
+  assert_eq(loop_far.errors, 9)
+  assert_eq(loop_out, prefix)
+  assert_eq(loop_exp, [])
+}
+
+test "read on stops on failure or no progress and honors owner eligibility" {
+  let c = compile(grammar("root", [("root", recover_all(tok("integer")))]))
+  let id = item_op(c)
+  let op = recovery_trial_test_op(c, id)
+  let nums = recovery_trial_test_numbers(c, ["{", "1", "}", ""])
+  let prefix = [tree.leaf(17, 0)]
+  var out = prefix
+  var exp: List[Int] = []
+  let initial = far_cell()
+  var far = Cell { ...initial, errors: 4 }
+  set_list(far, 1, id, 1)
+  // This closer pairs before the list's start, so it ends this list.
+  assert_eq(read_on_error_at(c, nums, out, exp, far, M_RECOVER, id, op, 2, 1), (bad(2), 0))
+  assert_eq(far.errors, 4)
+  assert_eq(out, prefix)
+  assert_eq(read_on_errors(c, nums, out, exp, far, recovering(), id, op, 2, 3), 0)
+  assert_eq(far.errors, 4)
+  assert_eq(out, prefix)
+  set_list(far, 1, 0 - 1, 1)
+  let ineligible = far
+  assert_eq(read_on_errors(c, nums, out, exp, far, recovering(), id, op, 0, 3), 0)
+  assert_eq(far, ineligible)
+  assert_eq(read_on_errors(c, nums, out, exp, far, recovering(), id, op, 0 - 1, 3), 0)
+  assert_eq(far, ineligible)
+  assert_eq(out, prefix)
+
+  let empty = compile(grammar("root", [("root", recover_all(Eps))]))
+  let empty_id = item_op(empty)
+  let empty_op = recovery_trial_test_op(empty, empty_id)
+  let empty_nums = recovery_trial_test_numbers(empty, ["1", ""])
+  var empty_far = Cell { ...initial, errors: 4 }
+  set_list(empty_far, 0, empty_id, 1)
+  assert_eq(read_on_error_at(empty, empty_nums, out, exp, empty_far, M_RECOVER, empty_id, empty_op, 0, 1), (good(0), 0))
+  assert_eq(empty_far.errors, 4)
+  assert_eq(read_on_errors(empty, empty_nums, out, exp, empty_far, recovering(), empty_id, empty_op, 0, 1), 0)
+  assert_eq(empty_far.errors, 4)
+  assert_eq(out, prefix)
+}
+
+test "repair trials keep later success first atom ties and repair reset" {
+  let c = compile(grammar("root", [("root", recover_all(seq([tok("integer"), lit("]"), lit(";")])))]))
+  let item = recovery_trial_test_op(c, item_op(c)).a
+  let nums = recovery_trial_test_numbers(c, ["1", ";", ""])
+  let prefix = [tree.leaf(17, 0)]
+  var out = prefix
+  var exp: List[Int] = []
+  let initial = far_cell()
+  var far = Cell { ...initial, errors: 5 }
+  var best: List[Int] = [0 - 1, 0 - 1]
+  // RPAREN fails; RBRACK reaches 2; RBRACE fails. Each trial must reset.
+  repair_trial(c, nums, out, exp, far, recovering(), item, 0, 2, 1, best)
+  assert_eq(best, [A_RBRACK, 0])
+  assert_eq(far.repair_at, 0 - 1)
+  assert_eq(far.repair_atom, 0 - 1)
+  assert_eq(far.errors, 5)
+  assert_eq(out, prefix)
+
+  let tied = compile(grammar("root", [("root", recover_all(seq([tok("integer"), lits(["]", "}", ")"]), lit(";")])))]))
+  let tied_item = recovery_trial_test_op(tied, item_op(tied)).a
+  let tied_nums = recovery_trial_test_numbers(tied, ["1", ";", ""])
+  var tied_far = Cell { ...initial, errors: 5 }
+  var tied_best: List[Int] = [0 - 1, 0 - 1]
+  // Grammar order differs, but equal losses preserve repair atom order.
+  repair_trial(tied, tied_nums, out, exp, tied_far, recovering(), tied_item, 0, 2, 1, tied_best)
+  assert_eq(tied_best, [A_RPAREN, 0])
+  assert_eq(tied_far.repair_at, 0 - 1)
+  assert_eq(tied_far.repair_atom, 0 - 1)
+  assert_eq(tied_far.errors, 5)
+  assert_eq(out, prefix)
+  var prior_best = [A_RBRACE, 0]
+  repair_trial(tied, tied_nums, out, exp, tied_far, recovering(), tied_item, 0, 2, 1, prior_best)
+  assert_eq(prior_best, [A_RBRACE, 0])
+  assert_eq(out, prefix)
+}
+
+test "repair trials refuse active repairs boundaries and nonadvancing reads" {
+  let c = compile(grammar("root", [("root", recover_all(seq([tok("integer"), lit("]"), lit(";")])))]))
+  let item = recovery_trial_test_op(c, item_op(c)).a
+  let nums = recovery_trial_test_numbers(c, ["1", ";", ""])
+  let prefix = [tree.leaf(17, 0)]
+  var out = prefix
+  var exp: List[Int] = []
+  var far = far_cell()
+  set_repair(far, 1, A_RBRACE)
+  let active = far
+  var best = [0 - 1, 0 - 1]
+  repair_trial(c, nums, out, exp, far, recovering(), item, 0, 2, 1, best)
+  assert_eq(far, active)
+  assert_eq(best, [0 - 1, 0 - 1])
+  assert_eq(out, prefix)
+  set_repair(far, 0 - 1, 0 - 1)
+  let inactive = far
+  repair_trial(c, nums, out, exp, far, recovering(), item, 0, 2, 0, best)
+  assert_eq(far, inactive)
+  repair_trial(c, nums, out, exp, far, recovering(), item, 0, 2, 2, best)
+  assert_eq(far, inactive)
+  assert_eq(best, [0 - 1, 0 - 1])
+  assert_eq(out, prefix)
+
+  let short = compile(grammar("root", [("root", recover_all(seq([tok("integer"), lit("]")])))]))
+  let short_item = recovery_trial_test_op(short, item_op(short)).a
+  let short_nums = recovery_trial_test_numbers(short, ["1", ";", ""])
+  var short_far = far_cell()
+  repair_trial(short, short_nums, out, exp, short_far, recovering(), short_item, 0, 2, 1, best)
+  assert_eq(best, [0 - 1, 0 - 1])
+  assert_eq(short_far.repair_at, 0 - 1)
+  assert_eq(short_far.repair_atom, 0 - 1)
+  assert_eq(out, prefix)
 }
