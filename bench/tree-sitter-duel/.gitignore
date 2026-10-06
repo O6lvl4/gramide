@@ -1,0 +1,16 @@
+bin/
+build/
+/*-cache/
+references/
+candidate-packages/
+gramide-engine-candidate/
+gramide-java-candidate/
+gramide-harness-candidate/
+env.local.sh
+__pycache__/
+oracles/*.class
+supplemental-json/
+node_modules/
+sources/
+gramide-json-candidate/
+results/

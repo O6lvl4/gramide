@@ -1,0 +1,11 @@
+Fetching gramide from https://github.com/O6lvl4/gramide (locked: 4916bbdc)
+No errors found
+
+0 via WASM, 1 via native fallback, 0 failed (of 1 files)
+All 1 test file(s) passed
+60 tests in 1 file
+Fetching gramide from https://github.com/O6lvl4/gramide (fix/incremental-trivia-identity)
+Built /workspace/scratch/5e56fa97c4c6/gramide-duel-20261005/json-build-cache/tmp.dtWXSYjKAi/reader
+json: package contract, 2 valid/2 malformed files and line-ending ranges passed
+json: 2 valid and 2 malformed fixtures passed
+JSON oracle passed: 20 fixed serializations, 26 malformed cases, 200 seeded documents

@@ -1,0 +1,233 @@
+// Full-tree benchmark adapter. The production lexer/parser are unchanged.
+// Warm iterations include tokenization, full tree construction and destruction.
+// Sources and language tables are loaded once, outside those iterations.
+import gramide.lang
+import gramide.parser
+import gramide.tree
+import gramide.names
+import gramide.tags
+import gramide.package_api
+import gramide.incremental
+import gramide.keystrokes
+import gramide_json
+import gramide_java
+import gramide_typescript
+import fs
+import env
+import datetime
+
+fn choose_definition(id: String) -> Result[package_api.Definition, String] = match id {
+  "json" => ok(gramide_json.definition()),
+  "java" => ok(gramide_java.definition()),
+  "typescript" => ok(gramide_typescript.definition()),
+  _ => err("unknown language: " + id),
+}
+
+// Taking the parsed tree into this function keeps its destruction inside
+// parse_once, not in a later untimed assignment. Do not replace with verify.
+fn consumed(p: parser.Parsed) -> Int = p.root.end
+fn parse_once(mut l: lang.Language, path: String, source: String) -> Result[Int, String] =
+  ok(consumed(lang.parse_lang(l, path, source)!))
+
+type KindEntry = { id: Int, kind: String }
+fn selected_kinds(language: String, nm: names.Names) -> List[KindEntry] = {
+  let kinds = if language == "json" then ["pair"]
+    else if language == "java" then ["class_declaration", "interface_declaration", "enum_declaration", "record_declaration", "method_declaration", "constructor_declaration"]
+    else ["function_declaration", "class_declaration", "interface_declaration", "enum_declaration", "type_alias_declaration", "type_alias", "method_definition", "method_signature", "abstract_method_signature", "function_signature", "generator_function_declaration", "abstract_class_declaration"]
+  var out: List[KindEntry] = []
+  for k in kinds {
+    let normalized = if list.contains(["method_definition", "method_signature", "abstract_method_signature"], k) then "method_declaration"
+      else if k == "function_signature" or k == "generator_function_declaration" then "function_declaration"
+      else if k == "type_alias" then "type_alias_declaration"
+      else if k == "abstract_class_declaration" then "class_declaration" else k
+    list.push(out, KindEntry { id: names.id_of(nm, k), kind: normalized })
+  }
+  out
+}
+fn selected_kind(id: Int, mut kinds: List[KindEntry]) -> String = {
+  var kind = ""
+  for entry in kinds { if entry.id >= 0 and entry.id == id then kind = entry.kind else () }
+  kind
+}
+
+fn blank(b: Int) -> Bool = b == 32 or b == 9 or b == 10 or b == 13
+// Canonical TypeScript declaration core omits the optional `declare` wrapper
+// and trailing semicolon separator. Names and all other bytes are unchanged.
+fn declaration_start(source: Bytes, start: Int, end: Int, kind: String, typescript: Bool) -> Int = {
+  var at = start
+  if typescript and kind != "method_declaration" and end - start > 7
+    and bytes.get_or(source, start, -1) == 100 and bytes.get_or(source, start + 1, -1) == 101
+    and bytes.get_or(source, start + 2, -1) == 99 and bytes.get_or(source, start + 3, -1) == 108
+    and bytes.get_or(source, start + 4, -1) == 97 and bytes.get_or(source, start + 5, -1) == 114
+    and bytes.get_or(source, start + 6, -1) == 101
+    and (blank(bytes.get_or(source, start + 7, -1)) or bytes.get_or(source, start + 7, -1) == 47) then {
+    at = start + 7
+    var scanning = true
+    while scanning and at < end {
+      if blank(bytes.get_or(source, at, -1)) then at = at + 1
+      else if bytes.get_or(source, at, -1) == 47 and bytes.get_or(source, at + 1, -1) == 42 then {
+        at = at + 2
+        while at + 1 < end and not (bytes.get_or(source, at, -1) == 42 and bytes.get_or(source, at + 1, -1) == 47) { at = at + 1 }
+        at = at + 2
+      } else if bytes.get_or(source, at, -1) == 47 and bytes.get_or(source, at + 1, -1) == 47 then {
+        while at < end and bytes.get_or(source, at, -1) != 10 { at = at + 1 }
+      } else scanning = false
+    }
+  } else ()
+  at
+}
+fn declaration_end(source: Bytes, start: Int, end: Int, typescript: Bool) -> Int = {
+  var at = end
+  if typescript and at > start and bytes.get_or(source, at - 1, -1) == 59 then {
+    at = at - 1
+    while at > start and blank(bytes.get_or(source, at - 1, -1)) { at = at - 1 }
+  } else ()
+  at
+}
+
+// Exact cross-parser contract: lexical name and declaration byte span.
+// This intentionally does not pretend the parsers have identical full ASTs.
+fn rows(n: tree.Node, toks: List[tree.Token], source: Bytes, mut kinds: List[KindEntry], name_field: Int, typescript: Bool, mut out: List[String]) -> Unit = {
+  let kind = selected_kind(n.kind, kinds)
+  if kind != "" then {
+    var name_start = -1
+    var name_end = -1
+    for kid in n.kids {
+      if name_start < 0 and kid.field == name_field then {
+        name_start = kid.start
+        name_end = kid.end
+      } else ()
+    }
+    match (list.get(toks, name_start), list.get(toks, name_end - 1), list.get(toks, n.start), list.get(toks, n.end - 1)) {
+      (some(a), some(b), some(s), some(e)) => {
+        let name = bytes.to_string_lossy(bytes.slice(source, a.start, b.end))
+        let k = if kind == "method_definition" or kind == "method_signature" or kind == "abstract_method_signature" then "method_declaration" else kind
+        list.push(out, "{\"kind\":" + tags.json_string(k) + ",\"name\":" + tags.json_string(name) + ",\"start_byte\":" + int.to_string(declaration_start(source, s.start, e.end, k, typescript)) + ",\"end_byte\":" + int.to_string(declaration_end(source, s.start, e.end, typescript)) + "}")
+      },
+      _ => (),
+    }
+  } else ()
+  for kid in n.kids { rows(kid, toks, source, kinds, name_field, typescript, out) }
+}
+
+fn symbols(mut l: lang.Language, path: String, source: String, language: String) -> Result[String, String] = {
+  let p = lang.parse_lang(l, path, source)!
+  var out: List[String] = []
+  var kinds = selected_kinds(language, p.names)
+  rows(p.root, p.toks, bytes.from_string(source), kinds, names.id_of(p.names, "name"), language == "typescript", out)
+  ok("[" + list.join(out, ",") + "]")
+}
+
+fn unhex(c: Int) -> Int = if c >= 48 and c <= 57 then c - 48 else if c >= 97 and c <= 102 then c - 87 else if c >= 65 and c <= 70 then c - 55 else -1
+fn insertion(text: String) -> Result[Bytes, String] = {
+  if text == "-" then ok(bytes.new(0)) else {
+    let raw = bytes.from_string(text)
+    guard bytes.len(raw) % 2 == 0 else err("odd insertion hex length")
+    var out: List[Int] = []
+    var i = 0
+    while i < bytes.len(raw) {
+      let a = unhex(bytes.get_or(raw, i, -1))
+      let b = unhex(bytes.get_or(raw, i + 1, -1))
+      guard a >= 0 and b >= 0 else err("invalid insertion hex")
+      list.push(out, a * 16 + b)
+      i = i + 2
+    }
+    ok(bytes.from_list(out))
+  }
+}
+
+fn strictly_valid(c: parser.Compiled, scan: package_api.Tokenizer, source: Bytes) -> Bool = match scan(bytes.to_string_lossy(source), false) {
+  err(_) => false,
+  ok(toks) => result.is_ok(parser.parse_with(c, source, toks)),
+}
+
+effect fn edit_script(l: lang.Language, source0: String, script: String, verify: Bool, dump: String) -> Result[String, String] = {
+  let scan = l.tokenize
+  var c = l.grammar
+  var source = bytes.from_string(source0)
+  var doc = incremental.from_parsed(keystrokes.whole_of(c, scan, source)!, source, c)
+  var samples: List[Int] = []
+  var outcomes: List[String] = []
+  var mismatches = 0
+  var fallbacks = 0
+  var index = 0
+  for line in string.split(script, "\n") {
+    if line != "" and not string.starts_with(line, "#") then {
+      let fields = string.split(line, "\t")
+      guard list.len(fields) == 3 else err("edit row requires three TSV fields")
+      let start = int.parse(list.get(fields, 0)!)!
+      let old_end = int.parse(list.get(fields, 1)!)!
+      let insert = insertion(list.get(fields, 2)!)!
+      guard start >= 0 and old_end >= start and old_end <= bytes.len(source) else err("edit outside current source")
+      let edit = incremental.Edit { start: start, old_end: old_end, new_end: start + bytes.len(insert) }
+      let prior = keystrokes.prior_of(doc, verify)
+      source = incremental.apply(source, edit, insert)
+      let a = datetime.monotonic_ns()
+      let status = incremental.reparse_status(doc, source, edit, scan, c)
+      if status != incremental.DONE then {
+        doc = incremental.rebuilt(doc, keystrokes.whole_of(c, scan, source)!, source, c, edit)
+      } else ()
+      let b = datetime.monotonic_ns()
+      if status != incremental.DONE then fallbacks = fallbacks + 1 else ()
+      list.push(samples, b - a)
+      if verify then {
+        let whole = keystrokes.whole_of(c, scan, source)!
+        let actual = incremental.materialize(doc)
+        let same = incremental.same(actual, whole)
+        if not same then { mismatches = mismatches + 1; eprintln("edit " + int.to_string(index) + ": " + incremental.first_difference(actual, whole)) } else ()
+        let actual_ids = incremental.node_ids(doc)
+        let id_break = if list.len(actual_ids) != incremental.node_count(actual.root) or not list.all(actual_ids, (id) => id > 0) then "invalid node-ID count or nonpositive ID"
+          else match prior {
+            some((before, ids_before)) => if list.len(ids_before) != incremental.node_count(before.root) or not list.all(ids_before, (id) => id > 0) then "invalid prior node-ID count or nonpositive ID"
+              else incremental.node_id_breaks(before, ids_before, actual, actual_ids, edit),
+            none => "missing prior tree in verify mode",
+          }
+        if id_break != "" then { mismatches = mismatches + 1; eprintln("edit " + int.to_string(index) + " node IDs: " + id_break) } else ()
+        let errors = parser.error_nodes(actual.root, parser.error_kind(c))
+        let valid = strictly_valid(c, scan, source)
+        list.push(outcomes, "{\"edit\":" + int.to_string(index) + ",\"errors\":" + int.to_string(errors) + ",\"node_id_break\":" + tags.json_string(id_break) + ",\"valid\":" + (if valid then "true" else "false") + ",\"mismatch\":" + (if same then "false" else "true") + "}")
+      } else ()
+      index = index + 1
+    } else ()
+  }
+  if dump != "" then { let _ = fs.write(dump, bytes.to_string_lossy(source))! } else ()
+  guard mismatches == 0 else err("incremental/fresh tree mismatches: " + int.to_string(mismatches))
+  ok("{\"edit_count\":" + int.to_string(index) + ",\"fallbacks\":" + int.to_string(fallbacks) + ",\"mismatches\":" + int.to_string(mismatches) + ",\"final_bytes\":" + int.to_string(bytes.len(source)) + ",\"samples_ns\":[" + list.join(list.map(samples, (n) => int.to_string(n)), ",") + "],\"outcomes\":[" + list.join(outcomes, ",") + "]}")
+}
+
+effect fn main() -> Result[Unit, String] = {
+  let argv = env.args()
+  let mode = list.get(argv, 0) ?? ""
+  let language = list.get(argv, 1) ?? ""
+  let path = list.get(argv, 2) ?? ""
+  let count = int.parse(list.get(argv, 3) ?? "1") ?? 1
+  guard count > 0 else err("count must be positive")
+  let source = fs.read_text(path)!
+  let t0 = datetime.monotonic_ns()
+  var l = lang.compile(choose_definition(language)!)
+  let t1 = datetime.monotonic_ns()
+  if mode == "parse" then {
+    let checksum = parse_once(l, path, source)!
+    println("{\"ok\":true,\"checksum\":" + int.to_string(checksum) + "}")
+  } else if mode == "symbols" then println(symbols(l, path, source, language)!)
+  else if mode == "warm" then {
+    let _ = parse_once(l, path, source)!
+    var samples: List[Int] = []
+    var checksum = 0
+    var i = 0
+    while i < count {
+      let a = datetime.monotonic_ns()
+      let sum = parse_once(l, path, source)!
+      let b = datetime.monotonic_ns()
+      checksum = checksum + sum
+      list.push(samples, b - a)
+      i = i + 1
+    }
+    println("{\"setup_ns\":" + int.to_string(t1 - t0) + ",\"checksum\":" + int.to_string(checksum) + ",\"samples_ns\":[" + list.join(list.map(samples, (x) => int.to_string(x)), ",") + "]}")
+  } else if mode == "edits" then {
+    let script = fs.read_text(list.get(argv, 3)!)!
+    let verify = (list.get(argv, 4) ?? "verify") == "verify"
+    println(edit_script(l, source, script, verify, list.get(argv, 5) ?? "")!)
+  } else err("mode must be parse, symbols, warm, edits")!
+  ok(())
+}

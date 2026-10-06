@@ -1,0 +1,22 @@
+{
+  "gramide": {
+    "url": "https://github.com/O6lvl4/gramide.git",
+    "commit": "4916bbdce30bd2814429e69a98450faf8c02e1b8"
+  },
+  "gramide-java": {
+    "url": "https://github.com/O6lvl4/gramide-java.git",
+    "commit": "522a5d4d6f22faf18dbfdb771230e776242f48c6"
+  },
+  "gramide-json": {
+    "url": "https://github.com/O6lvl4/gramide-json.git",
+    "commit": "8d53a8ddf7e059cbf1d0e79c8e53887e269dd94e"
+  },
+  "gramide-typescript": {
+    "url": "https://github.com/O6lvl4/gramide-typescript.git",
+    "commit": "39537a672e09d43a35150712d5fc95c0128b3a01"
+  },
+  "gramide-javascript": {
+    "url": "https://github.com/O6lvl4/gramide-javascript.git",
+    "commit": "809e55f631b465652a2b96903b6f0c0b9409c950"
+  }
+}

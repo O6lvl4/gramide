@@ -1,0 +1,1 @@
+class MissingInitializer { int value = ; }

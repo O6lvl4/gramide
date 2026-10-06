@@ -1,0 +1,531 @@
+{
+  "status": "unexecuted_plan",
+  "not_a_conformance_certificate": true,
+  "cases": [
+    {
+      "id": "json/coverage/scalar-string.json",
+      "path": "json/coverage/scalar-string.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "features": [
+        "scalar_root"
+      ],
+      "expected_syntax": "valid",
+      "split": "development"
+    },
+    {
+      "id": "json/coverage/numbers.json",
+      "path": "json/coverage/numbers.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "features": [
+        "number_lexical_edges",
+        "syntax_not_numeric_range"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout"
+    },
+    {
+      "id": "json/coverage/escapes.json",
+      "path": "json/coverage/escapes.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "features": [
+        "all_json_escape_forms",
+        "escaped_surrogate_grammar"
+      ],
+      "expected_syntax": "valid",
+      "split": "development"
+    },
+    {
+      "id": "json/coverage/duplicate-names.json",
+      "path": "json/coverage/duplicate-names.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "features": [
+        "duplicate_keys_allowed_by_syntax"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout"
+    },
+    {
+      "id": "json/coverage/unicode.json",
+      "path": "json/coverage/unicode.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "features": [
+        "utf8_multibyte",
+        "nonascii_keys"
+      ],
+      "expected_syntax": "valid",
+      "split": "development"
+    },
+    {
+      "id": "json/coverage/nested-128.json",
+      "path": "json/coverage/nested-128.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "features": [
+        "nesting_depth_128"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout"
+    },
+    {
+      "id": "java/coverage/CoreDeclarations.java",
+      "path": "java/coverage/CoreDeclarations.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "core_types",
+        "generics",
+        "record",
+        "enum"
+      ],
+      "expected_syntax": "valid",
+      "split": "development",
+      "minimum_java_release": 17,
+      "declared_gramide_limit": false
+    },
+    {
+      "id": "java/coverage/CoreStatements.java",
+      "path": "java/coverage/CoreStatements.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "loops",
+        "try_resources",
+        "lambda"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout",
+      "minimum_java_release": 8,
+      "declared_gramide_limit": false
+    },
+    {
+      "id": "java/coverage/TextBlocksUnicode.java",
+      "path": "java/coverage/TextBlocksUnicode.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "text_block",
+        "utf8_identifier",
+        "hex_float",
+        "binary_literal"
+      ],
+      "expected_syntax": "valid",
+      "split": "development",
+      "minimum_java_release": 15,
+      "declared_gramide_limit": false
+    },
+    {
+      "id": "java/coverage/module-info.java",
+      "path": "java/coverage/module-info.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "module_declaration"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout",
+      "minimum_java_release": 9,
+      "declared_gramide_limit": true
+    },
+    {
+      "id": "java/coverage/SwitchExpression.java",
+      "path": "java/coverage/SwitchExpression.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "switch_expression",
+        "arrow_case",
+        "yield"
+      ],
+      "expected_syntax": "valid",
+      "split": "development",
+      "minimum_java_release": 14,
+      "declared_gramide_limit": true
+    },
+    {
+      "id": "java/coverage/RecordPattern.java",
+      "path": "java/coverage/RecordPattern.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "record_pattern",
+        "switch_pattern"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout",
+      "minimum_java_release": 21,
+      "declared_gramide_limit": true
+    },
+    {
+      "id": "java/coverage/TypeUse.java",
+      "path": "java/coverage/TypeUse.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "type_use_annotation"
+      ],
+      "expected_syntax": "valid",
+      "split": "development",
+      "minimum_java_release": 8,
+      "declared_gramide_limit": true
+    },
+    {
+      "id": "java/coverage/Receiver.java",
+      "path": "java/coverage/Receiver.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "receiver_parameter"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout",
+      "minimum_java_release": 8,
+      "declared_gramide_limit": true
+    },
+    {
+      "id": "java/coverage/NonSealed.java",
+      "path": "java/coverage/NonSealed.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "sealed",
+        "non_sealed"
+      ],
+      "expected_syntax": "valid",
+      "split": "development",
+      "minimum_java_release": 17,
+      "declared_gramide_limit": true
+    },
+    {
+      "id": "java/coverage/IntersectionCast.java",
+      "path": "java/coverage/IntersectionCast.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "intersection_cast"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout",
+      "minimum_java_release": 8,
+      "declared_gramide_limit": true
+    },
+    {
+      "id": "java/coverage/ClassLiterals.java",
+      "path": "java/coverage/ClassLiterals.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "primitive_class_literal",
+        "array_class_literal"
+      ],
+      "expected_syntax": "valid",
+      "split": "development",
+      "minimum_java_release": 5,
+      "declared_gramide_limit": true
+    },
+    {
+      "id": "java/coverage/QualifiedInner.java",
+      "path": "java/coverage/QualifiedInner.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "generic_inner_class_creation"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout",
+      "minimum_java_release": 5,
+      "declared_gramide_limit": true
+    },
+    {
+      "id": "java/coverage/UnicodeEscapes.java",
+      "path": "java/coverage/UnicodeEscapes.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "unicode_escape_preprocessing"
+      ],
+      "expected_syntax": "valid",
+      "split": "development",
+      "minimum_java_release": 5,
+      "declared_gramide_limit": true
+    },
+    {
+      "id": "java/coverage/CompactUnit.java",
+      "path": "java/coverage/CompactUnit.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "compact_compilation_unit",
+        "instance_main"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout",
+      "minimum_java_release": 25,
+      "declared_gramide_limit": true
+    },
+    {
+      "id": "typescript/coverage/types.ts",
+      "path": "typescript/coverage/types.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "features": [
+        "mapped_types",
+        "conditional_types",
+        "template_literal_types"
+      ],
+      "expected_syntax": "valid",
+      "split": "development"
+    },
+    {
+      "id": "typescript/coverage/generics.ts",
+      "path": "typescript/coverage/generics.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "features": [
+        "const_type_parameters",
+        "indexed_access_types",
+        "generic_methods"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout"
+    },
+    {
+      "id": "typescript/coverage/expressions.ts",
+      "path": "typescript/coverage/expressions.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "features": [
+        "satisfies",
+        "optional_chaining",
+        "nullish_coalescing",
+        "regex",
+        "template_strings"
+      ],
+      "expected_syntax": "valid",
+      "split": "development"
+    },
+    {
+      "id": "typescript/coverage/namespace-enum.ts",
+      "path": "typescript/coverage/namespace-enum.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "features": [
+        "namespace",
+        "enum",
+        "import_alias"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout"
+    },
+    {
+      "id": "typescript/coverage/class-private.ts",
+      "path": "typescript/coverage/class-private.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "features": [
+        "private_fields",
+        "static_block",
+        "parameter_property",
+        "accessor"
+      ],
+      "expected_syntax": "valid",
+      "split": "development"
+    },
+    {
+      "id": "typescript/coverage/async-generator.ts",
+      "path": "typescript/coverage/async-generator.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "features": [
+        "async_generator",
+        "for_await"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout"
+    },
+    {
+      "id": "typescript/coverage/decorators.ts",
+      "path": "typescript/coverage/decorators.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "features": [
+        "decorator_syntax"
+      ],
+      "expected_syntax": "valid",
+      "split": "development"
+    },
+    {
+      "id": "typescript/coverage/import-attributes.ts",
+      "path": "typescript/coverage/import-attributes.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "features": [
+        "import_attributes",
+        "type_only_export"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout"
+    },
+    {
+      "id": "typescript/coverage/jsx.tsx",
+      "path": "typescript/coverage/jsx.tsx",
+      "language": "typescript",
+      "grammar_variant": "tsx",
+      "features": [
+        "tsx",
+        "jsx_elements",
+        "jsx_attributes"
+      ],
+      "expected_syntax": "valid",
+      "split": "heldout",
+      "optional_variant": true
+    },
+    {
+      "id": "java/malformed/JsonNull.missing-final-brace.java",
+      "path": "java/malformed/JsonNull.missing-final-brace.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "missing-final-brace"
+      ],
+      "expected_syntax": "invalid",
+      "split": "development"
+    },
+    {
+      "id": "java/malformed/JsonReader.missing-final-brace.java",
+      "path": "java/malformed/JsonReader.missing-final-brace.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "missing-final-brace"
+      ],
+      "expected_syntax": "invalid",
+      "split": "heldout"
+    },
+    {
+      "id": "typescript/malformed/corePublic.missing-final-brace.ts",
+      "path": "typescript/malformed/corePublic.missing-final-brace.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "features": [
+        "missing-final-brace"
+      ],
+      "expected_syntax": "invalid",
+      "split": "development"
+    },
+    {
+      "id": "typescript/malformed/performance.missing-final-brace.ts",
+      "path": "typescript/malformed/performance.missing-final-brace.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "features": [
+        "missing-final-brace"
+      ],
+      "expected_syntax": "invalid",
+      "split": "heldout"
+    },
+    {
+      "id": "json/malformed/tree-sitter-json__package.missing-final-brace.json",
+      "path": "json/malformed/tree-sitter-json__package.missing-final-brace.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "features": [
+        "missing-final-brace"
+      ],
+      "expected_syntax": "invalid",
+      "split": "heldout"
+    },
+    {
+      "id": "json/malformed/tree-sitter-json__src__grammar.missing-final-brace.json",
+      "path": "json/malformed/tree-sitter-json__src__grammar.missing-final-brace.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "features": [
+        "missing-final-brace"
+      ],
+      "expected_syntax": "invalid",
+      "split": "heldout"
+    },
+    {
+      "id": "json/malformed/trailing-comma.json",
+      "path": "json/malformed/trailing-comma.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "features": [
+        "malformed_syntax"
+      ],
+      "expected_syntax": "invalid",
+      "split": "development"
+    },
+    {
+      "id": "json/malformed/leading-zero.json",
+      "path": "json/malformed/leading-zero.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "features": [
+        "malformed_syntax"
+      ],
+      "expected_syntax": "invalid",
+      "split": "development"
+    },
+    {
+      "id": "json/malformed/unterminated-string.json",
+      "path": "json/malformed/unterminated-string.json",
+      "language": "json",
+      "grammar_variant": "json",
+      "features": [
+        "malformed_syntax"
+      ],
+      "expected_syntax": "invalid",
+      "split": "development"
+    },
+    {
+      "id": "java/malformed/MissingInitializer.java",
+      "path": "java/malformed/MissingInitializer.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "malformed_syntax"
+      ],
+      "expected_syntax": "invalid",
+      "split": "development"
+    },
+    {
+      "id": "java/malformed/UnterminatedString.java",
+      "path": "java/malformed/UnterminatedString.java",
+      "language": "java",
+      "grammar_variant": "java",
+      "features": [
+        "malformed_syntax"
+      ],
+      "expected_syntax": "invalid",
+      "split": "development"
+    },
+    {
+      "id": "typescript/malformed/missing-initializer.ts",
+      "path": "typescript/malformed/missing-initializer.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "features": [
+        "malformed_syntax"
+      ],
+      "expected_syntax": "invalid",
+      "split": "development"
+    },
+    {
+      "id": "typescript/malformed/unterminated-string.ts",
+      "path": "typescript/malformed/unterminated-string.ts",
+      "language": "typescript",
+      "grammar_variant": "typescript",
+      "features": [
+        "malformed_syntax"
+      ],
+      "expected_syntax": "invalid",
+      "split": "development"
+    }
+  ]
+}

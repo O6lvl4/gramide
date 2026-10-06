@@ -255,20 +255,37 @@ fn own_index(t: Int, t_begin: Int, c_start: List[Int], c_end: List[Int]) -> Int 
   }
   t - t_begin - shrink
 }
-fn cut(n: tree.Node, t_begin: Int, c_start: List[Int], c_end: List[Int], depth: Int) -> tree.Node = {
+fn cut(n: tree.Node, t_begin: Int, c_start: List[Int], c_end: List[Int], depth: Int) -> tree.Node =
+  cut_preorder(n, t_begin, c_start, c_end, 0, 0).0
+
+// Child units meet the walk in the same preorder as find_units and
+// build_kids, including empty children with the same token start. Pass
+// the cursor through ordinary wrappers instead of searching by position.
+// A placeholder's slot counts only children already collapsed: later
+// empty children at the same position must not move this child's slot.
+// Parent bounds still use own_index, whose endpoint convention expand
+// reverses. The helper returns scalars beside the newly built node.
+fn cut_preorder(n: tree.Node, t_begin: Int, c_start: List[Int], c_end: List[Int], next: Int, shrink: Int) -> (tree.Node, Int, Int) = {
   var kids: List[tree.Node] = list.with_capacity(list.len(n.kids))
-  var next = 0
+  var at = next
+  var removed = shrink
   for k in n.kids {
     if parser.site_of(k) >= 0 then {
-      // which child: the one whose start this is
-      var which = -1
-      var m = 0
-      while which < 0 and m < list.len(c_start) { if (list.get(c_start, m) ?? -1) == k.start and (list.get(c_end, m) ?? -1) >= k.end then which = m else (); m = m + 1 }
-      let slot = own_index(k.start, t_begin, c_start, c_end)
-      list.push(kids, tree.Node { kind: PLACEHOLDER, field: which, start: slot, end: slot + 1, kids: [] })
-    } else list.push(kids, cut(k, t_begin, c_start, c_end, depth + 1))
+      let cs = list.get(c_start, at) ?? k.start
+      let ce = list.get(c_end, at) ?? k.end
+      let slot = cs - t_begin - removed
+      list.push(kids, tree.Node { kind: PLACEHOLDER, field: at, start: slot, end: slot + 1, kids: [] })
+      at = at + 1
+      removed = removed + ce - cs - 1
+    } else {
+      let (child, after, collapsed) = cut_preorder(k, t_begin, c_start, c_end, at, removed)
+      list.push(kids, child)
+      at = after
+      removed = collapsed
+    }
   }
-  tree.Node { kind: n.kind, field: n.field, start: own_index(n.start, t_begin, c_start, c_end), end: own_index(n.end, t_begin, c_start, c_end), kids: kids }
+  let node = tree.Node { kind: n.kind, field: n.field, start: own_index(n.start, t_begin, c_start, c_end), end: own_index(n.end, t_begin, c_start, c_end), kids: kids }
+  (node, at, removed)
 }
 
 // The document of a whole-file parse. The root unit is the file: its own
@@ -285,9 +302,10 @@ fn numbered_from(p: parser.Parsed, source: Bytes, mut c: parser.Compiled, first_
 // is given twice, and a node the edit left alone keeps its id as it
 // would have (`left_alone`). The items are all new.
 fn rebuilt(old: Document, p: parser.Parsed, source: Bytes, mut c: parser.Compiled, edit: Edit) -> Document = {
-  let left = left_alone(materialize(old), node_ids(old), edit)
+  let base = Pos { byte: 0, line: 1, col: 1 }
+  var left = indexed_left_spans(unit_spans(old.root, base), edit, SPAN_BUCKETS)
   var doc = numbered_from(p, source, c, old.next_id, old.next_node)
-  let taken = taken_from(materialize(doc), node_ids(doc), left, edit)
+  let taken = indexed_taken_spans(unit_spans(doc.root, base), left, edit)
   let _ = rename_unit(doc.root, taken)
   doc
 }
@@ -339,7 +357,177 @@ fn json_walk(n: tree.Node, toks: List[tree.Token], ids: List[Int], names: nameta
 
 // Each node of unit `x`, standing at `p`: kind, first byte, end byte and
 // id, four numbers a node, in preorder.
+// Only recover-item bounds are summarized ahead of the walk. Looking up
+// each child's first and last tokens recursively at every parent would
+// rescan long chains of recover items; this flat reverse-postorder index visits
+// each item once, without building tokens or an expanded syntax tree.
+// `nodes` is -1 when an item's placeholders disagree with child order.
+// In that case emit's ordinal child walk and ids_walk's field-based walk
+// must remain paired by the original emitted-span path for the whole unit.
+type SpanBounds = { first: Int, last: Int, before: Int, nodes: Int }
+type SpanKid = { byte: Int, slot: Int, bound: Int }
+type SpanPlaces = { starts: List[Int], ends: List[Int], counts: List[Int], kids: List[SpanKid] }
+fn span_slot_order(n: tree.Node, next: Int) -> Int = {
+  if n.kind == PLACEHOLDER then (if n.field == next then next + 1 else -1)
+  else {
+    var at = next
+    for child in n.kids {
+      if at >= 0 then at = span_slot_order(child, at) else ()
+    }
+    at
+  }
+}
+fn span_bounds(u: Item, base: Int, mut bounds: List[SpanBounds]) -> Int = {
+  let before = list.len(bounds)
+  var first = 0
+  var last = 0
+  var tokens = 0
+  var nodes = if span_slot_order(u.node, 0) == list.len(u.kids) then list.len(u.node_ids) else -1
+  var byte = base + u.size
+  var k = list.len(u.pieces) - 1
+  // Right to left, children before their parent: only pushes, no indexed
+  // list replacement (which copies a list in the current backend).
+  while k >= 0 {
+    match list.get(u.kids, k) {
+      some(kid) => {
+        byte = byte - kid.size
+        let child = span_bounds(kid, byte, bounds)
+        match list.get(bounds, child) {
+          some(b) => {
+            if kid.toks > 0 then {
+              if tokens == 0 then last = b.last else ()
+              first = b.first
+              tokens = tokens + kid.toks
+            } else ()
+            nodes = if nodes < 0 or b.nodes < 0 then -1 else nodes + b.nodes
+          },
+          none => (),
+        }
+      },
+      none => (),
+    }
+    byte = byte - piece_size(u, k)
+    let run = piece_span_bounds(u, k, byte)
+    if run.2 > 0 then {
+      if tokens == 0 then last = run.1 else ()
+      first = run.0
+      tokens = tokens + run.2
+    } else ()
+    k = k - 1
+  }
+  list.push(bounds, SpanBounds { first: first, last: last, before: before, nodes: nodes })
+  list.len(bounds) - 1
+}
+fn piece_span_bounds(u: Item, k: Int, byte: Int) -> (Int, Int, Int) = match list.get(u.pieces, k) {
+  some(p) => (match list.first(p.toks) {
+    some(first) => (byte + first.start, match list.last(p.toks) { some(last) => byte + last.end, none => byte + first.end }, list.len(p.toks)),
+    none => (0, 0, 0),
+  }),
+  none => (0, 0, 0),
+}
+// A compressed child slot denotes all of its tokens, which can be empty.
+// Counts distinguish a genuinely empty expanded node from one spanning a
+// zero-token slot. Starts skip such slots to the next real token. Ends
+// use the last token, never the child's byte size (which includes trivia).
+// `next` is the following token's start in the WHOLE measured unit, or
+// that unit's last token end: an empty nested node can see its parent's
+// next token, exactly as byte_at does after emit.
+fn span_places(u: Item, byte: Int, bounds: List[SpanBounds], index: Int, next: Int) -> SpanPlaces = {
+  let places = u.toks - kids_toks(u) + list.len(u.kids)
+  var starts: List[Int] = list.with_capacity(places + 1)
+  var ends: List[Int] = list.with_capacity(places)
+  var counts: List[Int] = list.with_capacity(places + 1)
+  var kids: List[SpanKid] = list.with_capacity(list.len(u.kids))
+  var at = byte
+  var tokens = 0
+  var last = 0
+  var child = index - 1
+  var k = 0
+  while k < list.len(u.pieces) {
+    match list.get(u.pieces, k) {
+      some(piece) => {
+        for t in piece.toks {
+          // Any preceding tokenless child slots see this same next token.
+          while list.len(starts) < list.len(ends) { list.push(starts, at + t.start) }
+          list.push(starts, at + t.start)
+          list.push(ends, at + t.end)
+          list.push(counts, tokens)
+          tokens = tokens + 1
+          last = at + t.end
+        }
+        at = at + piece.size
+      },
+      none => (),
+    }
+    if k < list.len(u.kids) then {
+      list.push(kids, SpanKid { byte: at, slot: list.len(ends), bound: child })
+      list.push(counts, tokens)
+      match list.get(bounds, child) {
+        some(b) => {
+          if kid_toks(u, k) > 0 then {
+            while list.len(starts) < list.len(ends) { list.push(starts, b.first) }
+            list.push(starts, b.first)
+            last = b.last
+          } else ()
+          child = b.before - 1
+        },
+        none => (),
+      }
+      list.push(ends, last)
+      tokens = tokens + kid_toks(u, k)
+      at = at + kid_size(u, k)
+    } else ()
+    k = k + 1
+  }
+  while list.len(starts) <= list.len(ends) { list.push(starts, next) }
+  list.push(counts, tokens)
+  SpanPlaces { starts: starts, ends: ends, counts: counts, kids: kids }
+}
+fn direct_spans_walk(n: tree.Node, u: Item, places: SpanPlaces, bounds: List[SpanBounds], fallback: Int, k: Int, mut out: List[Int]) -> Int = {
+  if n.kind == PLACEHOLDER then {
+    match list.get(places.kids, n.field) {
+      some(p) => {
+        let next = list.get(places.starts, p.slot + 1) ?? fallback
+        let _ = direct_kid_spans(u, n.field, p.byte, p.bound, next, bounds, fallback, out)
+      },
+      none => (),
+    }
+    k
+  } else {
+    let start = list.get(places.starts, n.start) ?? fallback
+    let begin = list.get(places.counts, n.start) ?? n.start
+    let finish = list.get(places.counts, n.end) ?? n.end
+    let end = if finish > begin then list.get(places.ends, n.end - 1) ?? start else start
+    list.push(out, n.kind); list.push(out, start); list.push(out, end); list.push(out, list.get(u.node_ids, k) ?? -1)
+    var at = k + 1
+    for m in n.kids { at = direct_spans_walk(m, u, places, bounds, fallback, at, out) }
+    at
+  }
+}
+// The list-element read is the function's whole body, so the backend
+// borrows the child rather than copying its complete subtree.
+fn direct_kid_spans(u: Item, k: Int, byte: Int, index: Int, next: Int, bounds: List[SpanBounds], fallback: Int, mut out: List[Int]) -> Unit = match list.get(u.kids, k) {
+  some(kid) => {
+    let places = span_places(kid, byte, bounds, index, next)
+    let _ = direct_spans_walk(kid.node, kid, places, bounds, fallback, 0, out)
+    ()
+  },
+  none => (),
+}
 fn unit_spans(x: Item, p: Pos) -> List[Int] = {
+  var bounds: List[SpanBounds] = []
+  let index = span_bounds(x, p.byte, bounds)
+  let fallback = match list.last(bounds) { some(b) => b.last, none => 0 }
+  let nodes = match list.last(bounds) { some(b) => b.nodes, none => 0 }
+  guard nodes >= 0 else emitted_unit_spans(x, p)
+  let places = span_places(x, p.byte, bounds, index, fallback)
+  var out: List[Int] = list.with_capacity(nodes * 4)
+  let _ = direct_spans_walk(x.node, x, places, bounds, fallback, 0, out)
+  out
+}
+// The former production path is the byte-span oracle and compatibility
+// fallback for nonsequential placeholder fields.
+fn emitted_unit_spans(x: Item, p: Pos) -> List[Int] = {
   var toks: List[tree.Token] = []
   let n = emit(x, p, 0, toks)
   var ids: List[Int] = []
@@ -415,9 +603,30 @@ fn piece_last_end(u: Item, k: Int, at: Int) -> Int = match list.get(u.pieces, k)
 }
 fn kid_last_end(u: Item, k: Int, at: Int) -> Int = match list.get(u.kids, k) { some(x) => as_is_int(last_token_end(x, at)), none => at }
 fn as_is_int(n: Int) -> Int = n
-// The unit's own nodes whose text the edit changed, named from `next`;
-// the next number comes back.
-fn renew_holding(mut u: Item, base: Pos, edit: Edit, next: Int) -> Int = {
+// The own nodes touched in the old text, in preorder. Removing the first
+// or last child can shrink a parent's span clear of the edit, so looking
+// only at its new span would incorrectly keep that parent's old id.
+fn changes_before(u: Item, base: Pos, edit: Edit) -> List[Bool] = {
+  var starts: List[Int] = []
+  var ends: List[Int] = []
+  var slots: List[Int] = []
+  let _ = own_places(u, base, starts, ends, slots)
+  list.push(starts, base.byte + u.size)
+  var changed: List[Bool] = list.with_capacity(list.len(u.node_ids))
+  let _ = changes_walk(u.node, u, starts, ends, slots, Edit { ...edit, new_end: edit.old_end }, changed)
+  changed
+}
+fn changes_walk(n: tree.Node, u: Item, starts: List[Int], ends: List[Int], slots: List[Int], edit: Edit, mut out: List[Bool]) -> Unit = {
+  if n.kind == PLACEHOLDER then () else {
+    list.push(out, own_changed(n, u, starts, ends, slots, edit))
+    for m in n.kids { let _ = changes_walk(m, u, starts, ends, slots, edit, out) }
+  }
+  ()
+}
+// The unit's own nodes whose old or new text the edit changed, named from
+// `next`; the next number comes back. Replacing children leaves the own
+// nodes in the same preorder, even when it changes their token indices.
+fn renew_holding(mut u: Item, base: Pos, edit: Edit, before: List[Bool], next: Int) -> Int = {
   // one place per own token and per child, and one past the last
   let places = u.toks - kids_toks(u) + list.len(u.kids) + 1
   var starts: List[Int] = list.with_capacity(places)
@@ -427,17 +636,17 @@ fn renew_holding(mut u: Item, base: Pos, edit: Edit, next: Int) -> Int = {
   var ids: List[Int] = list.with_capacity(list.len(u.node_ids))
   // past the last place: where the next token starts, the unit's end
   list.push(starts, base.byte + u.size)
-  let (_, after_all) = renew_walk(u.node, u, starts, ends, slots, edit, 0, next, ids)
+  let (_, after_all) = renew_walk(u.node, u, starts, ends, slots, edit, before, 0, next, ids)
   u.node_ids = ids
   after_all
 }
-fn renew_walk(n: tree.Node, u: Item, starts: List[Int], ends: List[Int], slots: List[Int], edit: Edit, k: Int, next: Int, mut out: List[Int]) -> (Int, Int) = {
+fn renew_walk(n: tree.Node, u: Item, starts: List[Int], ends: List[Int], slots: List[Int], edit: Edit, before: List[Bool], k: Int, next: Int, mut out: List[Int]) -> (Int, Int) = {
   if n.kind == PLACEHOLDER then (k, next)
   else {
-    let changed = own_changed(n, u, starts, ends, slots, edit)
+    let changed = (list.get(before, k) ?? false) or own_changed(n, u, starts, ends, slots, edit)
     list.push(out, if changed then next else list.get(u.node_ids, k) ?? next)
     var at = (k + 1, if changed then next + 1 else next)
-    for m in n.kids { at = renew_walk(m, u, starts, ends, slots, edit, at.0, at.1, out) }
+    for m in n.kids { at = renew_walk(m, u, starts, ends, slots, edit, before, at.0, at.1, out) }
     at
   }
 }
@@ -525,6 +734,9 @@ fn matched_ids(u: Item, at: Int, count: Int, p: Pos, edit: Edit, before: Map[Str
 fn left_alone(tree_before: parser.Parsed, ids: List[Int], edit: Edit) -> Map[String, Int] = {
   var spans: List[Int] = []
   let _ = spans_walk(tree_before.root, tree_before.toks, ids, 0, spans)
+  left_spans(spans, edit)
+}
+fn left_spans(spans: List[Int], edit: Edit) -> Map[String, Int] = {
   let as_before = Edit { start: edit.start, old_end: edit.old_end, new_end: edit.old_end }
   let delta = edit.new_end - edit.old_end
   var keys: Map[String, Int] = map.new()
@@ -547,6 +759,9 @@ fn left_alone(tree_before: parser.Parsed, ids: List[Int], edit: Edit) -> Map[Str
 fn taken_from(tree_after: parser.Parsed, ids: List[Int], left: Map[String, Int], edit: Edit) -> Map[Int, Int] = {
   var spans: List[Int] = []
   let _ = spans_walk(tree_after.root, tree_after.toks, ids, 0, spans)
+  taken_spans(spans, left, edit)
+}
+fn taken_spans(spans: List[Int], left: Map[String, Int], edit: Edit) -> Map[Int, Int] = {
   var taken: Map[Int, Int] = map.new()
   var seen: Map[String, Int] = map.new()
   var m = 0
@@ -562,6 +777,167 @@ fn taken_from(tree_after: parser.Parsed, ids: List[Int], left: Map[String, Int],
     m = m + 4
   }
   taken
+}
+
+// Production span lookup, with the string helpers above kept independent
+// as compatibility APIs and correctness oracles. A hash only chooses a
+// bucket: every match compares all three integers, never a packed key.
+// Rows are appended in reverse old preorder, making each bucket's chain
+// run in old preorder. Removing the first exact triple is therefore the
+// same occurrence rule as the string key's #0, #1, ... suffixes. A failed
+// fresh lookup removes nothing, including when another key shares its hash.
+//
+// The immutable row pool has no list.set copies. Only scalar-key maps are
+// mutated: bucket heads and, when a non-head row is removed, link overrides.
+// At most 64 old rows may share a bucket, counting duplicate keys too.
+// Exceeding that bound discards the partial index and uses the original
+// string path for the entire operation, before any IDs have been renamed.
+// This fallback pays for the partial build plus the original work; it
+// bounds numeric collision/duplicate scans rather than changing semantics.
+let SPAN_BUCKETS = 1048573
+let SPAN_CHAIN_LIMIT = 64
+type SpanRow = { kind: Int, start: Int, end: Int, id: Int, next: Int }
+type SpanBucket = { head: Int, count: Int }
+type SpanIndex = {
+  rows: List[SpanRow], buckets: Map[Int, SpanBucket], links: Map[Int, Int],
+  legacy: Map[String, Int], overflow: Bool, modulus: Int,
+}
+fn new_span_index(capacity: Int, buckets: Int) -> SpanIndex = SpanIndex {
+  rows: list.with_capacity(capacity), buckets: map.new(), links: map.new(),
+  legacy: map.new(), overflow: false, modulus: int.max(1, int.min(SPAN_BUCKETS, buckets)),
+}
+// Reduce before mixing: even Int's minimum/maximum are safe (no abs,
+// negation or unreduced multiplication). The mixed magnitude is less than
+// 70 billion. A smaller modulus is useful for forcing collisions in tests.
+fn numeric_span_hash(kind: Int, start: Int, end: Int, modulus: Int) -> Int =
+  ((kind % modulus) * 65599 + (start % modulus) * 257 + end % modulus) % modulus
+
+fn index_old_span(mut index: SpanIndex, kind: Int, start: Int, end: Int, id: Int) -> Unit = {
+  let hash = numeric_span_hash(kind, start, end, index.modulus)
+  let bucket = map.get(index.buckets, hash) ?? SpanBucket { head: -1, count: 0 }
+  if bucket.count < SPAN_CHAIN_LIMIT then {
+    let row = list.len(index.rows)
+    list.push(index.rows, SpanRow { kind: kind, start: start, end: end, id: id, next: bucket.head })
+    map.insert(index.buckets, hash, SpanBucket { head: row, count: bucket.count + 1 })
+  } else index.overflow = true
+  ()
+}
+fn index_old_spans(mut index: SpanIndex, spans: List[Int], edit: Edit) -> Unit = {
+  let as_before = Edit { start: edit.start, old_end: edit.old_end, new_end: edit.old_end }
+  let delta = edit.new_end - edit.old_end
+  // Ignore an incomplete final row, just like left_spans.
+  var m = (list.len(spans) / 4) * 4 - 4
+  while m >= 0 and not index.overflow {
+    let start = list.get(spans, m + 1) ?? 0
+    let end = list.get(spans, m + 2) ?? 0
+    if not changed_by(start, end, as_before) then {
+      let shift = if end <= edit.start then 0 else delta
+      let _ = index_old_span(index, list.get(spans, m) ?? 0, start + shift, end + shift, list.get(spans, m + 3) ?? -1)
+    } else ()
+    m = m - 4
+  }
+  ()
+}
+fn discard_span_index(mut index: SpanIndex) -> Unit = {
+  let rows: List[SpanRow] = []
+  let buckets: Map[Int, SpanBucket] = map.new()
+  let links: Map[Int, Int] = map.new()
+  index.rows = rows
+  index.buckets = buckets
+  index.links = links
+  ()
+}
+fn indexed_left_spans(spans: List[Int], edit: Edit, buckets: Int) -> SpanIndex = {
+  var index = new_span_index(list.len(spans) / 4, buckets)
+  let _ = index_old_spans(index, spans, edit)
+  if index.overflow then {
+    let _ = discard_span_index(index)
+    index.legacy = left_spans(spans, edit)
+  } else ()
+  index
+}
+// Pop the oldest remaining occurrence of this exact triple. The immutable
+// next link is overridden only if removing a row from inside a bucket.
+fn take_indexed_id(mut index: SpanIndex, kind: Int, start: Int, end: Int) -> Option[Int] = {
+  let hash = numeric_span_hash(kind, start, end, index.modulus)
+  let bucket = map.get(index.buckets, hash) ?? SpanBucket { head: -1, count: 0 }
+  var row = bucket.head
+  var previous = -1
+  var found: Option[Int] = none
+  while row >= 0 {
+    match list.get(index.rows, row) {
+      some(r) => {
+        let next = map.get(index.links, row) ?? r.next
+        if r.kind == kind and r.start == start and r.end == end then {
+          found = some(r.id)
+          if previous < 0 then map.insert(index.buckets, hash, SpanBucket { head: next, count: bucket.count })
+          else map.insert(index.links, previous, next)
+          row = -1
+        } else { previous = row; row = next }
+      },
+      none => { row = -1 },
+    }
+  }
+  found
+}
+fn index_fresh_spans(spans: List[Int], mut index: SpanIndex, edit: Edit, mut taken: Map[Int, Int]) -> Unit = {
+  var m = 0
+  while m + 3 < list.len(spans) {
+    let start = list.get(spans, m + 1) ?? 0
+    let end = list.get(spans, m + 2) ?? 0
+    if not changed_by(start, end, edit) then {
+      match take_indexed_id(index, list.get(spans, m) ?? 0, start, end) {
+        some(old) => map.insert(taken, list.get(spans, m + 3) ?? -1, old),
+        none => (),
+      }
+    } else ()
+    m = m + 4
+  }
+  ()
+}
+fn indexed_taken_spans(spans: List[Int], mut index: SpanIndex, edit: Edit) -> Map[Int, Int] = {
+  if index.overflow then taken_spans(spans, index.legacy, edit) else {
+    var taken: Map[Int, Int] = map.new()
+    let _ = index_fresh_spans(spans, index, edit, taken)
+    taken
+  }
+}
+fn indexed_untouched_before(u: Item, i: Int, j: Int, p: Pos, edit: Edit, buckets: Int) -> SpanIndex = {
+  // Only child bases are collected, not another copy of all their spans.
+  var bases: List[Pos] = []
+  var at = p
+  var k = i
+  while k <= j {
+    list.push(bases, at)
+    at = after(at, kid_size(u, k), kid_lines(u, k), kid_tail(u, k))
+    if k < j then at = after(at, piece_size(u, k + 1), piece_lines(u, k + 1), piece_tail(u, k + 1)) else ()
+    k = k + 1
+  }
+  var index = new_span_index(0, buckets)
+  k = j
+  while k >= i and not index.overflow {
+    let _ = index_old_spans(index, kid_spans(u, k, list.get(bases, k - i) ?? p), edit)
+    k = k - 1
+  }
+  if index.overflow then {
+    let _ = discard_span_index(index)
+    index.legacy = untouched_before(u, i, j, p, edit)
+  } else ()
+  index
+}
+fn indexed_matched_ids(u: Item, at: Int, count: Int, p: Pos, edit: Edit, mut index: SpanIndex) -> Map[Int, Int] = {
+  if index.overflow then matched_ids(u, at, count, p, edit, index.legacy) else {
+    var taken: Map[Int, Int] = map.new()
+    var pos = p
+    var k = at
+    while k < at + count {
+      let _ = index_fresh_spans(kid_spans(u, k, pos), index, edit, taken)
+      pos = after(pos, kid_size(u, k), kid_lines(u, k), kid_tail(u, k))
+      if k + 1 < at + count then pos = after(pos, piece_size(u, k + 1), piece_lines(u, k + 1), piece_tail(u, k + 1)) else ()
+      k = k + 1
+    }
+    taken
+  }
 }
 
 // Children `at..at + count` with their node ids mapped through `taken`.
@@ -785,6 +1161,12 @@ fn renumber(n: tree.Node, from: Int, to: Int, count: Int, slot_from: Int, slot_d
 // item is stamped with `first_stamp`, the rest with `rest_stamp`, as the
 // whole parse would. The flag is false when an item could not be read.
 fn read_items(mut c: parser.Compiled, site: Int, first_stamp: Int, rest_stamp: Int, num: List[Int], toks: List[tree.Token], slice: Bytes, from: Int, eof_index: Int) -> (List[tree.Node], Int, Bool) = {
+  var numbers = num
+  read_items_in_place(c, site, first_stamp, rest_stamp, numbers, toks, slice, from, eof_index)
+}
+// The window already owns its numbered tokens. Keep that hot path mutable
+// while the original entry point continues to accept an immutable list.
+fn read_items_in_place(mut c: parser.Compiled, site: Int, first_stamp: Int, rest_stamp: Int, mut num: List[Int], toks: List[tree.Token], slice: Bytes, from: Int, eof_index: Int) -> (List[tree.Node], Int, Bool) = {
   var nodes: List[tree.Node] = []
   var pos = from
   var fine = true
@@ -794,7 +1176,7 @@ fn read_items(mut c: parser.Compiled, site: Int, first_stamp: Int, rest_stamp: I
       match parser.parse_item(c, site, num, pos) {
         some((n, at)) => if at > pos then {
           let stamp = if list.is_empty(nodes) then first_stamp else rest_stamp
-          list.push(nodes, if stamp == site or n.field != 0 - 2 - site then n else tree.Node { ...n, field: 0 - 2 - stamp })
+          list.push(nodes, item_stamped(n, site, stamp))
           pos = at
         } else { fine = false },
         none => { fine = false },
@@ -802,6 +1184,42 @@ fn read_items(mut c: parser.Compiled, site: Int, first_stamp: Int, rest_stamp: I
     } else ()
   }
   (nodes, pos, fine)
+}
+// Move the parsed node through its stamp change. A record update directly
+// in read_items' loop made the backend copy the node's whole subtree.
+fn item_stamped(n: tree.Node, site: Int, stamp: Int) -> tree.Node =
+  if stamp == site or n.field != 0 - 2 - site then n else tree.Node { ...n, field: 0 - 2 - stamp }
+// A sibling window may replace children, but cannot re-read parent-owned
+// tokens between them. Removing such a separator also changes the parent's
+// token space, which the child-only splice cannot reconstruct safely.
+fn window_owns_tokens(u: Item, i: Int, j: Int) -> Bool = {
+  var k = i + 1
+  var found = false
+  while not found and k <= j { found = piece_count(u, k) > 0; k = k + 1 }
+  found
+}
+// The first/last non-layout token of a parent's piece, as a grammar atom.
+// Stop at the nearest text token even when it spells no grammar literal.
+fn piece_edge_atom(u: Item, at: Int, last: Bool) -> Int = match list.get(u.pieces, at) {
+  some(p) => {
+    var k = if last then list.len(p.toks) - 1 else 0
+    var atom = -1
+    var found = false
+    while not found and k >= 0 and k < list.len(p.toks) {
+      match list.get(p.toks, k) { some(t) => if not is_layout(t) then { atom = list.get(p.atoms, k) ?? -1; found = true } else (), none => () }
+      k = k + (if last then -1 else 1)
+    }
+    atom
+  },
+  none => -1,
+}
+fn window_beside_comma(u: Item, i: Int, j: Int, c: parser.Compiled) -> Bool = {
+  var compiled = c
+  window_beside_comma_in_place(u, i, j, compiled)
+}
+fn window_beside_comma_in_place(u: Item, i: Int, j: Int, mut c: parser.Compiled) -> Bool = {
+  let comma = parser.atom_at(c, bytes.from_string(","), 0, 1)
+  comma >= 0 and (piece_edge_atom(u, i, true) == comma or piece_edge_atom(u, j + 1, false) == comma)
 }
 // Re-read children `i..j` of `u` from `source`, whose bytes for them now
 // run from `base.byte` to `new_end`; `next` is the byte where the token
@@ -816,6 +1234,14 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   let stop = if at_eof then bytes.len(source) else new_end + head_len
   guard u.child_site >= 0 else NO_SITE
   guard not has_kid_kind(u, parser.error_kind(c)) else ERROR_NEAR
+  // Reading a child's rule cannot validate a changed parent prelude (an
+  // opening delimiter or package clause). All its old tokens must remain.
+  guard not from_start or skip == piece_count(u, 0) else NO_PARSE
+  guard not window_owns_tokens(u, i, j) else NO_PARSE
+  // The following head is only lookahead, not part of the replaced window.
+  // In particular, changing a closing delimiter to another punctuation
+  // token cannot be accepted just because its kind and length still match.
+  guard edit.start >= base.byte and edit.new_end <= new_end else NO_PARSE
   guard stop <= bytes.len(source) and new_end >= base.byte else { list.push(u.trace, "window out of range: " + int.to_string(base.byte) + ".." + int.to_string(new_end) + "+" + int.to_string(head_len) + " of " + int.to_string(bytes.len(source))); NO_HEAD }
   let slice = bytes.slice(source, base.byte, stop)
   var toks = match lex_in_place(tokenize, source, base.byte, stop) { some(t) => t, none => ([]: List[tree.Token]) }
@@ -852,13 +1278,24 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   // its first child (a file's `package` and imports): the edit did not touch
   // them, so they must come out as they were, and the items start after them
   guard prelude_same(toks, u, skip) else { list.push(u.trace, "the tokens before the first item changed"); NO_PARSE }
-  let (nodes, pos, fine) = read_items(c, bare, old_site, rest, num, toks, slice, skip, eof_index)
+  let (nodes, pos, fine) = read_items_in_place(c, bare, old_site, rest, num, toks, slice, skip, eof_index)
   // no tokens at all is a window whose items were deleted; tokens that no
   // item took are a failure
   guard fine and pos == eof_index and (eof_index == 0 or not list.is_empty(nodes)) else {
     list.push(u.trace, "no parse at token " + int.to_string(pos) + " of " + int.to_string(eof_index) + ": " + parser.explain_item(c, bare, slice, toks, num, pos) + " in: " + string.take(bytes.to_string_lossy(slice), 600))
     NO_PARSE
   }
+  // A window at a child's head can acquire leading trivia. Keep those
+  // bytes in the parent's preceding piece, rather than discarding them
+  // when the fresh children move out. Leading tokens would change the
+  // parent's own parse, which this window did not read: fall back before
+  // building anything or consuming ids.
+  let leading_tokens = match list.first(nodes) { some(n) => n.start, none => eof_index }
+  guard leading_tokens == (if from_start then skip else 0) else NO_PARSE
+  // The list's commas belong to its parent, outside the recover bodies.
+  // An empty window would orphan one of them: only a parent/whole parse
+  // can decide whether that edited list is valid.
+  guard not list.is_empty(nodes) or not window_beside_comma_in_place(u, i, j, c) else NO_PARSE
   // the token at `eof_index` is where the window ends: the head that follows
   // it, or the file's EOF; either is excluded from the items and gives their end
   // the window as a unit of its own, then its children moved into `u`
@@ -867,17 +1304,18 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   let count = list.len(fresh.kids)
   // the replaced children's nodes that the edit leaves alone, where child i stands
   let old_p = if from_start then (list.get(kid_bases(u, base), i) ?? base) else base
-  let untouched = untouched_before(u, i, j, old_p, edit)
+  var untouched = indexed_untouched_before(u, i, j, old_p, edit, SPAN_BUCKETS)
   // a fresh node that is one of those, the same kind over the same text,
   // keeps that one's id: named in the window, before the children move into
   // `u`, so that only they are moved to be named
   let fresh_p = after(base, piece_size(fresh, 0), piece_lines(fresh, 0), piece_tail(fresh, 0))
-  let _ = rename_kids(fresh, 0, count, matched_ids(fresh, 0, count, fresh_p, edit, untouched))
+  let _ = rename_kids(fresh, 0, count, indexed_matched_ids(fresh, 0, count, fresh_p, edit, untouched))
   let old_slot = slot_of(u, i)
   // a window from the unit's start read the first piece again (i is 0)
   let leading = if from_start then piece_count(fresh, 0) - piece_count(u, 0) else 0
   u.node = renumber(u.node, i, j, count, old_slot, count - (j - i + 1) + leading)
-  if from_start then { let _ = replace_first_piece(u, fresh) } else ()
+  if from_start then { let _ = replace_first_piece(u, fresh) }
+  else if piece_size(fresh, 0) > 0 then { let _ = append_leading_trivia(u, i, fresh) } else ()
   // the children replaced: an item read again that comes out the same
   // (kind, tokens, size) is the same item and keeps its id, and so do the
   // items inside it
@@ -898,44 +1336,57 @@ fn keep_ids(mut u: Item, at: Int, count: Int, before: List[Item]) -> Unit = {
   while list.len(u.kids) > at + count { match list.pop(u.kids) { some(x) => list.push(aside, x), none => () } }
   var fresh: List[Item] = []
   while list.len(u.kids) > at { match list.pop(u.kids) { some(x) => list.push(fresh, x), none => () } }
+  let alone = count == 1 and list.len(before) == 1
   var m = 0
-  while list.len(fresh) > 0 {
-    match list.pop(fresh) {
-      some(x) => {
-        let alone = count == 1 and list.len(before) == 1
-        var f = if alone then 0 else m
-        var found = alone
-        while not found and f < list.len(before) {
-          match list.get(before, f) { some(b) => if b.node.kind == x.node.kind and b.toks == x.toks and b.size == x.size then found = true else f = f + 1, none => { f = list.len(before) } }
-        }
-        if found then {
-          m = f + 1
-          match list.get(before, f) { some(b) => list.push(u.kids, adopt(x, b)), none => list.push(u.kids, x) }
-        } else list.push(u.kids, x)
-      },
-      none => (),
-    }
-  }
+  while list.len(fresh) > 0 { m = keep_next(u, fresh, before, m, alone) }
   while list.len(aside) > 0 { match list.pop(aside) { some(x) => list.push(u.kids, x), none => () } }
   ()
 }
+// Read only the three matching measures, with the item borrowed in place.
+// A list.get in the changing search loop would copy its whole subtree.
+fn item_matches(before: List[Item], at: Int, kind: Int, toks: Int, size: Int) -> Bool = match list.get(before, at) {
+  some(b) => b.node.kind == kind and b.toks == toks and b.size == size,
+  none => false,
+}
+fn matching_item(before: List[Item], from: Int, kind: Int, toks: Int, size: Int) -> Int = {
+  var at = from
+  while at < list.len(before) and not item_matches(before, at, kind, toks, size) { at = at + 1 }
+  if at < list.len(before) then at else -1
+}
+// Pop in original order and hand each owned child to a function of its own:
+// the backend can move it, rather than copying it in a loop's branches.
+fn keep_next(mut u: Item, mut fresh: List[Item], before: List[Item], from: Int, alone: Bool) -> Int = match list.pop(fresh) {
+  some(x) => keep_item(u, x, before, from, alone),
+  none => from,
+}
+fn keep_item(mut u: Item, x: Item, before: List[Item], from: Int, alone: Bool) -> Int = {
+  let at = if alone then 0 else matching_item(before, from, x.node.kind, x.toks, x.size)
+  list.push(u.kids, adopt_at(x, before, at))
+  if at >= 0 then at + 1 else from
+}
+fn adopt_at(x: Item, before: List[Item], at: Int) -> Item = match list.get(before, at) {
+  some(b) => adopt(x, b),
+  none => x,
+}
 // `x` with `b`'s id, its children named from `b`'s
 fn adopt(x: Item, b: Item) -> Item = {
-  var named = Item { ...x, id: b.id, kids: ([]: List[Item]) }
-  let _ = keep_ids_from(named, x.kids, b.kids)
+  var named = Item { ...x, id: b.id }
+  let _ = keep_owned_ids_from(named, b.kids)
   named
 }
+// The original helper appends the separately supplied fresh children;
+// existing children of u and the caller's fresh list must remain intact.
 fn keep_ids_from(mut u: Item, fresh_kids: List[Item], before: List[Item]) -> Unit = {
   var m = 0
-  for x in fresh_kids {
-    var f = m
-    var found = false
-    while not found and f < list.len(before) {
-      match list.get(before, f) { some(b) => if b.node.kind == x.node.kind and b.toks == x.toks and b.size == x.size then found = true else f = f + 1, none => { f = list.len(before) } }
-    }
-    if found then { m = f + 1; match list.get(before, f) { some(b) => list.push(u.kids, adopt(x, b)), none => list.push(u.kids, x) } }
-    else list.push(u.kids, x)
-  }
+  for x in fresh_kids { m = keep_item(u, x, before, m, false) }
+  ()
+}
+// Adoption already owns u's children, so move them through the matcher.
+fn keep_owned_ids_from(mut u: Item, before: List[Item]) -> Unit = {
+  var fresh: List[Item] = []
+  while list.len(u.kids) > 0 { match list.pop(u.kids) { some(x) => list.push(fresh, x), none => () } }
+  var m = 0
+  while list.len(fresh) > 0 { m = keep_next(u, fresh, before, m, false) }
   ()
 }
 // child `at` stamped with `first` when its stamp is `rest`
@@ -956,6 +1407,16 @@ fn replace_first_piece(mut u: Item, fresh: Item) -> Unit = {
   list.push(u.pieces, list.first(fresh.pieces) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 })
   while list.len(aside) > 0 { match list.pop(aside) { some(x) => list.push(u.pieces, x), none => () } }
   ()
+}
+// The window starts just after piece k. Its leading piece has no tokens,
+// so appending its measures moves the first child without changing any
+// parent token or node index. The bytes may contain newlines or comments.
+fn append_leading_trivia(mut u: Item, k: Int, fresh: Item) -> Unit = {
+  let piece = list.get(u.pieces, k) ?? Piece { toks: [], atoms: [], size: 0, lines: 0, tail: 0 }
+  let size = piece_size(fresh, 0)
+  let lines = piece_lines(fresh, 0)
+  put_piece(u, k, Piece { ...piece, size: piece.size + size, lines: piece.lines + lines,
+    tail: if lines > 0 then piece_tail(fresh, 0) else piece.tail + size })
 }
 fn slot_of(u: Item, k: Int) -> Int = {
   var slot = 0
@@ -1162,9 +1623,13 @@ fn locate(u: Item, base: Pos, bases: List[Pos], edit: Edit) -> (Int, Int, Bool, 
 // An edit read into unit `u`, and then its own nodes that hold the edit
 // named again: their text changed, whichever way the edit was read.
 fn reparse_in(mut u: Item, base: Pos, source: Bytes, edit: Edit, tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], mut c: parser.Compiled, mut ids: List[Int]) -> Int = {
+  // Insertions cannot remove an old boundary. For deletions/replacements,
+  // remember the old spans before reparse_here changes any pieces or kids.
+  // This read-only snapshot also leaves a failed reparse untouched.
+  let before = if edit.old_end > edit.start then changes_before(u, base, edit) else ([]: List[Bool])
   let status = reparse_here(u, base, source, edit, tokenize, c, ids)
   if status == DONE then {
-    ids = list.set(ids, 1, renew_holding(u, base, edit, list.get(ids, 1) ?? 1))
+    ids = list.set(ids, 1, renew_holding(u, base, edit, before, list.get(ids, 1) ?? 1))
     DONE
   } else status
 }
@@ -1335,6 +1800,33 @@ fn deeper(a: tree.Node, b: tree.Node, path: String, names: nametable.Names) -> S
 // The text after an edit.
 fn apply(source: Bytes, edit: Edit, text: Bytes) -> Bytes =
   bytes.concat(bytes.concat(bytes.slice(source, 0, edit.start), text), bytes.slice(source, edit.old_end, bytes.len(source)))
+
+// Compare each item both in its real position and alone: the latter has
+// a different end-of-stream lookahead from its containing document.
+fn check_direct_spans(u: Item, base: Pos) -> Unit = {
+  assert_eq(unit_spans(u, base), emitted_unit_spans(u, base))
+  let bases = kid_bases(u, base)
+  var k = 0
+  for kid in u.kids {
+    let _ = check_direct_spans(kid, list.get(bases, k) ?? base)
+    k = k + 1
+  }
+  ()
+}
+fn check_document_spans(doc: Document) -> Unit = {
+  let _ = check_direct_spans(doc.root, Pos { byte: 0, line: 1, col: 1 })
+  let _ = check_direct_spans(doc.root, Pos { byte: 37, line: 8, col: 4 })
+  ()
+}
+fn emitted_rebuilt(old: Document, p: parser.Parsed, source: Bytes, mut c: parser.Compiled, edit: Edit) -> Document = {
+  let left = left_alone(materialize(old), node_ids(old), edit)
+  var doc = numbered_from(p, source, c, old.next_id, old.next_node)
+  let taken = taken_from(materialize(doc), node_ids(doc), left, edit)
+  let _ = rename_unit(doc.root, taken)
+  doc
+}
+fn span_test_piece(toks: List[tree.Token], size: Int) -> Piece =
+  Piece { toks: toks, atoms: [], size: size, lines: 0, tail: size }
 
 // ── tests, over a language of items holding statements ───────────────────
 fn spec() -> lex.Spec = lex.Spec {
@@ -1676,10 +2168,12 @@ fn node_id_breaks(tree_before: parser.Parsed, ids_before: List[Int], tree_after:
   out
 }
 fn id_edit(mut c: parser.Compiled, mut doc: Document, text: Bytes, edit: Edit, insert: String) -> (Bytes, String) = {
+  let _ = check_document_spans(doc)
   let before = materialize(doc)
   let before_ids = node_ids(doc)
   let after = apply(text, edit, bytes.from_string(insert))
   let status = reparse_status(doc, after, edit, (s, r) => scan(s, r), c)
+  let _ = check_document_spans(doc)
   let got = materialize(doc)
   let got_ids = node_ids(doc)
   let full = whole(c, bytes.to_string_lossy(after))
@@ -1738,4 +2232,851 @@ test "a document read again whole after an edit keeps the ids of the nodes the e
   assert(again.next_node > doc.next_node, "numbering goes on")
   // everything but the statement that took the `;` and what holds it keeps its id
   assert(list.len(list.filter(node_ids(again), (id) => list.contains(node_ids(doc), id))) > 0, "some ids are kept")
+}
+
+// A window's children start at their first tokens, not at the window's
+// first byte. Inserting trivia at a head must preserve the bytes between.
+fn prefix_round_trip(mut c: parser.Compiled, text: String, at: Int, prefix: String, line_tokens: Bool) -> Unit = {
+  let source = bytes.from_string(text)
+  let parsed = if line_tokens then line_whole(c, text) else whole(c, text)
+  assert(list.len(parsed.toks) > 0, "the prefix fixture must parse")
+  var doc = from_parsed(parsed, source, c)
+  let size = bytes.len(bytes.from_string(prefix))
+  let add = Edit { start: at, old_end: at, new_end: at + size }
+  let after = apply(source, add, bytes.from_string(prefix))
+  let before_ids = node_ids(doc)
+  let item_ids = ids_of(doc)
+  let status = reparse_status(doc, after, add, (s, r) => if line_tokens then line_scan(s, r) else scan(s, r), c)
+  assert(status == DONE, "prefix insertion status " + int.to_string(status) + " at " + int.to_string(at) + ": " + list.join(doc.trace, " | "))
+  let full = if line_tokens then line_whole(c, bytes.to_string_lossy(after)) else whole(c, bytes.to_string_lossy(after))
+  let got = materialize(doc)
+  assert(same(got, full), first_difference(got, full))
+  assert_eq(doc.root.size, bytes.len(after))
+  assert_eq(ids_of(doc), item_ids)
+  let _ = check_document_spans(doc)
+  let added_ids = node_ids(doc)
+  let add_breaks = node_id_breaks(parsed, before_ids, got, added_ids, add)
+  assert(add_breaks == "", add_breaks)
+
+  let remove = Edit { start: at, old_end: at + size, new_end: at }
+  assert(apply(after, remove, bytes.new(0)) == source, "removing the prefix must restore the exact source bytes")
+  let back_status = reparse_status(doc, source, remove, (s, r) => if line_tokens then line_scan(s, r) else scan(s, r), c)
+  assert(back_status == DONE, "prefix deletion status " + int.to_string(back_status) + " at " + int.to_string(at) + ": " + list.join(doc.trace, " | "))
+  let _ = check_document_spans(doc)
+  let back = materialize(doc)
+  assert(same(back, parsed), first_difference(back, parsed))
+  assert_eq(doc.root.size, bytes.len(source))
+  assert_eq(ids_of(doc), item_ids)
+  let remove_breaks = node_id_breaks(got, added_ids, back, node_ids(doc), remove)
+  assert(remove_breaks == "", remove_breaks)
+  ()
+}
+
+test "trivia inserted at the first file token preserves positions and ids on insertion and deletion" {
+  var c = parser.compile(item_grammar())
+  for prefix in [" ", "\t", "\n ", "\r\n  ", "# prefix\n", "<# prefix #> ", "<# first\r\n second #>\n "] {
+    let _ = prefix_round_trip(c, TEXT, 0, prefix, false)
+  }
+}
+
+test "trivia inserted at nested first-child heads extends their preceding nonempty piece" {
+  var c = parser.compile(item_grammar())
+  for offset in [at("x = 1"), at("p = q"), at("r()")] {
+    for prefix in [" ", "\n ", "\r\n  ", "# prefix\n ", "<# first\n second #> "] {
+      let _ = prefix_round_trip(c, TEXT, offset, prefix, false)
+    }
+  }
+}
+
+test "prefix trivia preserves a nonempty root prelude and its layout tokens" {
+  var c = parser.compile(line_grammar())
+  let doc = from_parsed(line_whole(c, LINES), bytes.from_string(LINES), c)
+  assert(piece_count(doc.root, 0) > 0, "this fixture must have tokens before the first child")
+  for offset in [0, line_at("fn a"), line_at("x = 1")] {
+    for prefix in [" ", "\n ", "\r\n  ", "# prefix\n", "<# first\n second #> "] {
+      let _ = prefix_round_trip(c, LINES, offset, prefix, true)
+    }
+  }
+}
+
+test "an invalid or token-bearing prefix falls back without changing the document or ids" {
+  var c = parser.compile(item_grammar())
+  let source = bytes.from_string(TEXT)
+  let parsed = whole(c, TEXT)
+  // An unterminated block comment is still a strict scanner failure;
+  // an unmatched opener fails the item parse; a separator is not trivia.
+  for prefix in ["<#", "{", ";"] {
+    var doc = from_parsed(parsed, source, c)
+    let before_ids = node_ids(doc)
+    let before_items = ids_of(doc)
+    let next_id = doc.next_id
+    let next_node = doc.next_node
+    let edit = Edit { start: 0, old_end: 0, new_end: bytes.len(bytes.from_string(prefix)) }
+    let after = apply(source, edit, bytes.from_string(prefix))
+    if prefix == "<#" then assert(result.is_err(scan(bytes.to_string_lossy(after), false))) else ()
+    assert(reparse_status(doc, after, edit, (s, r) => scan(s, r), c) != DONE)
+    assert(same(materialize(doc), parsed), first_difference(materialize(doc), parsed))
+    assert_eq(node_ids(doc), before_ids)
+    assert_eq(ids_of(doc), before_items)
+    assert_eq(doc.next_id, next_id)
+    assert_eq(doc.next_node, next_node)
+  }
+}
+
+test "deleting an appended item renews the shrinking root and preserves untouched descendant ids" {
+  var c = parser.compile(item_grammar())
+  // The original root ends before the trailing CRLF, and therefore before
+  // the append/delete point: its new span alone cannot detect the deletion.
+  let text = TEXT + "\r\n"
+  let source = bytes.from_string(text)
+  var doc = from_parsed(whole(c, text), source, c)
+  let descendants = list.drop(node_ids(doc), 1)
+  let offset = bytes.len(source)
+  let suffix = "\nfn appended() { x = 1 }\n"
+  let size = bytes.len(bytes.from_string(suffix))
+  var cycle = 0
+  while cycle < 3 {
+    let (after, add_why) = id_edit(c, doc, source, Edit { start: offset, old_end: offset, new_end: offset + size }, suffix)
+    assert(add_why == "", "append: " + add_why)
+    let root_after_append = list.first(node_ids(doc)) ?? -1
+    let (back, remove_why) = id_edit(c, doc, after, Edit { start: offset, old_end: offset + size, new_end: offset }, "")
+    assert(remove_why == "", "delete appended item: " + remove_why)
+    assert(back == source, "the append/delete cycle restores exact source bytes")
+    assert((list.first(node_ids(doc)) ?? -1) != root_after_append, "the shortened root must have a fresh id")
+    assert_eq(list.drop(node_ids(doc), 1), descendants)
+    assert(list.all(node_ids(doc), (id) => id > 0), "node ids remain positive")
+    cycle = cycle + 1
+  }
+}
+
+test "deleting a prepended item renews a root whose new start is the deletion boundary" {
+  var c = parser.compile(item_grammar())
+  let source = bytes.from_string(TEXT)
+  var doc = from_parsed(whole(c, TEXT), source, c)
+  let descendants = list.drop(node_ids(doc), 1)
+  let prefix = "fn prepended() { }\n"
+  let size = bytes.len(bytes.from_string(prefix))
+  let (after, add_why) = id_edit(c, doc, source, Edit { start: 0, old_end: 0, new_end: size }, prefix)
+  assert(add_why == "", "prepend: " + add_why)
+  let root_after_prepend = list.first(node_ids(doc)) ?? -1
+  let (_, remove_why) = id_edit(c, doc, after, Edit { start: 0, old_end: size, new_end: 0 }, "")
+  assert(remove_why == "", "delete prepended item: " + remove_why)
+  assert((list.first(node_ids(doc)) ?? -1) != root_after_prepend, "the shortened root must have a fresh id")
+  assert_eq(list.drop(node_ids(doc), 1), descendants)
+}
+
+test "deleting the only item gives the empty root a new id" {
+  var c = parser.compile(item_grammar())
+  let text = "fn only() { }"
+  let source = bytes.from_string(text)
+  var doc = from_parsed(whole(c, text), source, c)
+  let old_root = list.first(node_ids(doc)) ?? -1
+  let (_, why) = id_edit(c, doc, source, Edit { start: 0, old_end: bytes.len(source), new_end: 0 }, "")
+  assert(why == "", why)
+  assert((list.first(node_ids(doc)) ?? -1) != old_root, "the empty root must have a fresh id")
+}
+
+test "removing a recovered unmatched opener obeys the same node identity rule" {
+  var c = parser.compile(item_grammar())
+  let text = "{" + TEXT
+  let source = bytes.from_string(text)
+  let toks = scan(text, false)!
+  assert(result.is_err(parser.parse_with(c, source, toks)), "the leading opener must break the strict parse")
+  let parsed = parser.parse_recovering(c, source, toks)!
+  var doc = from_parsed(parsed, source, c)
+  let before_ids = node_ids(doc)
+  let edit = Edit { start: 0, old_end: 1, new_end: 0 }
+  let after = apply(source, edit, bytes.new(0))
+  let full = whole(c, TEXT)
+  let status = reparse_status(doc, after, edit, (s, r) => scan(s, r), c)
+  if status != DONE then {
+    assert(same(materialize(doc), parsed), "a failed reparse must preserve the recovered document")
+    assert_eq(node_ids(doc), before_ids)
+    doc = rebuilt(doc, full, after, c, edit)
+  } else ()
+  assert(same(materialize(doc), full), first_difference(materialize(doc), full))
+  let why = node_id_breaks(parsed, before_ids, materialize(doc), node_ids(doc), edit)
+  assert(why == "", why)
+  assert((list.first(node_ids(doc)) ?? -1) != (list.first(before_ids) ?? -1), "removing the opener changes the root's text")
+}
+
+test "a window from the file start cannot add unparsed separator tokens to its prelude" {
+  for case in [(" " + TEXT, 0, false), (LINES, line_at("fn a") - 1, true)] {
+    var c = parser.compile(if case.2 then line_grammar() else item_grammar())
+    let source = bytes.from_string(case.0)
+    let parsed = if case.2 then line_whole(c, case.0) else whole(c, case.0)
+    var doc = from_parsed(parsed, source, c)
+    let before_ids = node_ids(doc)
+    let before_items = ids_of(doc)
+    let next_id = doc.next_id
+    let next_node = doc.next_node
+    let base = Pos { byte: 0, line: 1, col: 1 }
+    let edit = Edit { start: case.1, old_end: case.1, new_end: case.1 + 1 }
+    assert(locate(doc.root, base, kid_bases(doc.root, base), edit).2, "the fixture must re-read the root prelude")
+    assert_eq(prelude_untouched(doc.root, base, edit), piece_count(doc.root, 0))
+    if case.2 then assert(piece_count(doc.root, 0) > 0, "the second fixture has a nonempty prelude") else ()
+    let after = apply(source, edit, bytes.from_string(";"))
+    let scan_after = if case.2 then line_scan(bytes.to_string_lossy(after), false)! else scan(bytes.to_string_lossy(after), false)!
+    assert(result.is_err(parser.parse_with(c, after, scan_after)), "the extra separator must fail a strict whole parse")
+    let status = reparse_status(doc, after, edit, (s, r) => if case.2 then line_scan(s, r) else scan(s, r), c)
+    assert_eq(status, NO_PARSE)
+    assert(same(materialize(doc), parsed), "the rejected prelude edit must leave the document unchanged")
+    assert_eq(node_ids(doc), before_ids)
+    assert_eq(ids_of(doc), before_items)
+    assert_eq(doc.next_id, next_id)
+    assert_eq(doc.next_node, next_node)
+  }
+}
+
+// A generic comma-separated syntax. Each recover body checks its right
+// delimiter, while the comma itself remains owned by the enclosing node.
+fn comma_scan(source: String, recovering: Bool) -> Result[List[tree.Token], lex.LexError] =
+  lex.tokenize_with(source, lex.Spec { ...spec(), operators: ["[", "]", "{", "}", ",", ":"] }, recovering)
+fn comma_members(item: parser.Rule, close: String) -> parser.Rule = {
+  let bounded = parser.seq([item, parser.ahead(parser.alt([parser.lit(","), parser.lit(close)]))])
+  parser.opt(parser.seq([parser.recover_all(bounded), parser.rep(parser.seq([parser.lit(","), parser.recover_all(bounded)]))]))
+}
+fn comma_grammar() -> parser.Grammar = parser.grammar("document", [
+  ("document", parser.wrap("document", parser.alt([parser.r("array"), parser.r("object")]))),
+  ("array", parser.wrap("array", parser.seq([parser.lit("["), comma_members(parser.wrap("value", parser.tok("integer")), "]"), parser.lit("]")]))),
+  ("object", parser.wrap("object", parser.seq([parser.lit("{"), comma_members(parser.r("pair"), "}"), parser.lit("}")]))),
+  ("pair", parser.wrap("pair", parser.seq([parser.tok("identifier"), parser.lit(":"), parser.wrap("value", parser.tok("integer"))]))),
+])
+fn comma_parse(mut c: parser.Compiled, text: String, recovering: Bool) -> Result[parser.Parsed, String] = {
+  let toks = comma_scan(text, false) |> result.map_err((e) => e.message)!
+  let parsed = if recovering then parser.parse_recovering(c, bytes.from_string(text), toks) else parser.parse_with(c, bytes.from_string(text), toks)
+  parsed |> result.map_err((e) => parser.format_failure(e))
+}
+fn comma_edit_case(text: String, start: Int, old_end: Int, insert: String, valid: Bool, incremental: Bool) -> Result[Unit, String] = {
+  var c = parser.compile(comma_grammar())
+  let source = bytes.from_string(text)
+  let parsed = comma_parse(c, text, false)!
+  var doc = from_parsed(parsed, source, c)
+  let before_ids = node_ids(doc)
+  let before_items = ids_of(doc)
+  let next_id = doc.next_id
+  let next_node = doc.next_node
+  let edit = Edit { start: start, old_end: old_end, new_end: start + bytes.len(bytes.from_string(insert)) }
+  let after = apply(source, edit, bytes.from_string(insert))
+  let strict = comma_parse(c, bytes.to_string_lossy(after), false)
+  assert_eq(result.is_ok(strict), valid)
+  let status = reparse_status(doc, after, edit, (s, r) => comma_scan(s, r), c)
+  let _ = check_document_spans(doc)
+  assert_eq(status == DONE, incremental)
+  if status != DONE then {
+    assert(same(materialize(doc), parsed), "a rejected comma-list edit must preserve the old document")
+    assert_eq(node_ids(doc), before_ids)
+    assert_eq(ids_of(doc), before_items)
+    assert_eq(doc.next_id, next_id)
+    assert_eq(doc.next_node, next_node)
+  } else ()
+  // Some malformed lists have no recovered whole tree. The strict error
+  // and untouched-document fallback above are still required; when a
+  // whole tree is available, its rebuild must also obey the identity rule.
+  let full = if valid then strict else comma_parse(c, bytes.to_string_lossy(after), true)
+  match full {
+    ok(p) => {
+      if status != DONE then {
+        let reference = emitted_rebuilt(doc, p, after, c, edit)
+        doc = rebuilt(doc, p, after, c, edit)
+        assert_eq(node_ids(doc), node_ids(reference))
+      } else ()
+      let _ = check_document_spans(doc)
+      let actual = materialize(doc)
+      assert(same(actual, p), first_difference(actual, p))
+      let ids = node_ids(doc)
+      assert_eq(list.len(ids), node_count(actual.root))
+      assert(distinct(ids) and list.all(ids, (id) => id > 0), "comma-list node ids remain distinct and positive")
+      let why = node_id_breaks(parsed, before_ids, actual, ids, edit)
+      assert(why == "", why)
+    },
+    err(_) => assert(not valid and not incremental and status != DONE, "only a rejected malformed edit may lack a recovered tree"),
+  }
+  ok(())
+}
+
+test "bounded comma-list recover bodies reject adjacent items without a separator" {
+  let _ = comma_edit_case("[1]", 1, 2, "1 2", false, false)!
+  let _ = comma_edit_case("{a:1}", 1, 4, "a:1 b:2", false, false)!
+}
+
+test "deleting a comma-list first or last item cannot orphan a parent-owned comma" {
+  for case in [("[1,2]", 1, 2), ("[1,2]", 3, 4), ("{a:1,b:2}", 1, 4), ("{a:1,b:2}", 5, 8),
+               ("[1, <# gap #> 2]", 1, 2), ("[1, <# gap #> 2]", 14, 15)] {
+    let _ = comma_edit_case(case.0, case.1, case.2, "", false, false)!
+  }
+}
+
+test "deleting a sole comma-list item stays incremental and deleting all items safely rebuilds" {
+  let _ = comma_edit_case("[1]", 1, 2, "", true, true)!
+  let _ = comma_edit_case("{a:1}", 1, 4, "", true, true)!
+  let _ = comma_edit_case("[1,2]", 1, 4, "", true, false)!
+  let _ = comma_edit_case("{a:1,b:2}", 1, 8, "", true, false)!
+  let _ = comma_edit_case("[1,2]", 1, 4, "3", true, false)!
+}
+
+test "a child window cannot delete or replace its parent's opening delimiter" {
+  let _ = comma_edit_case("[1]", 0, 1, "", false, false)!
+  let _ = comma_edit_case("[1]", 0, 1, " ", false, false)!
+  let _ = comma_edit_case("[1]", 0, 1, "{", false, false)!
+  let _ = comma_edit_case("{a:1}", 0, 1, "", false, false)!
+  let _ = comma_edit_case("{a:1}", 0, 1, " ", false, false)!
+}
+
+test "a child window cannot change its parent-owned closing lookahead token" {
+  let _ = comma_edit_case("[1]", 2, 3, ",", false, false)!
+  let _ = comma_edit_case("[1]", 2, 3, "}", false, false)!
+  let _ = comma_edit_case("[1]", 2, 3, "", false, false)!
+  let _ = comma_edit_case("{a:1}", 4, 5, ",", false, false)!
+  let _ = comma_edit_case("{a:1}", 4, 5, "]", false, false)!
+  let _ = comma_edit_case("{a:1}", 4, 5, "", false, false)!
+}
+
+test "valid insertions immediately before the parent-owned lookahead stay inside the window" {
+  for insert in [" ", "\r\n ", "<# boundary #>", "2"] {
+    let _ = comma_edit_case("[1]", 2, 2, insert, true, true)!
+    let _ = comma_edit_case("{a:1}", 4, 4, insert, true, true)!
+  }
+}
+
+test "changing or deleting package prelude tokens requires a parent parse" {
+  for case in [(line_at("package m"), line_at("package m") + 7, "namespace", false),
+               (line_at("package m") + 8, line_at("package m") + 9, "", false),
+               (line_at("package m"), line_at("fn a"), "", true)] {
+    var c = parser.compile(line_grammar())
+    let source = bytes.from_string(LINES)
+    let parsed = line_whole(c, LINES)
+    var doc = from_parsed(parsed, source, c)
+    let before_ids = node_ids(doc)
+    let before_items = ids_of(doc)
+    let next_id = doc.next_id
+    let next_node = doc.next_node
+    let edit = Edit { start: case.0, old_end: case.1, new_end: case.0 + bytes.len(bytes.from_string(case.2)) }
+    let after = apply(source, edit, bytes.from_string(case.2))
+    let toks = line_scan(bytes.to_string_lossy(after), false)!
+    let full = parser.parse_with(c, after, toks)
+    assert_eq(result.is_ok(full), case.3)
+    let status = reparse_status(doc, after, edit, (s, r) => line_scan(s, r), c)
+    assert_eq(status, NO_PARSE)
+    assert(same(materialize(doc), parsed), "a rejected prelude-token edit must preserve the document")
+    assert_eq(node_ids(doc), before_ids)
+    assert_eq(ids_of(doc), before_items)
+    assert_eq(doc.next_id, next_id)
+    assert_eq(doc.next_node, next_node)
+    match full {
+      ok(p) => {
+        doc = rebuilt(doc, p, after, c, edit)
+        assert(same(materialize(doc), p), first_difference(materialize(doc), p))
+        let why = node_id_breaks(parsed, before_ids, materialize(doc), node_ids(doc), edit)
+        assert(why == "", why)
+      },
+      err(_) => (),
+    }
+  }
+}
+
+// Small identity fixtures isolate the move/order contract from parsing.
+fn naming_item(id: Int, kind: Int, kids: List[Item]) -> Item = Item {
+  ...empty_unit(), id: id, node: tree.node(kind, [], 0, 1),
+  node_ids: [id + 1000], trace: [int.to_string(id)], kids: kids,
+  size: 3, toks: 1,
+}
+
+test "item adoption moves children in order and matches repeated shapes only forward" {
+  let before = [
+    naming_item(10, 1, [naming_item(11, 7, []), naming_item(12, 7, [])]),
+    naming_item(20, 2, []), naming_item(30, 1, []),
+  ]
+  let original = before
+  let prefix = naming_item(900, 9, [])
+  let suffix = naming_item(901, 9, [])
+  var u = naming_item(1, 0, [prefix,
+    naming_item(101, 1, [naming_item(111, 7, []), naming_item(112, 8, []), naming_item(113, 7, [])]),
+    naming_item(102, 3, []), naming_item(103, 1, []), suffix,
+  ])
+  let _ = keep_ids(u, 1, 3, before)
+  assert_eq(list.map(u.kids, (x) => x.id), [900, 10, 102, 30, 901])
+  let first = list.get(u.kids, 1)!
+  assert_eq(list.map(first.kids, (x) => x.id), [11, 112, 12])
+  assert_eq(list.map(first.kids, (x) => x.node.kind), [7, 8, 7])
+  assert_eq(first.node_ids, [1101])
+  assert_eq(first.trace, ["101"])
+  assert_eq(list.map(first.kids, (x) => x.node_ids), [[1111], [1112], [1113]])
+  assert_eq(list.get(u.kids, 0)!, prefix)
+  assert_eq(list.get(u.kids, 4)!, suffix)
+  assert_eq(before, original)
+}
+
+test "one-for-one adoption keeps its item id without forcing a changed child match" {
+  let before = [naming_item(10, 1, [naming_item(11, 7, [])])]
+  var u = naming_item(1, 0, [naming_item(101, 2, [naming_item(111, 8, [])])])
+  let _ = keep_ids(u, 0, 1, before)
+  let first = list.first(u.kids)!
+  assert_eq(first.id, 10)
+  assert_eq(first.node.kind, 2)
+  assert_eq(list.map(first.kids, (x) => x.id), [111])
+  assert_eq(first.node_ids, [1101])
+}
+
+test "moving a parsed item changes only its matching recover stamp" {
+  let n = tree.Node { kind: 3, field: 0 - 2 - 4, start: 1, end: 3, kids: [tree.node(5, [], 1, 2)] }
+  assert_eq(item_stamped(n, 4, 4), n)
+  assert_eq(item_stamped(n, 7, 8), n)
+  assert_eq(item_stamped(n, 4, 8), tree.Node { ...n, field: 0 - 2 - 8 })
+}
+
+
+test "direct spans equal emitted spans for empty recovered Unicode CRLF and nested documents" {
+  var c = parser.compile(item_grammar())
+  for text in ["", " \r\n<# café 日本🙂 #> ", TEXT, "<# café 日本🙂 #>\r\n" + TEXT + "\r\n  ",
+               "fn a() { { { x = 1; x = 1 } }; { x = 1 } }\r\nfn a() { }",
+               "{" + TEXT, "fn a() { x = 1;", "fn a() { x = ; y() }\r\nfn b() { }"] {
+    let source = bytes.from_string(text)
+    let toks = scan(text, true)!
+    let parsed = parser.parse_recovering(c, source, toks)!
+    let doc = from_parsed(parsed, source, c)
+    assert(same(materialize(doc), parsed), first_difference(materialize(doc), parsed))
+    let _ = check_document_spans(doc)
+  }
+  var lines = parser.compile(line_grammar())
+  for text in ["", LINES, "<# café 日本🙂 #>\r\npackage m\r\nfn a() {\r\n x = 1\r\n}\r\n", "fn a() {\r\n x = 1\r\n"] {
+    let source = bytes.from_string(text)
+    let toks = line_scan(text, true)!
+    let parsed = parser.parse_recovering(lines, source, toks)!
+    let _ = check_document_spans(from_parsed(parsed, source, lines))
+  }
+}
+
+test "direct spans preserve empty child lookahead repeated keys placeholders and zero width EOF" {
+  // The middle child's first token follows its own leading trivia, and
+  // its last node is empty after that token. Its following byte position
+  // is the enclosing EOF, not its own token end or trailing-trivia end.
+  let token = tree.Token { kind: tree.T_IDENTIFIER, start: 2, end: 5, line: 1, col: 3 }
+  let eof = tree.Token { kind: tree.T_EOF, start: 3, end: 3, line: 1, col: 4 }
+  let marker = tree.Token { kind: tree.T_PUNCT, start: 1, end: 2, line: 1, col: 2 }
+  let vacant = Item { ...empty_unit(), node: tree.node(600, [], 0, 0), node_ids: [100], pieces: [span_test_piece([], 3)], size: 3, tail: 3 }
+  let middle = Item { ...empty_unit(), node: tree.node(700, [tree.node(700, [tree.node(700, [], 0, 1)], 0, 1), tree.node(701, [], 1, 1)], 0, 1),
+    node_ids: [110, 111, 112, 113], pieces: [span_test_piece([token], 10)], size: 10, tail: 10, toks: 1 }
+  let vacant_after = Item { ...vacant, node_ids: [120], pieces: [span_test_piece([], 2)], size: 2, tail: 2 }
+  let root = Item { ...empty_unit(), node: tree.node(500, [
+      tree.node(601, [], 1, 2), tree.Node { kind: PLACEHOLDER, field: 0, start: 1, end: 2, kids: [] },
+      tree.node(702, [tree.Node { kind: PLACEHOLDER, field: 1, start: 2, end: 3, kids: [] }], 2, 3),
+      tree.Node { kind: PLACEHOLDER, field: 2, start: 3, end: 4, kids: [] }, tree.node(603, [], 5, 5)
+    ], 0, 5), node_ids: [90, 91, 92, 93], kids: [vacant, middle, vacant_after],
+    pieces: [span_test_piece([marker], 4), span_test_piece([], 2), span_test_piece([], 1), span_test_piece([eof], 3)], size: 25, tail: 25, toks: 3 }
+  let base = Pos { byte: 100, line: 7, col: 4 }
+  let _ = check_direct_spans(root, base)
+  assert_eq(unit_spans(root, base), [
+    500, 101, 125, 90, 601, 111, 111, 91, 600, 111, 111, 100, 702, 111, 114, 92,
+    700, 111, 114, 110, 700, 111, 114, 111, 700, 111, 114, 112, 701, 125, 125, 113,
+    600, 125, 125, 120, 603, 125, 125, 93,
+  ])
+  assert_eq(unit_spans(vacant, base), [600, 0, 0, 100])
+  let edit = Edit { start: 105, old_end: 105, new_end: 108 }
+  assert_eq(left_spans(unit_spans(root, base), edit), left_spans(emitted_unit_spans(root, base), edit))
+  let before = left_spans(unit_spans(root, base), Edit { start: 130, old_end: 130, new_end: 130 })
+  assert_eq(taken_spans(unit_spans(root, base), before, Edit { start: 130, old_end: 130, new_end: 130 }),
+    taken_spans(emitted_unit_spans(root, base), before, Edit { start: 130, old_end: 130, new_end: 130 }))
+  assert_eq(map.get(before, span_key(700, 111, 114) + "#0"), some(110))
+  assert_eq(map.get(before, span_key(700, 111, 114) + "#1"), some(111))
+  assert_eq(map.get(before, span_key(700, 111, 114) + "#2"), some(112))
+}
+
+test "direct rebuild mapping matches the emitted oracle before and after incremental mutations" {
+  var c = parser.compile(item_grammar())
+  var doc = from_parsed(whole(c, TEXT), bytes.from_string(TEXT), c)
+  var text = bytes.from_string(TEXT)
+  for change in [(at("x = 1") + 4, at("x = 1") + 5, "22"), (0, 0, "<# café 日本🙂 #>\r\n"),
+                 (0, 0, "fn repeated() { x = 1; x = 1 }\r\n"), (0, 0, "{")] {
+    let edit = Edit { start: change.0, old_end: change.1, new_end: change.0 + bytes.len(bytes.from_string(change.2)) }
+    let after = apply(text, edit, bytes.from_string(change.2))
+    let toks = scan(bytes.to_string_lossy(after), true)!
+    let parsed = parser.parse_recovering(c, after, toks)!
+    let reference = emitted_rebuilt(doc, parsed, after, c, edit)
+    let direct = rebuilt(doc, parsed, after, c, edit)
+    assert_eq(node_ids(direct), node_ids(reference))
+    assert_eq(direct.next_node, reference.next_node)
+    assert_eq(direct.next_id, reference.next_id)
+    assert(same(materialize(direct), materialize(reference)))
+    let _ = check_document_spans(direct)
+    let status = reparse_status(doc, after, edit, (s, r) => scan(s, r), c)
+    let _ = check_document_spans(doc)
+    if status != DONE then doc = direct else ()
+    text = after
+  }
+}
+
+
+test "consecutive empty recover rules get sequential fields slots and distinct node IDs" {
+  let grammar = parser.grammar("source_file", [
+    ("source_file", parser.wrap("source_file", parser.seq([
+      parser.recover_all(parser.wrap("A", parser.seq([]))),
+      parser.recover_all(parser.wrap("B", parser.seq([]))),
+    ]))),
+  ])
+  var c = parser.compile(grammar)
+  for text in ["", " \r\n"] {
+    let source = bytes.from_string(text)
+    let parsed = parser.parse_with(c, source, scan(text, false)!)!
+    let doc = from_parsed(parsed, source, c)
+    assert_eq(list.len(doc.root.kids), 2)
+    assert_eq(list.map(doc.root.node.kids, (n) => n.field), [0, 1])
+    assert_eq(list.map(doc.root.node.kids, (n) => (n.start, n.end)), [(0, 1), (1, 2)])
+    assert_eq(list.map(doc.root.kids, (kid) => kid.node_ids), [[1], [2]])
+    assert_eq(node_ids(doc), [3, 1, 2])
+    assert_eq(span_slot_order(doc.root.node, 0), 2)
+    assert(same(materialize(doc), parsed), first_difference(materialize(doc), parsed))
+    let spans = unit_spans(doc.root, Pos { byte: 0, line: 1, col: 1 })
+    assert_eq(list.len(spans), 12)
+    assert_eq(nametable.name_at(c.names, list.get(spans, 4) ?? -1), "A")
+    assert_eq(nametable.name_at(c.names, list.get(spans, 8) ?? -1), "B")
+    assert_eq(list.get(spans, 7), some(1))
+    assert_eq(list.get(spans, 11), some(2))
+    let _ = check_document_spans(doc)
+    let edit = Edit { start: 0, old_end: 0, new_end: 0 }
+    let direct = rebuilt(doc, parsed, source, c, edit)
+    let reference = emitted_rebuilt(doc, parsed, source, c, edit)
+    assert_eq(node_ids(direct), node_ids(reference))
+    assert_eq(unit_spans(direct.root, Pos { byte: 0, line: 1, col: 1 }), emitted_unit_spans(reference.root, Pos { byte: 0, line: 1, col: 1 }))
+  }
+}
+
+// Every physical child has exactly one placeholder, in its own-token
+// slot, even through non-recover wrappers or inside another recover item.
+fn placeholder_rows(n: tree.Node, mut out: List[(Int, Int, Int)]) -> Unit = {
+  if n.kind == PLACEHOLDER then list.push(out, (n.field, n.start, n.end))
+  else { for k in n.kids { let _ = placeholder_rows(k, out) } }
+  ()
+}
+fn check_child_placeholders(u: Item) -> Unit = {
+  var rows: List[(Int, Int, Int)] = []
+  let _ = placeholder_rows(u.node, rows)
+  assert_eq(list.len(rows), list.len(u.kids))
+  assert_eq(span_slot_order(u.node, 0), list.len(u.kids))
+  var slot = 0
+  var at = 0
+  for kid in u.kids {
+    slot = slot + piece_count(u, at)
+    assert_eq(list.get(rows, at), some((at, slot, slot + 1)))
+    let _ = check_child_placeholders(kid)
+    slot = slot + 1
+    at = at + 1
+  }
+  ()
+}
+fn check_zero_recover_case(body: parser.Rule, text: String, root_children: Int) -> Result[Unit, String] = {
+  var c = parser.compile(parser.grammar("source_file", [("source_file", parser.wrap("source_file", body))]))
+  let source = bytes.from_string(text)
+  let toks = scan(text, false) |> result.map_err((e) => e.message)!
+  let parsed = parser.parse_with(c, source, toks) |> result.map_err((e) => parser.format_failure(e))!
+  let doc = from_parsed(parsed, source, c)
+  assert_eq(list.len(doc.root.kids), root_children)
+  let _ = check_child_placeholders(doc.root)
+  let actual = materialize(doc)
+  assert(same(actual, parsed), first_difference(actual, parsed))
+  let ids = node_ids(doc)
+  assert_eq(list.len(ids), node_count(parsed.root))
+  assert(distinct(ids) and list.all(ids, (id) => id > 0), "every parsed node has one distinct positive ID")
+  let _ = check_document_spans(doc)
+  let edit = Edit { start: 0, old_end: 0, new_end: 0 }
+  let direct = rebuilt(doc, parsed, source, c, edit)
+  let reference = emitted_rebuilt(doc, parsed, source, c, edit)
+  assert(same(materialize(direct), parsed), first_difference(materialize(direct), parsed))
+  assert_eq(node_ids(direct), node_ids(reference))
+  assert(distinct(node_ids(direct)) and list.all(node_ids(direct), (id) => id > 0), "rebuild keeps repeated zero-width nodes distinct")
+  let _ = check_child_placeholders(direct.root)
+  let _ = check_document_spans(direct)
+  ok(())
+}
+
+test "empty recover children before and after consuming children keep preorder slots" {
+  let empty = parser.recover_all(parser.wrap("empty", parser.seq([])))
+  let token = parser.recover_all(parser.wrap("value", parser.tok("identifier")))
+  for text in ["word", " \r\nword \r\n"] {
+    let _ = check_zero_recover_case(parser.seq([empty, empty, token]), text, 3)!
+    let _ = check_zero_recover_case(parser.seq([token, empty, empty]), text, 3)!
+    let _ = check_zero_recover_case(parser.seq([empty, token, empty, empty]), text, 4)!
+  }
+}
+
+test "ordinary wrappers carry the recover cursor across equal-start children" {
+  let empty = parser.recover_all(parser.wrap("empty", parser.seq([])))
+  let token = parser.recover_all(parser.wrap("value", parser.tok("identifier")))
+  for text in ["word", " \r\nword \r\n"] {
+    let body = parser.seq([
+      parser.wrap("before", parser.wrap("deeper", parser.seq([empty, empty]))),
+      parser.wrap("middle", parser.seq([empty, token, parser.wrap("tail", empty)])),
+      empty,
+      parser.wrap("after", parser.wrap("deeper", empty)),
+    ])
+    let _ = check_zero_recover_case(body, text, 7)!
+  }
+  for text in ["", " \r\n"] {
+    let body = parser.seq([
+      parser.wrap("group", parser.seq([empty, parser.wrap("inner", empty)])),
+      parser.wrap("group", parser.wrap("inner", empty)),
+      empty,
+    ])
+    let _ = check_zero_recover_case(body, text, 4)!
+  }
+}
+
+test "nested recover items reset their own preorder cursor with repeated empty spans" {
+  let empty = parser.recover_all(parser.wrap("same", parser.seq([])))
+  let nested = parser.recover_all(parser.wrap("same", parser.seq([
+    parser.wrap("group", parser.seq([empty, empty])), empty,
+  ])))
+  for text in ["", " \r\n"] {
+    let _ = check_zero_recover_case(parser.seq([empty, nested, nested, empty]), text, 4)!
+  }
+  let token = parser.recover_all(parser.wrap("value", parser.tok("identifier")))
+  let nested_token = parser.recover_all(parser.wrap("same", parser.seq([empty, token, empty])))
+  for text in ["word", " \r\nword \r\n"] {
+    let _ = check_zero_recover_case(parser.seq([empty, nested_token, nested, empty]), text, 4)!
+  }
+  for text in ["{word}", " \r\n{ word \r\n} "] {
+    let _ = check_zero_recover_case(parser.seq([parser.lit("{"), nested_token, empty, parser.lit("}")]), text, 2)!
+  }
+}
+
+test "duplicate placeholder fields trigger the emitted oracle through enclosing units" {
+  let a = Item { ...empty_unit(), node: tree.node(600, [], 0, 0), node_ids: [100], pieces: [span_test_piece([], 0)] }
+  let b = Item { ...empty_unit(), node: tree.node(700, [tree.node(701, [], 0, 0)], 0, 0), node_ids: [110, 111], pieces: [span_test_piece([], 0)] }
+  let duplicate = Item { ...empty_unit(), node: tree.node(500, [
+    tree.Node { kind: PLACEHOLDER, field: 0, start: 0, end: 1, kids: [] },
+    tree.Node { kind: PLACEHOLDER, field: 0, start: 1, end: 2, kids: [] },
+  ], 0, 2), node_ids: [90], kids: [a, b], pieces: [span_test_piece([], 0), span_test_piece([], 0), span_test_piece([], 0)] }
+  let after = Item { ...a, node: tree.node(800, [], 0, 0), node_ids: [120] }
+  let outer = Item { ...empty_unit(), node: tree.node(400, [
+    tree.Node { kind: PLACEHOLDER, field: 0, start: 0, end: 1, kids: [] },
+    tree.Node { kind: PLACEHOLDER, field: 1, start: 1, end: 2, kids: [] },
+  ], 0, 2), node_ids: [80], kids: [duplicate, after], pieces: [span_test_piece([], 0), span_test_piece([], 0), span_test_piece([], 0)] }
+  let base = Pos { byte: 37, line: 8, col: 4 }
+  assert_eq(span_slot_order(outer.node, 0), 2)
+  assert_eq(unit_spans(duplicate, base), [500, 0, 0, 90, 600, 0, 0, 100, 700, 0, 0, 100, 701, 0, 0, -1])
+  // The different child shapes also shift the old ID vector's pairing
+  // with nodes after the duplicate. Falling back just that child would
+  // change this behavior; the enclosing measured unit must fall back too.
+  assert_eq(unit_spans(outer, base), [400, 0, 0, 80, 500, 0, 0, 90, 600, 0, 0, 100, 700, 0, 0, 100, 701, 0, 0, 120, 800, 0, 0, -1])
+  let _ = check_direct_spans(outer, base)
+}
+
+// These compare the complete fresh-ID mapping with the unchanged string
+// oracle, not merely the set of IDs. Forcing one bucket exercises exact
+// triple checks and linked-list removal independently of hash quality.
+fn check_indexed_mapping(before: List[Int], fresh: List[Int], edit: Edit, buckets: Int, fallback: Bool) -> Map[Int, Int] = {
+  let expected = taken_spans(fresh, left_spans(before, edit), edit)
+  var index = indexed_left_spans(before, edit, buckets)
+  assert_eq(index.overflow, fallback)
+  if fallback then {
+    assert_eq(list.len(index.rows), 0)
+    assert_eq(map.len(index.buckets), 0)
+    assert_eq(map.len(index.links), 0)
+  } else ()
+  let actual = indexed_taken_spans(fresh, index, edit)
+  assert_eq(actual, expected)
+  actual
+}
+
+test "numeric span buckets preserve repeated keys amid forced collisions and unmatched fresh nodes" {
+  let before = [
+    7, 20, 21, 100, 8, 20, 21, 101, 7, 20, 21, 102,
+    7, 20, 22, 103, 8, 20, 21, 104, 7, 20, 21, 105,
+    7, 19, 21, 106,
+  ]
+  let fresh = [
+    7, 20, 22, 200, 7, 20, 21, 201, 9, 20, 21, 202,
+    8, 20, 21, 203, 7, 20, 21, 204, 7, 19, 21, 205,
+    8, 20, 21, 206, 7, 20, 21, 207, 7, 20, 21, 208,
+    9, 20, 21, 209, 8, 20, 21, 210,
+  ]
+  let edit = Edit { start: 10, old_end: 10, new_end: 10 }
+  for buckets in [1, 2, SPAN_BUCKETS] {
+    let taken = check_indexed_mapping(before, fresh, edit, buckets, false)
+    assert_eq(map.get(taken, 200), some(103))
+    assert_eq(map.get(taken, 201), some(100))
+    assert_eq(map.get(taken, 203), some(101))
+    assert_eq(map.get(taken, 204), some(102))
+    assert_eq(map.get(taken, 205), some(106))
+    assert_eq(map.get(taken, 206), some(104))
+    assert_eq(map.get(taken, 207), some(105))
+    for id in [202, 208, 209, 210] { assert_eq(map.get(taken, id), none) }
+  }
+}
+
+test "numeric span buckets apply deletion filtering shifting and merged boundary occurrence order" {
+  let before = [
+    1, 9, 10, 100, 2, 10, 10, 101, 3, 10, 12, 102,
+    2, 12, 12, 103, 4, 12, 15, 104, 5, 9, 15, 105,
+    6, 11, 11, 106, 2, 12, 12, 107, 2, 10, 10, 108,
+  ]
+  let fresh = [
+    1, 9, 10, 200, 2, 10, 10, 201, 4, 10, 13, 202,
+    2, 10, 10, 203, 5, 9, 13, 204, 2, 10, 10, 205,
+    2, 10, 10, 206, 2, 10, 10, 207, 6, 9, 9, 208,
+  ]
+  let edit = Edit { start: 10, old_end: 12, new_end: 10 }
+  for buckets in [1, SPAN_BUCKETS] {
+    let taken = check_indexed_mapping(before, fresh, edit, buckets, false)
+    assert_eq(map.get(taken, 200), some(100))
+    assert_eq(map.get(taken, 201), some(101))
+    assert_eq(map.get(taken, 202), some(104))
+    assert_eq(map.get(taken, 203), some(103))
+    assert_eq(map.get(taken, 205), some(107))
+    assert_eq(map.get(taken, 206), some(108))
+    for id in [204, 207, 208] { assert_eq(map.get(taken, id), none) }
+  }
+}
+
+test "numeric span buckets preserve insertion boundary rules and ignore changed fresh occurrences" {
+  let before = [1, 9, 10, 100, 2, 10, 10, 101, 3, 10, 12, 102, 4, 9, 12, 103, 5, 12, 12, 104]
+  let fresh = [
+    1, 9, 10, 200, 2, 10, 10, 201, 3, 10, 12, 202,
+    3, 12, 14, 203, 4, 9, 14, 204, 5, 14, 14, 205,
+    2, 12, 12, 206, 5, 14, 14, 207,
+  ]
+  let edit = Edit { start: 10, old_end: 10, new_end: 12 }
+  for buckets in [1, SPAN_BUCKETS] {
+    let taken = check_indexed_mapping(before, fresh, edit, buckets, false)
+    assert_eq(map.get(taken, 200), some(100))
+    assert_eq(map.get(taken, 201), some(101))
+    assert_eq(map.get(taken, 203), some(102))
+    assert_eq(map.get(taken, 205), some(104))
+    for id in [202, 204, 206, 207] { assert_eq(map.get(taken, id), none) }
+  }
+}
+
+test "numeric span hashing handles negative and full width integer triples without packing" {
+  let high = 9223372036854775807
+  let low = 0 - 9223372036854775807 - 1
+  let before = [
+    low, low, low + 1, -1, high, high - 1, high, high,
+    -7, -20, -19, -9, -7, -20, -19, -10,
+    high, low, low, low, low, high, high, 0,
+  ]
+  let fresh = [
+    high, high - 1, high, 200, -7, -20, -19, 201,
+    low, low, low + 1, 202, -7, -20, -19, 203,
+    low, high, high, 204, high, low, low, 205,
+    -7, -20, -19, 206, high - 1, high - 1, high, 207,
+  ]
+  let edit = Edit { start: 0, old_end: 0, new_end: 0 }
+  for buckets in [1, 17, SPAN_BUCKETS] {
+    let taken = check_indexed_mapping(before, fresh, edit, buckets, false)
+    assert_eq(map.get(taken, 200), some(high))
+    assert_eq(map.get(taken, 201), some(-9))
+    assert_eq(map.get(taken, 202), some(-1))
+    assert_eq(map.get(taken, 203), some(-10))
+    assert_eq(map.get(taken, 204), some(0))
+    assert_eq(map.get(taken, 205), some(low))
+    assert_eq(map.get(taken, 206), none)
+    assert_eq(map.get(taken, 207), none)
+  }
+}
+
+test "numeric span buckets fall back above the collision and duplicate bound before matching" {
+  let edit = Edit { start: 0, old_end: 0, new_end: 0 }
+  for same_key in [true, false] {
+    for count in [SPAN_CHAIN_LIMIT, SPAN_CHAIN_LIMIT + 1, SPAN_CHAIN_LIMIT * 3] {
+      var before: List[Int] = []
+      var fresh: List[Int] = []
+      var i = 0
+      while i < count {
+        let kind = if same_key then 7 else i
+        for v in [kind, 10, 11, 1000 + i] { list.push(before, v) }
+        // Reverse the keys, without reversing each key's old occurrence order.
+        let fresh_kind = if same_key then 7 else count - i - 1
+        for v in [fresh_kind, 10, 11, 2000 + i] { list.push(fresh, v) }
+        i = i + 1
+      }
+      for v in [999, 10, 11, 3000, 7, 10, 11, 3001] { list.push(fresh, v) }
+      let _ = check_indexed_mapping(before, fresh, edit, 1, count > SPAN_CHAIN_LIMIT)
+      if same_key then { let _ = check_indexed_mapping(before, fresh, edit, SPAN_BUCKETS, count > SPAN_CHAIN_LIMIT) } else ()
+    }
+  }
+}
+
+test "numeric span mapping agrees with the string oracle for deterministic varied span lists" {
+  var seed = 1729
+  var trial = 0
+  while trial < 40 {
+    var before: List[Int] = []
+    var fresh: List[Int] = []
+    var i = 0
+    while i < 48 {
+      seed = (seed * 48271) % 2147483647
+      let kind = seed % 9 - 4
+      let start = (seed / 9) % 31 - 15
+      let end = start + (seed / 279) % 5
+      for v in [kind, start, end, 1000 + i] { list.push(before, v) }
+      // Some matching, shifted, duplicate, and absent keys; IDs may repeat
+      // too, exercising the old map's last-write rule for malformed inputs.
+      let shift = i % 5 - 2
+      for v in [kind, start + shift, end + shift, 2000 + i / 2] { list.push(fresh, v) }
+      if i % 7 == 0 then {
+        for v in [kind, start, end, 3000 + i] { list.push(before, v) }
+        for v in [kind, start, end, 4000 + i] { list.push(fresh, v) }
+      } else ()
+      i = i + 1
+    }
+    let edit = Edit { start: trial % 11 - 5, old_end: trial % 11 - 5 + trial % 4, new_end: trial % 11 - 5 + trial % 6 }
+    for buckets in [1, 7, SPAN_BUCKETS] { let _ = check_indexed_mapping(before, fresh, edit, buckets, false) }
+    trial = trial + 1
+  }
+}
+
+test "numeric span mapping retains empty truncated and repeated fresh ID compatibility" {
+  let edit = Edit { start: 0, old_end: 0, new_end: 0 }
+  let _ = check_indexed_mapping([], [], edit, 1, false)
+  let _ = check_indexed_mapping([7, 10, 11], [7, 10, 11, 200], edit, 1, false)
+  let _ = check_indexed_mapping([7, 10, 11, 100], [7, 10, 11], edit, 1, false)
+  let taken = check_indexed_mapping([7, 10, 11, 100, 8, 10, 11, 101, 9, 10, 11],
+    [7, 10, 11, 200, 8, 10, 11, 200, 8, 10, 11, 200, 7, 10], edit, 1, false)
+  assert_eq(map.get(taken, 200), some(101))
+}
+
+test "numeric window mapping shares occurrence order across children and keeps string fallback" {
+  let edit = Edit { start: 10, old_end: 10, new_end: 10 }
+  let p = Pos { byte: 37, line: 8, col: 4 }
+  for count in [6, SPAN_CHAIN_LIMIT + 1] {
+    var old_kids: List[Item] = []
+    var fresh_kids: List[Item] = []
+    var pieces: List[Piece] = []
+    var i = 0
+    while i < count {
+      let kind = i % 3
+      list.push(old_kids, Item { ...empty_unit(), node: tree.node(kind, [], 0, 0), node_ids: [1000 + i], pieces: [span_test_piece([], 0)] })
+      list.push(fresh_kids, Item { ...empty_unit(), node: tree.node(2 - kind, [], 0, 0), node_ids: [2000 + i], pieces: [span_test_piece([], 0)] })
+      list.push(pieces, span_test_piece([], i % 3))
+      i = i + 1
+    }
+    list.push(pieces, span_test_piece([], 0))
+    let old = Item { ...empty_unit(), kids: old_kids, pieces: pieces }
+    let fresh = Item { ...empty_unit(), kids: fresh_kids, pieces: pieces }
+    for bounds in [(0, count - 1), (1, count - 2), (0, -1)] {
+      let expected = matched_ids(fresh, 0, count, p, edit, untouched_before(old, bounds.0, bounds.1, p, edit))
+      var index = indexed_untouched_before(old, bounds.0, bounds.1, p, edit, 1)
+      assert_eq(index.overflow, bounds.1 - bounds.0 + 1 > SPAN_CHAIN_LIMIT)
+      assert_eq(indexed_matched_ids(fresh, 0, count, p, edit, index), expected)
+    }
+  }
+}
+
+test "numeric window mapping matches existing helpers at varied bases and edit boundaries" {
+  var c = parser.compile(item_grammar())
+  let old = from_parsed(whole(c, TEXT), bytes.from_string(TEXT), c)
+  for change in [(at("x = 1") + 4, at("x = 1") + 5, "22"), (0, 0, "fn before() { }\r\n"),
+                 (0, 0, "<# café 日本🙂 #>\r\n"), (at("fn b"), bytes.len(bytes.from_string(TEXT)), "")] {
+    let edit = Edit { start: change.0, old_end: change.1, new_end: change.0 + bytes.len(bytes.from_string(change.2)) }
+    let text = apply(bytes.from_string(TEXT), edit, bytes.from_string(change.2))
+    let fresh = numbered_from(whole(c, bytes.to_string_lossy(text)), text, c, old.next_id, old.next_node)
+    for p in [Pos { byte: 0, line: 1, col: 1 }, Pos { byte: 37, line: 8, col: 4 }] {
+      for buckets in [1, SPAN_BUCKETS] {
+        let expected = matched_ids(fresh.root, 0, list.len(fresh.root.kids), p, edit,
+          untouched_before(old.root, 0, list.len(old.root.kids) - 1, p, edit))
+        var index = indexed_untouched_before(old.root, 0, list.len(old.root.kids) - 1, p, edit, buckets)
+        assert_eq(indexed_matched_ids(fresh.root, 0, list.len(fresh.root.kids), p, edit, index), expected)
+      }
+    }
+  }
 }

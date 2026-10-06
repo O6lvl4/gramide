@@ -1,0 +1,1 @@
+const config = { host: "localhost", port: 80 } satisfies Record<string, string | number>; const port = config?.port ?? 443; const pattern = /a(?:b|c)+/giu; export const format = (x: number) => `value=${x ** 2}`;

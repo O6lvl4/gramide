@@ -1,0 +1,31 @@
+warning[E060]: unused import 'cli'
+  at line 1
+  in import at line 1
+  here: import self.cli
+  hint: Remove the import or prefix with '_' to suppress: _cli
+  try: delete the highlighted text (machine-applicable — `almide fix` applies it)
+  |
+1 | import self.cli
+  | ^^^^^^^^^^^^^^^
+warning[E060]: unused import 'tables'
+  at line 2
+  in import at line 2
+  here: import self.tables
+  hint: Remove the import or prefix with '_' to suppress: _tables
+  try: delete the highlighted text (machine-applicable — `almide fix` applies it)
+  |
+2 | import self.tables
+  | ^^^^^^^^^^^^^^^^^^
+warning[E060]: unused import 'package_contract_test'
+  at line 3
+  in import at line 3
+  here: import self.package_contract_test
+  hint: Remove the import or prefix with '_' to suppress: _package_contract_test
+  try: delete the highlighted text (machine-applicable — `almide fix` applies it)
+  |
+3 | import self.package_contract_test
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+0 via WASM, 1 via native fallback, 0 failed (of 1 files)
+All 1 test file(s) passed
+70 tests in 1 file

@@ -1,0 +1,335 @@
+{
+  "java/real/JsonNull.java": {
+    "sha256": "ac3db4e5688062384391f1af7fc6231960734d32534cbf7c42e4599fa57b4b1d",
+    "origin": {
+      "kind": "official_github_source",
+      "repository": "google/gson",
+      "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+      "source_path": "gson/src/main/java/com/google/gson/JsonNull.java",
+      "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonNull.java",
+      "git_blob_sha1": "1cc78ff10683e1e2614e6e484446236077ab15d3",
+      "upstream_sha256": "ac3db4e5688062384391f1af7fc6231960734d32534cbf7c42e4599fa57b4b1d",
+      "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+    }
+  },
+  "java/real/Strictness.java": {
+    "sha256": "59addbeaa2a893c1d7d3ab8e58b885c97234ceadb8546841a205283fc7c4427e",
+    "origin": {
+      "kind": "official_github_source",
+      "repository": "google/gson",
+      "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+      "source_path": "gson/src/main/java/com/google/gson/Strictness.java",
+      "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/Strictness.java",
+      "git_blob_sha1": "b207cf508c89ea569cac0bac18486902b252edd1",
+      "upstream_sha256": "59addbeaa2a893c1d7d3ab8e58b885c97234ceadb8546841a205283fc7c4427e",
+      "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+    }
+  },
+  "java/real/ExclusionStrategy.java": {
+    "sha256": "7ca438eb594cf82356fa60ae93e12a716a05fd313e9b62b53535b49b4fb46139",
+    "origin": {
+      "kind": "official_github_source",
+      "repository": "google/gson",
+      "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+      "source_path": "gson/src/main/java/com/google/gson/ExclusionStrategy.java",
+      "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/ExclusionStrategy.java",
+      "git_blob_sha1": "4f5d36b28d7bb3a5d8d58a917f0d6f53bcc14886",
+      "upstream_sha256": "7ca438eb594cf82356fa60ae93e12a716a05fd313e9b62b53535b49b4fb46139",
+      "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+    }
+  },
+  "java/real/JsonParser.java": {
+    "sha256": "43dbf42d456b5174bc3477457789b60de133d179abefd6fe64077de968fbed30",
+    "origin": {
+      "kind": "official_github_source",
+      "repository": "google/gson",
+      "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+      "source_path": "gson/src/main/java/com/google/gson/JsonParser.java",
+      "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonParser.java",
+      "git_blob_sha1": "9daf004265350f7328692ae9a0cdc7df72e5bbbc",
+      "upstream_sha256": "43dbf42d456b5174bc3477457789b60de133d179abefd6fe64077de968fbed30",
+      "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+    }
+  },
+  "java/real/JsonElement.java": {
+    "sha256": "3f6b9566fbe590ed9d83b75acd83ce2af25a7889340f7b4ce7eb964efc5b6981",
+    "origin": {
+      "kind": "official_github_source",
+      "repository": "google/gson",
+      "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+      "source_path": "gson/src/main/java/com/google/gson/JsonElement.java",
+      "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonElement.java",
+      "git_blob_sha1": "b7d135b97829189b748d8d34d69260edc25cb72c",
+      "upstream_sha256": "3f6b9566fbe590ed9d83b75acd83ce2af25a7889340f7b4ce7eb964efc5b6981",
+      "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+    }
+  },
+  "java/real/JsonPrimitive.java": {
+    "sha256": "c6adf7a7837f6173c09fd5ff1c94434d07617794c7c1c3193431f3a8bc95da87",
+    "origin": {
+      "kind": "official_github_source",
+      "repository": "google/gson",
+      "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+      "source_path": "gson/src/main/java/com/google/gson/JsonPrimitive.java",
+      "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonPrimitive.java",
+      "git_blob_sha1": "88f4466fc8c588fc90551ed26e889ab6e4bce23e",
+      "upstream_sha256": "c6adf7a7837f6173c09fd5ff1c94434d07617794c7c1c3193431f3a8bc95da87",
+      "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+    }
+  },
+  "java/real/LinkedTreeMap.java": {
+    "sha256": "c14c58d402eac0e3114dfc00cebc44ae22e6f886918fe5b3eea8b7d62a61b374",
+    "origin": {
+      "kind": "official_github_source",
+      "repository": "google/gson",
+      "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+      "source_path": "gson/src/main/java/com/google/gson/internal/LinkedTreeMap.java",
+      "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/internal/LinkedTreeMap.java",
+      "git_blob_sha1": "099dd573c0c9de696d03e3ffbc3faf1681f56222",
+      "upstream_sha256": "c14c58d402eac0e3114dfc00cebc44ae22e6f886918fe5b3eea8b7d62a61b374",
+      "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+    }
+  },
+  "java/real/JsonReader.java": {
+    "sha256": "ab075fdb77b370616c257d40d528fc15053ec52f1438cb3cacdbaa94c0beb2d0",
+    "origin": {
+      "kind": "official_github_source",
+      "repository": "google/gson",
+      "revision": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+      "source_path": "gson/src/main/java/com/google/gson/stream/JsonReader.java",
+      "url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/stream/JsonReader.java",
+      "git_blob_sha1": "d2846f6b32271d83f961aaeff461cf39fb7a8f05",
+      "upstream_sha256": "ab075fdb77b370616c257d40d528fc15053ec52f1438cb3cacdbaa94c0beb2d0",
+      "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+    }
+  },
+  "typescript/real/corePublic.ts": {
+    "sha256": "a7b165ec7979470a90bd157c4a8e49da2ac6fa753f1f56ce1b2429d2667c4e04",
+    "origin": {
+      "kind": "official_github_source",
+      "repository": "microsoft/TypeScript",
+      "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+      "source_path": "src/compiler/corePublic.ts",
+      "url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/corePublic.ts",
+      "git_blob_sha1": "23888726d280e8986bcf6a7e9d9e6416469ec5b9",
+      "upstream_sha256": "a7b165ec7979470a90bd157c4a8e49da2ac6fa753f1f56ce1b2429d2667c4e04",
+      "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+    }
+  },
+  "typescript/real/performance.ts": {
+    "sha256": "b12e3cdedb651fe1d94fceae1bb236c2745530ba7fe0c9dc996d61ba22b6c473",
+    "origin": {
+      "kind": "official_github_source",
+      "repository": "microsoft/TypeScript",
+      "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+      "source_path": "src/compiler/performance.ts",
+      "url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/performance.ts",
+      "git_blob_sha1": "e176474b37ba836093dbbaac7f0271d5db5f0aa0",
+      "upstream_sha256": "b12e3cdedb651fe1d94fceae1bb236c2745530ba7fe0c9dc996d61ba22b6c473",
+      "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+    }
+  },
+  "typescript/real/watchUtilities.ts": {
+    "sha256": "0a4919e1976ea0683ea06137ec02c97fe5ad44ca8d0bc709f69eb0230b7a5487",
+    "origin": {
+      "kind": "official_github_source",
+      "repository": "microsoft/TypeScript",
+      "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+      "source_path": "src/compiler/watchUtilities.ts",
+      "url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/watchUtilities.ts",
+      "git_blob_sha1": "82c9dbf32e28ca6b501df211cf0640d2777b6daf",
+      "upstream_sha256": "0a4919e1976ea0683ea06137ec02c97fe5ad44ca8d0bc709f69eb0230b7a5487",
+      "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+    }
+  },
+  "typescript/real/core.ts": {
+    "sha256": "1512daf31972388d2c43d07b96ee202f659ba8e74e356b8f01d1f6e92192e92c",
+    "origin": {
+      "kind": "official_github_source",
+      "repository": "microsoft/TypeScript",
+      "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+      "source_path": "src/compiler/core.ts",
+      "url": "https://github.com/microsoft/TypeScript/blob/c63de15a992d37f0d6cec03ac7631872838602cb/src/compiler/core.ts",
+      "git_blob_sha1": "ef83fefd533e037dde5a3818450f8f32a9138bea",
+      "upstream_sha256": "1512daf31972388d2c43d07b96ee202f659ba8e74e356b8f01d1f6e92192e92c",
+      "retrieval": "GitHub connector; UTF-8 bytes independently matched to Git blob SHA-1"
+    }
+  },
+  "typescript/real/lib__lib.es2015.symbol.d.ts": {
+    "sha256": "4ff2a353abf8a80ee399af572debb8faab2d33ad38c4b4474cff7f26e7653b8d",
+    "origin": {
+      "kind": "installed_official_npm_package",
+      "package": "typescript",
+      "version": "5.9.3",
+      "source_path": "lib/lib.es2015.symbol.d.ts",
+      "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+      "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+      "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+      "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+      "upstream_sha256": "4ff2a353abf8a80ee399af572debb8faab2d33ad38c4b4474cff7f26e7653b8d"
+    }
+  },
+  "typescript/real/lib__lib.es2021.promise.d.ts": {
+    "sha256": "af3dd424cf267428f30ccfc376f47a2c0114546b55c44d8c0f1d57d841e28d74",
+    "origin": {
+      "kind": "installed_official_npm_package",
+      "package": "typescript",
+      "version": "5.9.3",
+      "source_path": "lib/lib.es2021.promise.d.ts",
+      "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+      "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+      "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+      "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+      "upstream_sha256": "af3dd424cf267428f30ccfc376f47a2c0114546b55c44d8c0f1d57d841e28d74"
+    }
+  },
+  "typescript/real/lib__lib.es2015.iterable.d.ts": {
+    "sha256": "0559b1f683ac7505ae451f9a96ce4c3c92bdc71411651ca6ddb0e88baaaad6a3",
+    "origin": {
+      "kind": "installed_official_npm_package",
+      "package": "typescript",
+      "version": "5.9.3",
+      "source_path": "lib/lib.es2015.iterable.d.ts",
+      "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+      "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+      "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+      "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+      "upstream_sha256": "0559b1f683ac7505ae451f9a96ce4c3c92bdc71411651ca6ddb0e88baaaad6a3"
+    }
+  },
+  "typescript/real/lib__lib.es5.d.ts": {
+    "sha256": "c430d44666289dae81f30fa7b2edebf186ecc91a2d4c71266ea6ae76388792e1",
+    "origin": {
+      "kind": "installed_official_npm_package",
+      "package": "typescript",
+      "version": "5.9.3",
+      "source_path": "lib/lib.es5.d.ts",
+      "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+      "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+      "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+      "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+      "upstream_sha256": "c430d44666289dae81f30fa7b2edebf186ecc91a2d4c71266ea6ae76388792e1"
+    }
+  },
+  "json/real/tree-sitter-json__tree-sitter.json": {
+    "sha256": "30d71de6bbd5c46237ff53746661b97ac31b426b263cf9baeb65e6d01f9f361d",
+    "origin": {
+      "kind": "official_git_source",
+      "repository": "tree-sitter/tree-sitter-json",
+      "revision": "254c42a6476413b776221e03982ac8ae159eeb72",
+      "source_path": "tree-sitter.json",
+      "url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/tree-sitter.json",
+      "git_blob_sha1": "9d033942c22160b8173cc2e7c1a10ec2235faf0d",
+      "upstream_sha256": "30d71de6bbd5c46237ff53746661b97ac31b426b263cf9baeb65e6d01f9f361d"
+    }
+  },
+  "json/real/tree-sitter-json__package.json": {
+    "sha256": "843df6f8d6a40ab7f12b91b5e688a1a603e65c27f797671240ecf87e1af14644",
+    "origin": {
+      "kind": "official_git_source",
+      "repository": "tree-sitter/tree-sitter-json",
+      "revision": "254c42a6476413b776221e03982ac8ae159eeb72",
+      "source_path": "package.json",
+      "url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/package.json",
+      "git_blob_sha1": "2a04fd13c969944e8b2eb687b3405a527c6b2a49",
+      "upstream_sha256": "843df6f8d6a40ab7f12b91b5e688a1a603e65c27f797671240ecf87e1af14644"
+    }
+  },
+  "json/real/tree-sitter-json__src__node-types.json": {
+    "sha256": "620b6f5d38676a97526e9d128972d4b156ddbdf6e130cd7e6b9c35e6823e943f",
+    "origin": {
+      "kind": "official_git_source",
+      "repository": "tree-sitter/tree-sitter-json",
+      "revision": "254c42a6476413b776221e03982ac8ae159eeb72",
+      "source_path": "src/node-types.json",
+      "url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/src/node-types.json",
+      "git_blob_sha1": "dfd06ea1cc84f78d56b31bfc5fc7f8620888785d",
+      "upstream_sha256": "620b6f5d38676a97526e9d128972d4b156ddbdf6e130cd7e6b9c35e6823e943f"
+    }
+  },
+  "json/real/tree-sitter-json__src__grammar.json": {
+    "sha256": "705e5eb30aed769698ec0ffd5d9e73e1ee0edd174f7de0dc2e6bfa62d459dceb",
+    "origin": {
+      "kind": "official_git_source",
+      "repository": "tree-sitter/tree-sitter-json",
+      "revision": "254c42a6476413b776221e03982ac8ae159eeb72",
+      "source_path": "src/grammar.json",
+      "url": "https://github.com/tree-sitter/tree-sitter-json/blob/254c42a6476413b776221e03982ac8ae159eeb72/src/grammar.json",
+      "git_blob_sha1": "626e88d5151410a105530e32588387e21db8783c",
+      "upstream_sha256": "705e5eb30aed769698ec0ffd5d9e73e1ee0edd174f7de0dc2e6bfa62d459dceb"
+    }
+  },
+  "json/real/tree-sitter-java__src__node-types.json": {
+    "sha256": "19c46facc653381c337ff6cad75dd8b052524179a366c80825d6d0010520eef2",
+    "origin": {
+      "kind": "official_git_source",
+      "repository": "tree-sitter/tree-sitter-java",
+      "revision": "e10607b45ff745f5f876bfa3e94fbcc6b44bdc11",
+      "source_path": "src/node-types.json",
+      "url": "https://github.com/tree-sitter/tree-sitter-java/blob/e10607b45ff745f5f876bfa3e94fbcc6b44bdc11/src/node-types.json",
+      "git_blob_sha1": "faaf4eeff8ab93cc43e6fb822e83341b01aff3a1",
+      "upstream_sha256": "19c46facc653381c337ff6cad75dd8b052524179a366c80825d6d0010520eef2"
+    }
+  },
+  "json/real/tree-sitter-typescript__typescript__src__grammar.json": {
+    "sha256": "99dc4b95424dff47c89acb50d5d3f25b081b07eaff43994b7881dccd4186b214",
+    "origin": {
+      "kind": "official_git_source",
+      "repository": "tree-sitter/tree-sitter-typescript",
+      "revision": "75b3874edb2dc714fb1fd77a32013d0f8699989f",
+      "source_path": "typescript/src/grammar.json",
+      "url": "https://github.com/tree-sitter/tree-sitter-typescript/blob/75b3874edb2dc714fb1fd77a32013d0f8699989f/typescript/src/grammar.json",
+      "git_blob_sha1": "3ac060d9898d3b0a449c2114d2f2a3da3f639ffc",
+      "upstream_sha256": "99dc4b95424dff47c89acb50d5d3f25b081b07eaff43994b7881dccd4186b214"
+    }
+  },
+  "json/real/package.json": {
+    "sha256": "822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6",
+    "origin": {
+      "kind": "installed_official_npm_package",
+      "package": "typescript",
+      "version": "5.9.3",
+      "source_path": "package.json",
+      "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+      "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+      "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+      "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+      "upstream_sha256": "822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6"
+    }
+  },
+  "json/real/lib__typesMap.json": {
+    "sha256": "4143fb8b1c5d4421dfa19a4b80ddf2da375fc0835a349c3b18519fda5955e1d9",
+    "origin": {
+      "kind": "installed_official_npm_package",
+      "package": "typescript",
+      "version": "5.9.3",
+      "source_path": "lib/typesMap.json",
+      "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+      "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+      "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+      "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+      "upstream_sha256": "4143fb8b1c5d4421dfa19a4b80ddf2da375fc0835a349c3b18519fda5955e1d9"
+    }
+  },
+  "json/real/lib__ja__diagnosticMessages.generated.json": {
+    "sha256": "ae1a2d439bfb60b9fa32408bde0e9ec39840a33d621014fcb5b2fb4e69a606de",
+    "origin": {
+      "kind": "installed_official_npm_package",
+      "package": "typescript",
+      "version": "5.9.3",
+      "source_path": "lib/ja/diagnosticMessages.generated.json",
+      "revision": "c63de15a992d37f0d6cec03ac7631872838602cb",
+      "url": "https://www.npmjs.com/package/typescript/v/5.9.3",
+      "tarball_url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+      "package_integrity_from_pnpm_lock": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+      "integrity_verification": "Package tarball not re-downloaded; installed source bytes SHA-256 frozen",
+      "upstream_sha256": "ae1a2d439bfb60b9fa32408bde0e9ec39840a33d621014fcb5b2fb4e69a606de"
+    }
+  }
+}

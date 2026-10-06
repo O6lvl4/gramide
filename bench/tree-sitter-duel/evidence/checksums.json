@@ -1,0 +1,20 @@
+{
+  "final-duel.json": {
+    "sha256": "1364c6fd6aea8742a1de4f6435a98579bc68cd29e9d12ed559cde22d790aa453",
+    "gzip_sha256": "d150644ef349b9303cbd2c10310837e85b47b85a103447ab4ed76f3df7ceb051",
+    "bytes": 1050562,
+    "gzip_bytes": 129210
+  },
+  "final-edits.json": {
+    "sha256": "1b71cfebf2693a3f251e9164d669408efd3642a6c1849f684a514a8f71b113a1",
+    "gzip_sha256": "8f9c4ad3d3a671d900a0a28ca04974ccb874d4796f81588e51c11ec6913e15f1",
+    "bytes": 2971620,
+    "gzip_bytes": 180695
+  },
+  "json-conformance-validated.json": {
+    "sha256": "0c4b173a53a7e2b866e36724ae844699fb97c60d7f84f2d9af4fed05e2e3069b",
+    "gzip_sha256": "204cf37f2a62b71722a9d29b1929d2ee0e62e634a1e9f827c1755bda4b479e17",
+    "bytes": 19044,
+    "gzip_bytes": 2648
+  }
+}

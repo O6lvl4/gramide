@@ -1,0 +1,10 @@
+Built ../bin/gramide-java-generator
+No errors found
+
+0 via WASM, 1 via native fallback, 0 failed (of 1 files)
+All 1 test file(s) passed
+45 tests in 1 file
+Built /workspace/scratch/5e56fa97c4c6/gramide-duel-20261005/java-build-cache/tmp.qvQhmewzj9/reader
+java: package contract, 4 valid/15 malformed files and line-ending ranges passed
+4 valid files, 15 malformed files, 54 symbol ranges verified
+javac parse-only oracle: 19 valid/malformed fixtures agree; no type checking or source execution

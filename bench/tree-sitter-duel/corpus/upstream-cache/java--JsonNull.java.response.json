@@ -1,0 +1,10 @@
+{
+  "repo": "google/gson",
+  "ref": "828a97be0f8d58108b140b77df8dc76b657f4a87",
+  "path": "gson/src/main/java/com/google/gson/JsonNull.java",
+  "content": "/*\n * Copyright (C) 2008 Google Inc.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file except in compliance with the License.\n * You may obtain a copy of the License at\n *\n * http://www.apache.org/licenses/LICENSE-2.0\n *\n * Unless required by applicable law or agreed to in writing, software\n * distributed under the License is distributed on an \"AS IS\" BASIS,\n * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n * See the License for the specific language governing permissions and\n * limitations under the License.\n */\n\npackage com.google.gson;\n\n/**\n * A class representing a JSON {@code null} value.\n *\n * @author Inderjeet Singh\n * @author Joel Leitch\n * @since 1.2\n */\npublic final class JsonNull extends JsonElement {\n  /**\n   * Singleton for {@code JsonNull}.\n   *\n   * @since 1.8\n   */\n  public static final JsonNull INSTANCE = new JsonNull();\n\n  /**\n   * Creates a new {@code JsonNull} object.\n   *\n   * @deprecated Deprecated since Gson version 1.8, use {@link #INSTANCE} instead.\n   */\n  @Deprecated\n  public JsonNull() {\n    // Do nothing\n  }\n\n  /**\n   * Returns the same instance since it is an immutable value.\n   *\n   * @since 2.8.2\n   */\n  @Override\n  public JsonNull deepCopy() {\n    return INSTANCE;\n  }\n\n  /** All instances of {@code JsonNull} have the same hash code since they are indistinguishable. */\n  @Override\n  public int hashCode() {\n    return JsonNull.class.hashCode();\n  }\n\n  /** All instances of {@code JsonNull} are considered equal. */\n  @Override\n  public boolean equals(Object other) {\n    return other instanceof JsonNull;\n  }\n}\n",
+  "encoding": "utf-8",
+  "sha": "1cc78ff10683e1e2614e6e484446236077ab15d3",
+  "display_url": "https://github.com/google/gson/blob/828a97be0f8d58108b140b77df8dc76b657f4a87/gson/src/main/java/com/google/gson/JsonNull.java",
+  "display_title": "JsonNull.java"
+}
