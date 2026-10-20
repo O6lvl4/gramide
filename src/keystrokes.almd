@@ -12,6 +12,7 @@ import self.tree
 import self.parser
 import self.lang
 import self.incremental
+import self.lex
 import datetime
 import fs
 
