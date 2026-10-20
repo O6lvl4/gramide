@@ -1290,7 +1290,7 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   // when the fresh children move out. Leading tokens would change the
   // parent's own parse, which this window did not read: fall back before
   // building anything or consuming ids.
-  let leading_tokens = match list.first(nodes) { some(n) => n.start, none => eof_index }
+  let leading_tokens = match list.get(nodes, 0) { some(n) => n.start, none => eof_index }
   guard leading_tokens == (if from_start then skip else 0) else NO_PARSE
   // The list's commas belong to its parent, outside the recover bodies.
   // An empty window would orphan one of them: only a parent/whole parse
