@@ -42,7 +42,7 @@ fn program() -> cli.Program = cli.Program { name: "gramide_demo", version: "0.0.
 effect fn main() -> Unit = {
   let argv = env.args()
   match cli.batch_of(argv) {
-    some((cmd, paths)) => cli.report(parallel(cmd, paths)!),
-    none => cli.run(program(), argv),
+    some((cmd, paths)) => cli.report(parallel(cmd, paths)!)!,
+    none => cli.run(program(), argv)!,
   }
 }
