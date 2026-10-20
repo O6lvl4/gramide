@@ -92,6 +92,26 @@ fn render(id: String, g: parser.Grammar) -> String = {
   list.join(body, "\n")
 }
 
+// Explicit v2 source output. Legacy render above is kept byte-for-byte.
+fn render_with_paired_heads(id: String, g: parser.Grammar, head_rules: List[String]) -> Result[String, String] = {
+  let t = parser.to_tables(parser.compile_with_paired_heads(g, head_rules)!)
+  var body: List[String] = [
+    "// Generated from the " + id + " package's grammar by its own `gen-table`. Do not edit:",
+    "// regenerate it (see cli/main.almd), and CI fails when the grammar and this file disagree.",
+    "// Table format v2: paired recovery-head capability; requires parser.from_tables_v2.",
+    "import gramide.parser",
+    "",
+    "fn table_format_version() -> Int = 2"
+  ]
+  for name in FIELDS { list.push(body, ints(name, field_of(t, name))) }
+  list.push(body, "fn blob() -> String = " + quoted(t.blob))
+  list.push(body, "fn tables() -> parser.Tables = parser.Tables {\n"
+    + list.join(list.map(FIELDS, (name) => "  " + name + ": " + name + "(),"), "\n")
+    + "\n  blob: blob(),\n  start: " + int.to_string(t.start) + ",\n  extra: " + int.to_string(t.extra) + ",\n}")
+  list.push(body, "fn compiled() -> parser.Compiled = parser.from_tables_v2(tables())")
+  ok(list.join(body, "\n"))
+}
+
 test "a name table round-trips through its literal" {
   assert_eq(quoted("a\u{0000}b\"c\\"), "\"a\\u{0000}b\\\"c\\\\\"")
   assert_eq(hex4(0), "0000")
@@ -115,4 +135,16 @@ test "a rendered table reads back as the grammar it was compiled from" {
   assert(string.contains(text, "root") and string.contains(text, "\\u{0000}"))
   let again = parser.from_tables(parser.to_tables(parser.compile(g)))
   assert_eq(list.len(again.ops), list.len(parser.compile(g).ops))
+}
+
+test "paired table generation is explicitly v2 and leaves legacy renderer exact" {
+  let g = parser.paired_test_grammar(parser.paired_test_head("]"))
+  let before = render("paired-test", g)
+  let v2 = render_with_paired_heads("paired-test", g, ["head"])!
+  assert(string.contains(v2, "fn table_format_version() -> Int = 2"))
+  assert(string.contains(v2, "parser.from_tables_v2(tables())"))
+  assert(not string.contains(before, "table_format_version"))
+  assert(string.contains(before, "parser.from_tables(tables())"))
+  assert_eq(render("paired-test", g), before)
+  match render_with_paired_heads("paired-test", g, ["missing"]) { err(_) => (), ok(_) => assert(false) }
 }

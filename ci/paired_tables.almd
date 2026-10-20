@@ -1,0 +1,44 @@
+// Release-mode table compatibility probe, driven by paired_tables.py.
+import self.parser
+import self.tables
+import env
+
+fn guarded() -> Result[parser.Compiled, String] = {
+  let head = parser.wrap("kept", parser.seq([
+    parser.lit("["), parser.tok("integer"),
+    parser.seq([parser.ahead(parser.keep("]")), parser.any()]),
+  ]))
+  parser.compile_with_paired_heads(parser.grammar("root", [
+    ("root", parser.recover_all_keeping(parser.nothing(), parser.r("head"))),
+    ("head", head),
+  ]), ["head"])
+}
+
+effect fn legacy_tables() -> Unit = {
+  println(tables.render("core-arithmetic", parser.arith()))
+  let g = parser.grammar("root", [
+    ("root", parser.wrap("root", parser.rep(parser.recover_all_keeping(parser.seq([parser.tok("integer"), parser.lit(";")]), parser.tok("integer"))))),
+    ("unused", parser.nest("nested", parser.seq([parser.needs(parser.lits(["x", "y"])), parser.nott(parser.tok("string")), parser.opt(parser.any())]))),
+  ])
+  println(tables.render("core-recovery", g))
+}
+
+effect fn main() -> Result[Unit, String] = {
+  let mode = list.first(env.args()) ?? "valid"
+  if mode == "legacy" then { legacy_tables()!; ok(()) } else {
+    guard list.contains(["valid", "triples", "kind", "index"], mode) else err("unknown table probe mode")
+    let t = parser.to_tables(guarded()!)
+    if mode == "valid" then {
+      let loaded = parser.from_tables_v2(t)
+      assert_eq(parser.to_tables(loaded), t)
+      println("paired table v2: ok")
+    } else {
+      let bad = if mode == "kind" then parser.Tables { ...t, ops: list.set(t.ops, 0, 999) }
+        else if mode == "index" then parser.Tables { ...t, start: list.len(t.ops) }
+        else parser.Tables { ...t, ops: t.ops + [0] }
+      let _ = parser.from_tables_v2(bad)
+      println("UNSAFE: malformed v2 table was accepted")
+    }
+    ok(())
+  }
+}

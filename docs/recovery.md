@@ -116,6 +116,62 @@ gone from a replacement field — ends at its line when it opened with one
 quote; only one opened with three owns the rest of the file.
 
 
+## Heads that require their original delimiter pair
+
+A recovery head may need a real closing delimiter belonging to its own opener.
+Testing the closer's spelling alone is insufficient: a recovering member can
+skip an inner opener and leave its closer available to the surrounding head.
+For example, a trailing-array head must not consume the inner `]` in `[[1,]`
+as the outer array's closer.
+
+`parser.compile_with_paired_heads(grammar, head_rules)` adds this check to an
+explicit list of named recovery-head rules. It returns `Result[Compiled, String]`
+and rejects unsupported annotations. Each selected rule must be a wrapped
+sequence beginning with a literal opener and ending with
+`seq([ahead(keep(close)), any()])`. It must be used directly as a recovery head,
+or as a direct alternative of that head, and must be unreachable from every
+strict body. The supported delimiter pairs are `()`, `[]` and `{}`.
+
+In recovery mode the selected head succeeds only if its consumed real closer
+and original opener point to each other in the parser's existing pairing data.
+Virtual repairs cannot satisfy the check. A refused head rolls its output back
+before a wrapper is emitted, allowing another alternative to be tried. A kept
+head in an annotated choice must replay successfully at the recorded endpoint;
+a replay mismatch fails without exposing a partial tree. Existing recovery
+bounds, ranking and unannotated heads retain their behavior.
+
+The annotation specializes the existing operation in place. It adds no Rule
+variant, record field, wrapper node, recovery site or per-document metadata.
+Strict matching of the annotated operation keeps its original wrapper behavior.
+A matched delimiter pair does not prove that its interior is strict-valid:
+recovering members can still contain real ERROR nodes. Readers must retain the
+strict failure reported by `lang.Reading.error`, even when a recovered tree has
+no ERROR nodes.
+
+Use `tables.render_with_paired_heads(id, grammar, head_rules)` to generate a
+committed annotated table. Its generated module declares format version 2 and
+calls `parser.from_tables_v2`; the package must pin a core that provides this
+loader. The loader validates the table before constructing a usable grammar,
+and malformed generated tables fail with a diagnostic. External table handlers
+can use `parser.validate_tables_v2` to obtain a Result instead.
+
+Existing Rule, Compiled and Tables schemas and legacy table generation stay
+unchanged. This does not make the new opcode compatible with an old loader:
+an old core rejects the generated module at the missing v2 loader symbol, but
+raw integer Tables carry no self-enforcing version tag. A non-source transport
+must retain and check its own version/capability envelope. Do not feed annotated
+raw tables to an old `from_tables`, strip the annotation as a downgrade, or
+compile the raw Rule blueprint with plain `parser.compile` and assume it has
+the guard. Table validation is setup work and has a cost; this feature makes no
+performance guarantee.
+
+A language package can expose this behavior through a separate opt-in
+definition while preserving its normal reader. A guarded recovery head is not
+a Prepared certificate. The raw incremental API also keeps
+its existing fallback contract: a non-DONE `reparse_status` requests a whole-file
+read and may append diagnostics to `Document.trace`. That diagnostic channel is
+not a full-Document transactional update guarantee.
+
 ## What a broken file costs
 
 Recovery must not turn a large file into a long wait. `bench/recovery_cost.py`
