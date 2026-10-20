@@ -1267,7 +1267,7 @@ fn rewindow(mut u: Item, i: Int, j: Int, base: Pos, new_end: Int, source: Bytes,
   // the head stays in the window, before the EOF, so that an item rule that
   // looks ahead at what follows it (a block's tail expression at `}`) sees it
   list.push(toks, eof)
-  let num = parser.number(c, slice, toks)
+  var num = parser.number(c, slice, toks)
   let eof_index = if at_eof then list.len(toks) - 1 else list.len(toks) - 2
   // the window's first item stands where child i stood, and takes its site:
   // the one that reads a list's first item, or the one that reads the rest
