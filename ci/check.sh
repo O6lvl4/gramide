@@ -5,9 +5,12 @@ compiler="${ALMIDE_BIN:-almide}"
 
 python3 bench/tree-sitter-duel/verify_frozen.py
 # Explicitly include every engine module, independent of file discovery.
-"$compiler" test ci/duel_all_tests.almd
+"$compiler" check ci/duel_all_tests.almd
+# `almide test FILE` runs FILE's own test blocks only (since 0.63), so the
+# engine's tests run from the files that declare them.
+"$compiler" test src/
 # Compile the original helper signatures from a separate dependent package.
-(cd ci/compat-client && "$compiler" test --allow-no-tests src/main.almd)
+(cd ci/compat-client && "$compiler" test src/main.almd)
 ALMIDE_BIN="$compiler" python3 ci/smoke.py
 python3 ci/allocation_profiler.py
 
