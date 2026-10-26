@@ -24,9 +24,9 @@ fn supports(packages: List[package_api.Definition], path: String, capability: St
 fn manifest(packages: List[package_api.Definition]) -> String = json.stringify(value.object([
   ("schema_version", value.int(1)),
   ("packages", value.array(list.map(packages, (d) => value.object([
-    ("id", value.str(d.id)), ("name", value.str(d.package_name)), ("version", value.str(d.version)),
-    ("extensions", value.array(list.map(d.extensions, (e) => value.str(e)))),
-    ("capabilities", value.array(list.map(d.capabilities, (c) => value.str(c)))),
+    ("id", value.string(d.id)), ("name", value.string(d.package_name)), ("version", value.string(d.version)),
+    ("extensions", value.array(list.map(d.extensions, (e) => value.string(e)))),
+    ("capabilities", value.array(list.map(d.capabilities, (c) => value.string(c)))),
   ]))))
 ]))
 

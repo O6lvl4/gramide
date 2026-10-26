@@ -89,7 +89,7 @@ fn skip_raw_cxx(bytes: List[Int], start: Int) -> Int = {
 
 // The first thing wrong with this file, or none.
 fn check(source: String) -> Option[Flaw] = {
-  let bytes = string.to_bytes(source)
+  let bytes = bytes.to_list(bytes.from_string(source))
   let n = list.len(bytes)
   var stack: List[Int] = []          // byte of each open delimiter
   var lines: List[Int] = []          // the line each was opened on

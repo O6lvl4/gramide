@@ -164,7 +164,7 @@ effect fn cut_points(paths: List[String], of: Int) -> List[Int] = {
   var sizes: List[Int] = []
   var total = 0
   for p in paths {
-    let s = fs.file_size(p) ?? 0
+    let s = (fs.stat(p) |> result.map((s) => s.size)) ?? 0
     list.push(sizes, s)
     total = total + s
   }

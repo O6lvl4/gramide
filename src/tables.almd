@@ -28,8 +28,8 @@ fn hex4(n: Int) -> String = {
 // between them, and NUL is written as `\u{0000}` like any other control byte.
 fn quoted(text: String) -> String = {
   var out = "\""
-  for ch in string.chars(text) {
-    let code = string.codepoint(ch) ?? 0
+  for ch in string.to_list(text) {
+    let code = string.to_codepoint(ch) ?? 0
     if ch == "\\" then out = out + "\\\\"
     else if ch == "\"" then out = out + "\\\""
     else if code < 32 or code == 127 then out = out + "\\u{" + hex4(code) + "}"

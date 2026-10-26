@@ -33,7 +33,7 @@ fn is_ident(b: Int) -> Bool = is_alpha(b) or is_digit(b) or b >= 128
 fn is_upper(b: Int) -> Bool = b >= 65 and b <= 90
 fn is_space(b: Int) -> Bool = b == 32 or b == 9 or b == 13
 
-fn source_byte_at(buffer: Bytes, i: Int) -> Int = bytes.get_or(buffer, i, -1)
+fn source_byte_at(buffer: Bytes, i: Int) -> Int = bytes.get(buffer, i) ?? -1
 
 // Copy only buffer[s, e) from the compact byte source, preserving the
 // existing lossy UTF-8 decoding behavior for token text.
@@ -388,10 +388,10 @@ fn pack(spellings: List[String]) -> Packed = {
     let raw = bytes.from_string(spelling)
     list.push(start, bytes.len(flat))
     var j = 0
-    while j < bytes.len(raw) { bytes.push(flat, bytes.get_or(raw, j, 0)); j = j + 1 }
+    while j < bytes.len(raw) { bytes.push(flat, bytes.get(raw, j) ?? 0); j = j + 1 }
     list.push(end, bytes.len(flat))
     // onto the end of its first byte's chain, so spec order is kept
-    let first = bytes.get_or(raw, 0, 0)
+    let first = bytes.get(raw, 0) ?? 0
     let h = match list.get(head, first) { some(v) => v, none => -1 }
     if h < 0 then head = list.set(head, first, idx)
     else next = list.set(next, chain_tail(next, h), idx)
@@ -416,7 +416,7 @@ fn same_bytes(a: Bytes, a_at: Int, b: Bytes, b_at: Int, width: Int) -> Bool = {
   var k = 0
   var same = true
   while same and k < width {
-    if bytes.get_or(a, a_at + k, -2) != bytes.get_or(b, b_at + k, -1) then same = false else k = k + 1
+    if (bytes.get(a, a_at + k) ?? -2) != bytes.get(b, b_at + k) ?? -1 then same = false else k = k + 1
   }
   same
 }
@@ -603,7 +603,7 @@ fn tokenize_prepared(source: String, prepared: Prepared, recover: Bool) -> Resul
       else if recover then {
         list.push(toks, mk(tree.T_ERROR, i, i + 1, line, line_start))
         i = i + 1
-      } else { failure = some(LexError { line: line, col: i - line_start + 1, message: "unexpected character " + string.from_bytes([b]) }) }
+      } else { failure = some(LexError { line: line, col: i - line_start + 1, message: "unexpected character " + bytes.to_string_lossy(bytes.from_list([b])) }) }
     }
   }
   match failure {
