@@ -8,7 +8,6 @@
 // the map an agent reads before it decides which files to open.
 
 import fs
-import self.tree
 import self.tags
 import self.lang
 import self.package_api

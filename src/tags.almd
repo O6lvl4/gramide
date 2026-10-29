@@ -15,7 +15,6 @@ import self.names as nametable
 import json
 import self.tree
 import self.package_api
-import self.parser
 
 // Local copies of the tree helpers that take the token list: a list handed to
 // a function in another module is cloned at the call, and these run once per

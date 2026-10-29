@@ -18,7 +18,6 @@
 // that reached disk when there was no gate.
 
 import self.lex.{ is_space }
-import self.tree
 
 type Flaw = { line: Int, col: Int, message: String }
 
