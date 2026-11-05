@@ -25,7 +25,7 @@ fn names_in(blob: Bytes) -> Names = {
   var i = 0
   let width = bytes.len(blob)
   while i <= width {
-    if i == width or bytes.get_or(blob, i, -1) == 0 then {
+    if i == width or (bytes.get(blob, i) ?? -1) == 0 then {
       list.push(start, from)
       list.push(end, i)
       from = i + 1
@@ -55,7 +55,7 @@ fn id_of(names: Names, name: String) -> Int = {
       var k = 0
       var same = true
       while same and k < width {
-        same = bytes.get_or(names.blob, from + k, -1) == bytes.get_or(want, k, -2)
+        same = (bytes.get(names.blob, from + k) ?? -1) == (bytes.get(want, k) ?? -2)
         k = k + 1
       }
       if same then found = i else ()

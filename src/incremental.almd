@@ -238,7 +238,7 @@ fn own_node_count(n: tree.Node) -> Int = if n.kind == PLACEHOLDER then 0 else {
 // line breaks, `;` — were read by the same item rule, and go with the item.
 // The first token after them is the parent's own (`}`, the EOF) or the next
 // item's head.
-fn separator(t: tree.Token, source: Bytes) -> Bool = t.kind == tree.T_NEWLINE or (t.end - t.start == 1 and bytes.get_or(source, t.start, -1) == 59)
+fn separator(t: tree.Token, source: Bytes) -> Bool = t.kind == tree.T_NEWLINE or (t.end - t.start == 1 and (bytes.get(source, t.start) ?? -1) == 59)
 fn own_after(toks: List[tree.Token], source: Bytes, from: Int, t_end: Int) -> Int = {
   var t = from
   while t < t_end and (match list.get(toks, t) { some(tok) => separator(tok, source), none => false }) { t = t + 1 }
@@ -341,7 +341,7 @@ fn nodes_json(doc: Document, ids_before: List[Int]) -> String = {
   var rows: List[String] = []
   let _ = json_walk(tree_now.root, tree_now.toks, ids, doc.names, 0, 0, rows)
   var olds: Map[Int, Int] = map.new()
-  for id in ids_before { map.insert(olds, id, 1) }
+  for id in ids_before { olds[id] = 1 }
   var kept = 0
   for id in ids { kept = kept + (if map.contains(olds, id) then 1 else 0) }
   "{\"schema_version\":1,\"nodes\":[" + list.join(rows, ",") + "],\"kept\":" + int.to_string(kept) + ",\"new\":" + int.to_string(list.len(ids) - kept) + "}"
@@ -684,8 +684,8 @@ fn untouched_before(u: Item, i: Int, j: Int, p: Pos, edit: Edit) -> Map[String, 
         let shift = if end <= edit.start then 0 else delta
         let key = span_key(list.get(spans, m) ?? 0, start + shift, end + shift)
         let n = map.get(seen, key) ?? 0
-        map.insert(seen, key, n + 1)
-        map.insert(keys, key + "#" + int.to_string(n), list.get(spans, m + 3) ?? -1)
+        seen[key] = n + 1
+        keys[key + "#" + int.to_string(n)] = list.get(spans, m + 3) ?? -1
       } else ()
       m = m + 4
     }
@@ -714,8 +714,8 @@ fn matched_ids(u: Item, at: Int, count: Int, p: Pos, edit: Edit, before: Map[Str
       if not changed_by(start, end, edit) then {
         let key = span_key(list.get(spans, m) ?? 0, start, end)
         let n = map.get(seen, key) ?? 0
-        map.insert(seen, key, n + 1)
-        match map.get(before, key + "#" + int.to_string(n)) { some(old) => map.insert(taken, list.get(spans, m + 3) ?? -1, old), none => () }
+        seen[key] = n + 1
+        match map.get(before, key + "#" + int.to_string(n)) { some(old) => { taken[list.get(spans, m + 3) ?? -1] = old }, none => () }
       } else ()
       m = m + 4
     }
@@ -749,8 +749,8 @@ fn left_spans(spans: List[Int], edit: Edit) -> Map[String, Int] = {
       let shift = if end <= edit.start then 0 else delta
       let key = span_key(list.get(spans, m) ?? 0, start + shift, end + shift)
       let n = map.get(seen, key) ?? 0
-      map.insert(seen, key, n + 1)
-      map.insert(keys, key + "#" + int.to_string(n), list.get(spans, m + 3) ?? -1)
+      seen[key] = n + 1
+      keys[key + "#" + int.to_string(n)] = list.get(spans, m + 3) ?? -1
     } else ()
     m = m + 4
   }
@@ -771,8 +771,8 @@ fn taken_spans(spans: List[Int], left: Map[String, Int], edit: Edit) -> Map[Int,
     if not changed_by(start, end, edit) then {
       let key = span_key(list.get(spans, m) ?? 0, start, end)
       let n = map.get(seen, key) ?? 0
-      map.insert(seen, key, n + 1)
-      match map.get(left, key + "#" + int.to_string(n)) { some(old) => map.insert(taken, list.get(spans, m + 3) ?? -1, old), none => () }
+      seen[key] = n + 1
+      match map.get(left, key + "#" + int.to_string(n)) { some(old) => { taken[list.get(spans, m + 3) ?? -1] = old }, none => () }
     } else ()
     m = m + 4
   }
@@ -818,7 +818,7 @@ fn index_old_span(mut index: SpanIndex, kind: Int, start: Int, end: Int, id: Int
   if bucket.count < SPAN_CHAIN_LIMIT then {
     let row = list.len(index.rows)
     list.push(index.rows, SpanRow { kind: kind, start: start, end: end, id: id, next: bucket.head })
-    map.insert(index.buckets, hash, SpanBucket { head: row, count: bucket.count + 1 })
+    index.buckets[hash] = SpanBucket { head: row, count: bucket.count + 1 }
   } else index.overflow = true
   ()
 }
@@ -870,8 +870,8 @@ fn take_indexed_id(mut index: SpanIndex, kind: Int, start: Int, end: Int) -> Opt
         let next = map.get(index.links, row) ?? r.next
         if r.kind == kind and r.start == start and r.end == end then {
           found = some(r.id)
-          if previous < 0 then map.insert(index.buckets, hash, SpanBucket { head: next, count: bucket.count })
-          else map.insert(index.links, previous, next)
+          if previous < 0 then { index.buckets[hash] = SpanBucket { head: next, count: bucket.count } }
+          else { index.links[previous] = next }
           row = -1
         } else { previous = row; row = next }
       },
@@ -887,7 +887,7 @@ fn index_fresh_spans(spans: List[Int], mut index: SpanIndex, edit: Edit, mut tak
     let end = list.get(spans, m + 2) ?? 0
     if not changed_by(start, end, edit) then {
       match take_indexed_id(index, list.get(spans, m) ?? 0, start, end) {
-        some(old) => map.insert(taken, list.get(spans, m + 3) ?? -1, old),
+        some(old) => { taken[list.get(spans, m + 3) ?? -1] = old },
         none => (),
       }
     } else ()
@@ -1490,14 +1490,14 @@ fn own_edit(mut u: Item, base: Pos, edit: Edit, source: Bytes, tokenize: (String
 fn breaks_between(source: Bytes, from: Int, to: Int) -> Int = {
   var lines = 0
   var i = from
-  while i < to { if bytes.get_or(source, i, 0) == 10 then lines = lines + 1 else (); i = i + 1 }
+  while i < to { if (bytes.get(source, i) ?? 0) == 10 then lines = lines + 1 else (); i = i + 1 }
   lines
 }
 // The bytes of `source` after the last line break in `from`..`to` (all of
 // them when there is none)
 fn tail_after(source: Bytes, from: Int, to: Int) -> Int = {
   var i = to
-  while i > from and bytes.get_or(source, i - 1, 0) != 10 { i = i - 1 }
+  while i > from and (bytes.get(source, i - 1) ?? 0) != 10 { i = i - 1 }
   to - i
 }
 // The run of the unit's own bytes holding the whole edit, and where it
@@ -1520,7 +1520,7 @@ fn run_holding(u: Item, base: Pos, edit: Edit) -> (Int, Pos) = {
 fn after_indentation(source: Bytes, at: Int) -> Bool = {
   var i = at - 1
   var blank_only = true
-  while blank_only and i >= 0 and bytes.get_or(source, i, 10) != 10 { let b = bytes.get_or(source, i, 0); blank_only = b == 32 or b == 9; i = i - 1 }
+  while blank_only and i >= 0 and (bytes.get(source, i) ?? 10) != 10 { let b = (bytes.get(source, i) ?? 0); blank_only = b == 32 or b == 9; i = i - 1 }
   not blank_only
 }
 // A token that is layout rather than text: a line end (a scanner may give
@@ -1560,10 +1560,10 @@ fn same_tokens(old: List[tree.Token], fresh: List[tree.Token], retyped: Int, del
 // as it is. None when the scanner refuses.
 fn lex_in_place(tokenize: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes, from: Int, to: Int) -> Option[List[tree.Token]] = {
   var line_start = from
-  while line_start > 0 and bytes.get_or(source, line_start - 1, 10) != 10 { line_start = line_start - 1 }
+  while line_start > 0 and (bytes.get(source, line_start - 1) ?? 10) != 10 { line_start = line_start - 1 }
   var blank = true
   var i = line_start
-  while blank and i < from { let b = bytes.get_or(source, i, 0); blank = b == 32 or b == 9; i = i + 1 }
+  while blank and i < from { let b = (bytes.get(source, i) ?? 0); blank = b == 32 or b == 9; i = i + 1 }
   let lead = if blank then from - line_start else 0
   match tokenize(bytes.to_string_lossy(bytes.slice(source, from - lead, to)), false) {
     err(_) => none,
@@ -1799,7 +1799,7 @@ fn deeper(a: tree.Node, b: tree.Node, path: String, names: nametable.Names) -> S
 
 // The text after an edit.
 fn apply(source: Bytes, edit: Edit, text: Bytes) -> Bytes =
-  bytes.concat(bytes.concat(bytes.slice(source, 0, edit.start), text), bytes.slice(source, edit.old_end, bytes.len(source)))
+  ((bytes.slice(source, 0, edit.start) + text) + bytes.slice(source, edit.old_end, bytes.len(source)))
 
 // Compare each item both in its real position and alone: the latter has
 // a different end-of-stream lookahead from its containing document.
@@ -2003,7 +2003,7 @@ test "an edit that opens or closes a comment is not a comment edit" {
   var doc = from_parsed(whole(c, COMMENTED), source, c)
   let at = commented_at("#>\nfn b")
   let edit = Edit { start: at, old_end: at + 2, new_end: at }
-  let after = apply(source, edit, bytes.new(0))
+  let after = apply(source, edit, bytes.new())
   assert(not reparse(doc, after, edit, (s, r) => scan(s, r), c))
   assert(same(materialize(doc), whole(c, COMMENTED)))
   // a comment opened in blank space before `y()`: the statement is swallowed, and the whole parse agrees
@@ -2062,7 +2062,7 @@ test "a retyped head is what the next window is measured against" {
   // its `(` for part of it
   let at = retyped_at("reader") + 2
   let first = Edit { start: at, old_end: at + 1, new_end: at }
-  let once = apply(source, first, bytes.new(0))
+  let once = apply(source, first, bytes.new())
   assert_eq(reparse_status(doc, once, first, (s, r) => scan(s, r), c), DONE)
   // then a `;` put after `give counter`: that statement is read again, up to the head `reder`
   let at2 = string.index_of(bytes.to_string_lossy(once), "give counter") ?? -1
@@ -2125,7 +2125,7 @@ test "items keep their ids across edits; an item read again in place of itself k
   assert(list.all(grown, (id) => list.contains(start, id) or id > (list.max(start) ?? 0)), "the new item's id is new")
   // that statement removed again: everything else keeps its id
   let e4 = Edit { start: at3, old_end: at3 + 8, new_end: at3 }
-  text = apply(text, e4, bytes.new(0))
+  text = apply(text, e4, bytes.new())
   assert_eq(reparse_status(doc, text, e4, (s, r) => scan(s, r), c), DONE)
   assert_eq(ids_of(doc), start)
   let full = whole(c, bytes.to_string_lossy(text))
@@ -2149,7 +2149,7 @@ fn node_id_breaks(tree_before: parser.Parsed, ids_before: List[Int], tree_after:
   let _ = spans_walk(tree_after.root, tree_after.toks, ids_after, 0, spans)
   var seen: Map[String, Int] = map.new()
   var olds: Map[Int, Int] = map.new()
-  for id in ids_before { map.insert(olds, id, 1) }
+  for id in ids_before { olds[id] = 1 }
   var out = if list.len(ids_after) != list.len(list.dedup(list.sort(ids_after))) then "two nodes share an id" else ""
   var m = 0
   while out == "" and m + 3 < list.len(spans) {
@@ -2158,7 +2158,7 @@ fn node_id_breaks(tree_before: parser.Parsed, ids_before: List[Int], tree_after:
     let id = list.get(spans, m + 3) ?? -1
     let key = span_key(list.get(spans, m) ?? 0, start, end)
     let n = map.get(seen, key) ?? 0
-    map.insert(seen, key, n + 1)
+    seen[key] = n + 1
     let want = if changed_by(start, end, edit) then -1 else map.get(left, key + "#" + int.to_string(n)) ?? -1
     out = if want >= 0 and id != want then "node " + key + " has id " + int.to_string(id) + ", was " + int.to_string(want)
       else if want < 0 and map.contains(olds, id) then "node " + key + " is new but has the old id " + int.to_string(id)
@@ -2259,7 +2259,7 @@ fn prefix_round_trip(mut c: parser.Compiled, text: String, at: Int, prefix: Stri
   assert(add_breaks == "", add_breaks)
 
   let remove = Edit { start: at, old_end: at + size, new_end: at }
-  assert(apply(after, remove, bytes.new(0)) == source, "removing the prefix must restore the exact source bytes")
+  assert(apply(after, remove, bytes.new()) == source, "removing the prefix must restore the exact source bytes")
   let back_status = reparse_status(doc, source, remove, (s, r) => if line_tokens then line_scan(s, r) else scan(s, r), c)
   assert(back_status == DONE, "prefix deletion status " + int.to_string(back_status) + " at " + int.to_string(at) + ": " + list.join(doc.trace, " | "))
   let _ = check_document_spans(doc)
@@ -2386,7 +2386,7 @@ test "removing a recovered unmatched opener obeys the same node identity rule" {
   var doc = from_parsed(parsed, source, c)
   let before_ids = node_ids(doc)
   let edit = Edit { start: 0, old_end: 1, new_end: 0 }
-  let after = apply(source, edit, bytes.new(0))
+  let after = apply(source, edit, bytes.new())
   let full = whole(c, TEXT)
   let status = reparse_status(doc, after, edit, (s, r) => scan(s, r), c)
   if status != DONE then {
