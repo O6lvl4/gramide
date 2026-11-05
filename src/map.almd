@@ -49,7 +49,7 @@ effect fn scan(packages: List[package_api.Definition], root: String) -> Result[S
   for p in list.sort(all) {
     let rel = if string.starts_with(p, root + "/") then string.slice(p, string.len(root) + 1, string.len(p)) else p
     if lang.supports_in(engines, p, "map") and not skipped(rel) then {
-      let size = fs.file_size(p) ?? 0
+      let size = match fs.stat(p) { ok(st) => st.size, err(_) => 0 }
       if size > MAX_FILE_BYTES then list.push(errors, rel + ": skipped, larger than 512 KB")
       else match fs.read_text(p) {
         err(e) => list.push(errors, rel + ": " + e),
@@ -109,7 +109,7 @@ fn pagerank(n: Int, edges: List[Edge], personal: List[Float]) -> List[Float] = {
 // A sortable key: referenced first, then rank descending, then path and name.
 fn sort_key(r: Ranked) -> String = {
   let bucket = if r.referenced then "0" else "1"
-  let inv = 1000000000 - float.to_int(r.rank * 1000000.0)
+  let inv = 1000000000 - int.from_saturating(r.rank * 1000000.0)
   bucket + string.pad_start(int.to_string(inv), 12, "0") + " " + r.path + " " + r.name
 }
 
@@ -125,28 +125,28 @@ fn rank(files: List[FileTags], mentioned: List[String]) -> List[Ranked] = {
       if t.role == "def" then {
         var ds = map.get(defines, t.base) ?? []
         if not list.contains(ds, f.path) then list.push(ds, f.path) else ()
-        map.insert(defines, t.base, ds)
+        defines[t.base] = ds
         let key = f.path + " " + t.base
-        if not map.contains(def_tags, key) then map.insert(def_tags, key, t) else ()
+        if not map.contains(def_tags, key) then { def_tags[key] = t } else ()
       } else {
         var m = map.get(references, t.name) ?? [:]
-        map.insert(m, f.path, (map.get(m, f.path) ?? 0) + 1)
-        map.insert(references, t.name, m)
+        m[f.path] = (map.get(m, f.path) ?? 0) + 1
+        references[t.name] = m
       }
     }
   }
   let paths = list.map(files, (f) => f.path)
   var index: Map[String, Int] = [:]
   var i = 0
-  for p in paths { map.insert(index, p, i); i = i + 1 }
+  for p in paths { index[p] = i; i = i + 1 }
   var edges: List[Edge] = []
-  for (ident, definers) in map.entries(defines) {
+  for (ident, definers) in map.to_list(defines) {
     var mul = 1.0
     if list.contains(mentioned, ident) then mul = mul * MENTIONED_MUL else ()
     if is_well_named(ident) then mul = mul * WELL_NAMED_MUL else ()
     if string.starts_with(ident, "_") then mul = mul * PRIVATE_MUL else ()
     if list.len(definers) > UBIQUITOUS_DEF_COUNT then mul = mul * UBIQUITOUS_MUL else ()
-    let refs = list.filter(map.entries(map.get(references, ident) ?? [:]), (r) => not list.contains(definers, r.0))
+    let refs = list.filter(map.to_list(map.get(references, ident) ?? [:]), (r) => not list.contains(definers, r.0))
     if list.is_empty(refs) then {
       for d in definers {
         match map.get(index, d) { some(k) => list.push(edges, Edge { from: k, to: k, ident: ident, weight: SELF_EDGE_WEIGHT }), none => () }
@@ -155,7 +155,7 @@ fn rank(files: List[FileTags], mentioned: List[String]) -> List[Ranked] = {
       for (referencer, count) in refs {
         for definer in definers {
           match (map.get(index, referencer), map.get(index, definer)) {
-            (some(from), some(to)) => list.push(edges, Edge { from: from, to: to, ident: ident, weight: mul * float.sqrt(float.from_int(count)) }),
+            (some(from), some(to)) => list.push(edges, Edge { from: from, to: to, ident: ident, weight: mul * math.sqrt(float.from(count)) }),
             _ => (),
           }
         }
@@ -163,10 +163,10 @@ fn rank(files: List[FileTags], mentioned: List[String]) -> List[Ranked] = {
     }
   }
   let n = list.len(paths)
-  let share = if n == 0 then 0.0 else 100.0 / float.from_int(n)
+  let share = if n == 0 then 0.0 else 100.0 / float.from(n)
   var personal: List[Float] = list.map(paths, (p) => if list.any(mentioned, (m) => string.contains(p, m)) then share else 0.0)
   let total = list.fold(personal, 0.0, (a, b) => a + b)
-  personal = if total > 0.0 then list.map(personal, (v) => v / total) else list.map(paths, (_) => 1.0 / float.from_int(int.max(1, n)))
+  personal = if total > 0.0 then list.map(personal, (v) => v / total) else list.map(paths, (_) => 1.0 / float.from(int.max(1, n)))
   let scores = pagerank(n, edges, personal)
   var out_weight: List[Float] = list.map(paths, (_) => 0.0)
   for e in edges { out_weight = list.set(out_weight, e.from, (list.get(out_weight, e.from) ?? 0.0) + e.weight) }
@@ -178,7 +178,7 @@ fn rank(files: List[FileTags], mentioned: List[String]) -> List[Ranked] = {
     if o > 0.0 then {
       let key = (list.get(paths, e.to) ?? "") + " " + e.ident
       if not map.contains(ranked, key) then list.push(order, key) else ()
-      map.insert(ranked, key, (map.get(ranked, key) ?? 0.0) + (list.get(scores, e.from) ?? 0.0) * e.weight / o)
+      ranked[key] = (map.get(ranked, key) ?? 0.0) + (list.get(scores, e.from) ?? 0.0) * e.weight / o
       if e.from != e.to and not list.contains(referenced, key) then list.push(referenced, key) else ()
     } else ()
   }
@@ -200,7 +200,7 @@ fn render(symbols: List[Ranked]) -> String = {
     if not map.contains(by_file, s.path) then list.push(order, s.path) else ()
     var group = map.get(by_file, s.path) ?? []
     list.push(group, s)
-    map.insert(by_file, s.path, group)
+    by_file[s.path] = group
   }
   var out = ""
   for path in order {
@@ -228,7 +228,7 @@ fn fit_to_budget(ranked: List[Ranked], budget: Int) -> (String, Int) = {
     while not done and lower <= upper {
       let text = render(list.take(ranked, middle))
       let tokens = approx_tokens(text)
-      let pct_err = float.abs(float.from_int(tokens - budget)) / float.from_int(budget)
+      let pct_err = float.abs(float.from(tokens - budget)) / float.from(budget)
       if (tokens <= budget and tokens > best_tokens) or pct_err < BUDGET_TOLERANCE then {
         best = text
         best_tokens = tokens
@@ -250,10 +250,10 @@ fn fit_to_budget(ranked: List[Ranked], budget: Int) -> (String, Int) = {
 
 // strip `.`, `/` and `-` from both ends
 fn trim_edges(s: String) -> String = {
-  var bs = string.to_bytes(s)
+  var bs = bytes.to_list(bytes.from_string(s))
   while list.len(bs) > 0 and list.contains([46, 47, 45], list.first(bs) ?? 0) { bs = list.drop(bs, 1) }
   while list.len(bs) > 0 and list.contains([46, 47, 45], list.last(bs) ?? 0) { bs = list.take(bs, list.len(bs) - 1) }
-  string.from_bytes(bs)
+  bytes.to_string_lossy(bytes.from_list(bs))
 }
 
 // Identifiers and path fragments in the task text: the only signal about
@@ -261,14 +261,14 @@ fn trim_edges(s: String) -> String = {
 fn mentions_in(task: String) -> List[String] = {
   var out: List[String] = []
   var cur: List[Int] = []
-  let bytes = string.to_bytes(task) + [32]
-  for b in bytes {
+  let task_bytes = bytes.to_list(bytes.from_string(task)) + [32]
+  for b in task_bytes {
     let word_byte = (b >= 48 and b <= 57) or (b >= 65 and b <= 90) or (b >= 97 and b <= 122) or b == 95 or b == 46 or b == 47 or b == 45 or b >= 128
     if word_byte then list.push(cur, b)
     else {
       if not list.is_empty(cur) then {
-        let w = trim_edges(string.from_bytes(cur))
-        let has_alpha = list.any(string.to_bytes(w), (c) => (c >= 65 and c <= 90) or (c >= 97 and c <= 122))
+        let w = trim_edges(bytes.to_string_lossy(bytes.from_list(cur)))
+        let has_alpha = list.any(bytes.to_list(bytes.from_string(w)), (c) => (c >= 65 and c <= 90) or (c >= 97 and c <= 122))
         if string.len(w) >= 3 and has_alpha then {
           if not list.contains(out, w) then list.push(out, w) else ()
           let last = list.last(string.split(w, "/")) ?? ""

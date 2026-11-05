@@ -58,9 +58,9 @@ test "an unregistered package supplies lexer grammar and semantic roles" {
   let rows = symbols.rows(read.parsed.root, read.parsed.toks, bytes.from_string("@Box { action read; }"), read.parsed.names, "", read.sep, read.symbols)
   assert_eq(list.len(rows), 2)
   let method = json.parse((list.last(rows)!).json)!
-  assert_eq(json.get_string(method, "name"), some("Box.read"))
-  assert_eq(json.get_string(method, "owner"), some("Box"))
-  assert_eq(json.get_int(method, "start_byte"), some((list.last(rows)!).start_byte))
+  assert_eq(value.get_string(method, "name"), some("Box.read"))
+  assert_eq(value.get_string(method, "owner"), some("Box"))
+  assert_eq(value.get_int(method, "start_byte"), some((list.last(rows)!).start_byte))
   assert(result.is_err(lang.verify_lang(engine, "demo.example", "Box { action read; }")))
   assert(result.is_err(lang.verify_lang(engine, "demo.example", "@Box { action ; }")))
 }
@@ -97,6 +97,6 @@ test "read-only packages cannot become write gates" {
 
 test "the manifest lists every package with its extensions and capabilities" {
   let j = json.parse(registry.manifest([demo(), other()]))!
-  assert_eq(json.get_int(j, "schema_version"), some(1))
-  assert_eq(list.len(json.get_array(j, "packages") ?? []), 2)
+  assert_eq(value.get_int(j, "schema_version"), some(1))
+  assert_eq(list.len(value.get_array(j, "packages") ?? []), 2)
 }

@@ -37,10 +37,10 @@ fn line_breaks(source: Bytes, t: tree.Token) -> Int = {
   var i = t.start
   var breaks = 0
   while i < t.end {
-    let b = bytes.get_or(source, i, -1)
+    let b = (bytes.get(source, i) ?? -1)
     if b == 13 then {
       breaks = breaks + 1
-      i = i + (if bytes.get_or(source, i + 1, -1) == 10 then 2 else 1)
+      i = i + (if (bytes.get(source, i + 1) ?? -1) == 10 then 2 else 1)
     } else {
       if b == 10 then breaks = breaks + 1 else ()
       i = i + 1
@@ -52,7 +52,7 @@ fn last_line(n: tree.Node, toks: List[tree.Token], source: Bytes) -> Int = match
   some(t) => {
     // A zero-width token — a layout marker, EOF — ends on no byte of its own,
     // so the byte before it is not its last one.
-    let last = if t.end > t.start then bytes.get_or(source, t.end - 1, -1) else -1
+    let last = if t.end > t.start then (bytes.get(source, t.end - 1) ?? -1) else -1
     // A recovery token can consume EOF immediately after a line terminator.
     t.line + line_breaks(source, t) - (if last == 10 or last == 13 then 1 else 0)
   },
@@ -352,7 +352,7 @@ type SymbolRow = { json: String, start_byte: Int, end_byte: Int }
 // string, which the quote check already sends the slow way.
 fn json_string(s: String) -> String =
   if string.contains(s, "\"") or string.contains(s, "\\") or string.contains(s, "\n") or string.contains(s, "\r") or string.contains(s, "\t")
-  then json.stringify(value.str(s))
+  then json.stringify(value.string(s))
   else "\"" + s + "\""
 
 fn symbol_rows_in(n: tree.Node, start: Int, toks: List[tree.Token], source: Bytes, scope: String, namespace: String, sep: String, rules: package_api.SymbolRules, table: DeclarationTable, mut out: List[SymbolRow]) -> Unit = {
@@ -404,10 +404,10 @@ fn line_count(source: Bytes) -> Int = {
   var count = 0
   var i = 0
   while i < n {
-    if bytes.get_or(source, i, 0) == 10 then count = count + 1 else ()
+    if (bytes.get(source, i) ?? 0) == 10 then count = count + 1 else ()
     i = i + 1
   }
-  if n > 0 and bytes.get_or(source, n - 1, 0) != 10 then count + 1 else count
+  if n > 0 and (bytes.get(source, n - 1) ?? 0) != 10 then count + 1 else count
 }
 
 test "line_count says what string.lines says" {
