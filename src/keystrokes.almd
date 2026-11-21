@@ -175,7 +175,7 @@ fn prior_of(mut doc: incremental.Document, checked: Bool) -> Option[(parser.Pars
 effect fn checked_after(mut report: Report, mut doc: incremental.Document, mut c: parser.Compiled, scan: (String, Bool) -> Result[List[tree.Token], lex.LexError], source: Bytes, i: Int, pos: Int, prior: Option[(parser.Parsed, List[Int])], edit: incremental.Edit) -> Result[Unit, String] = match prior {
   some((tree_before, ids_before)) => {
     let _ = verified_whole(report, doc, c, scan, source, i, pos)!
-    let _ = ids_checked(report, doc, tree_before, ids_before, edit, i, pos)
+    ids_checked(report, doc, tree_before, ids_before, edit, i, pos)!
     ok(())
   },
   none => ok(()),
